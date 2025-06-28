@@ -1,0 +1,143 @@
+# golangci-lint configuration for mentat
+# Focused on high-quality Go code without being overly pedantic
+
+version: "2"
+
+linters:
+  # Start with standard linters, then add our selection
+  default: none
+  
+  enable:
+    # Essential - Must Have
+    - errcheck      # Ensures all errors are handled
+    - govet         # Go's official analyzer
+    - staticcheck   # High-quality static analysis
+    - ineffassign   # Detects ineffectual assignments
+    - unused        # Finds unused code
+    
+    # Code Quality & Best Practices
+    - gocritic      # Opinionated linter with many useful checks
+    - revive        # Configurable, follows style guides
+    - godot         # Ensures comments end with periods
+    - misspell      # Catches typos
+    - unconvert     # Removes unnecessary type conversions
+    - prealloc      # Suggests preallocating slices
+    - bodyclose     # Ensures HTTP response bodies are closed
+    - noctx         # Ensures HTTP requests use context
+    - sqlclosecheck # Ensures SQL rows are closed
+    - rowserrcheck  # Ensures sql.Rows.Err is checked
+    - copyloopvar   # Checks for pointers to enclosing loop variables
+    - nilerr        # Finds code returning nil even with non-nil error
+    - makezero      # Finds slice declarations not zeroed after make
+    
+    # Interface & Type Safety
+    - iface         # Ensures interfaces follow Go guidelines
+    - forcetypeassert # Prevents unchecked type assertions
+    - asasalint     # Checks for pass []any as any in variadic func
+    
+    # Security
+    - gosec         # Security-focused linter
+    
+    # Testing
+    - thelper       # Ensures test helpers use t.Helper()
+    - tparallel     # Ensures tests using t.Parallel are correct
+    
+    # Code Clarity
+    - nakedret      # Prevents naked returns in long functions
+    - nilnil        # Prevents returning nil, nil
+    - usestdlibvars # Use stdlib constants instead of magic strings
+    - forbidigo     # Forbid specific patterns (like interface{})
+
+  settings:
+    gocritic:
+      # Use default stable checks, plus specific ones we want
+      disable-all: false
+      enabled-checks:
+        # Add checks that catch common issues
+        - emptyStringTest    # Detects len(s) == 0 (use s == "")
+        - sloppyReassign     # Detects suspicious reassignments
+        - weakCond           # Detects non-exhaustive conditions
+        - appendCombine      # Suggests combining append calls
+        - commentedOutCode   # Finds commented-out code
+        - deferInLoop        # Detects problematic defer in loops
+        - evalOrder          # Detects undefined evaluation order
+        - nilValReturn       # Detects return statements that return nil
+        - truncateCmp        # Detects problematic int comparisons
+        - unnecessaryDefer   # Detects unnecessary defer calls
+        
+    revive:
+      severity: error
+      enable-all-rules: false
+      rules:
+        # Essential rules for code quality
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+        - name: if-return
+        - name: increment-decrement
+        - name: var-naming
+          arguments:
+            - ["ID", "URL", "HTTP", "API"]  # Common initialisms
+            - []  # No deny list
+        - name: var-declaration
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: errorf
+        - name: empty-block
+        - name: superfluous-else
+        - name: unused-parameter
+        - name: unreachable-code
+        - name: redefines-builtin-id
+        - name: waitgroup-by-value
+        - name: use-any         # Prefer 'any' over 'interface{}'
+        - name: useless-break
+        - name: unnecessary-stmt
+        
+    gosec:
+      # We need exec.Command for clipboard operations (xclip, pbcopy, etc.)
+      excludes:
+        - G204  # Audit use of command execution
+      
+      severity: medium
+      confidence: medium
+      
+    iface:
+      enable:
+        - identical  # No identical interfaces
+        - unused     # No unused interfaces
+        # - opaque   # Disabled: We intentionally return interfaces for decoration patterns
+        
+    nakedret:
+      max-func-lines: 30  # Only enforce in longer functions
+      
+    misspell:
+      locale: US
+      
+    govet:
+      enable-all: true
+      
+    forbidigo:
+      # Override default patterns
+      forbid:
+        # First, let's keep some useful defaults but modify them
+        - pattern: '^(fmt\.Print(|f|ln)|print|println)$'
+          msg: "Use Logger interface instead of print statements"
+        # Now add our custom patterns
+        - pattern: 'interface\{\}'
+          msg: "Don't use interface{}, use a specific type or 'any'"
+        - pattern: '\bpanic\('
+          msg: "Don't use panic, return an error instead"
+        - pattern: 'exec\.Command\('
+          msg: "Use RunCommand() or RunCommandWithInput() from command.go instead of exec.Command directly"
+      # Try matching literal source code
+      analyze-types: false
+
