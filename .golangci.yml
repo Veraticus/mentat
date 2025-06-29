@@ -113,7 +113,7 @@ linters:
     iface:
       enable:
         - identical  # No identical interfaces
-        - unused     # No unused interfaces
+        # - unused   # Disabled: We have interface-only packages by design
         # - opaque   # Disabled: We intentionally return interfaces for decoration patterns
         
     nakedret:
@@ -124,6 +124,8 @@ linters:
       
     govet:
       enable-all: true
+      disable:
+        - fieldalignment  # Memory optimization, not correctness
       
     forbidigo:
       # Override default patterns

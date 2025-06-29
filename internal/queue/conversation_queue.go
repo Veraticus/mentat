@@ -9,9 +9,9 @@ import (
 // ConversationQueue manages messages for a single conversation.
 // It ensures FIFO ordering and thread-safe operations.
 type ConversationQueue struct {
-	conversationID string
 	messages       *list.List
-	processing     *Message // Currently processing message
+	processing     *Message
+	conversationID string
 	mu             sync.Mutex
 }
 
@@ -27,16 +27,16 @@ func NewConversationQueue(conversationID string) *ConversationQueue {
 func (cq *ConversationQueue) Enqueue(msg *Message) error {
 	cq.mu.Lock()
 	defer cq.mu.Unlock()
-	
+
 	if msg == nil {
 		return fmt.Errorf("cannot enqueue nil message")
 	}
-	
+
 	if msg.ConversationID != cq.conversationID {
-		return fmt.Errorf("message conversation ID %s does not match queue ID %s", 
+		return fmt.Errorf("message conversation ID %s does not match queue ID %s",
 			msg.ConversationID, cq.conversationID)
 	}
-	
+
 	cq.messages.PushBack(msg)
 	return nil
 }
@@ -46,22 +46,25 @@ func (cq *ConversationQueue) Enqueue(msg *Message) error {
 func (cq *ConversationQueue) Dequeue() *Message {
 	cq.mu.Lock()
 	defer cq.mu.Unlock()
-	
+
 	// Can't dequeue if already processing
 	if cq.processing != nil {
 		return nil
 	}
-	
+
 	// Get the front message
 	front := cq.messages.Front()
 	if front == nil {
 		return nil
 	}
-	
-	msg := front.Value.(*Message)
+
+	msg, ok := front.Value.(*Message)
+	if !ok {
+		return nil
+	}
 	cq.messages.Remove(front)
 	cq.processing = msg
-	
+
 	return msg
 }
 
@@ -69,7 +72,7 @@ func (cq *ConversationQueue) Dequeue() *Message {
 func (cq *ConversationQueue) Complete() {
 	cq.mu.Lock()
 	defer cq.mu.Unlock()
-	
+
 	cq.processing = nil
 }
 
@@ -77,7 +80,7 @@ func (cq *ConversationQueue) Complete() {
 func (cq *ConversationQueue) Size() int {
 	cq.mu.Lock()
 	defer cq.mu.Unlock()
-	
+
 	return cq.messages.Len()
 }
 
@@ -85,7 +88,7 @@ func (cq *ConversationQueue) Size() int {
 func (cq *ConversationQueue) IsProcessing() bool {
 	cq.mu.Lock()
 	defer cq.mu.Unlock()
-	
+
 	return cq.processing != nil
 }
 
@@ -93,6 +96,6 @@ func (cq *ConversationQueue) IsProcessing() bool {
 func (cq *ConversationQueue) IsEmpty() bool {
 	cq.mu.Lock()
 	defer cq.mu.Unlock()
-	
+
 	return cq.messages.Len() == 0 && cq.processing == nil
 }

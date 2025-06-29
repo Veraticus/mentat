@@ -1,3 +1,3 @@
-module github.com/mentat/mentat
+module github.com/joshsymonds/mentat
 
 go 1.23.9

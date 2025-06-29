@@ -1,18 +1,29 @@
+// Package conversation provides session management for maintaining conversation context.
 package conversation
 
 import "time"
 
-// SessionManager handles conversation session lifecycle.
-// A session groups related messages within a time window.
+// SessionManager handles conversation continuity.
 type SessionManager interface {
-	// GetOrCreateSession returns the session ID for a conversation.
-	// Creates a new session if none exists or the current one expired.
-	GetOrCreateSession(conversationID string) string
+	// GetOrCreateSession returns the session ID for a user identifier
+	GetOrCreateSession(identifier string) string
 	
-	// ShouldContinueSession checks if a message should use the existing session.
-	// Returns true if the timestamp is within the session window.
-	ShouldContinueSession(conversationID string, timestamp time.Time) bool
+	// GetSessionHistory returns the message history for a session
+	GetSessionHistory(sessionID string) []Message
 	
-	// EndSession explicitly ends a session for a conversation.
-	EndSession(conversationID string)
+	// ExpireSessions removes sessions that haven't been active since the given time
+	ExpireSessions(before time.Time) int
+	
+	// GetLastSessionID returns the most recent session ID for an identifier
+	GetLastSessionID(identifier string) string
+}
+
+// Message represents a message within a conversation session.
+type Message struct {
+	Timestamp time.Time // 8 bytes
+	ID        string    // 16 bytes
+	SessionID string    // 16 bytes
+	From      string    // 16 bytes
+	Text      string    // 16 bytes
+	Response  string    // 16 bytes
 }

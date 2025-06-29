@@ -3,41 +3,32 @@ package queue
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 )
 
 // Manager orchestrates multiple conversation queues with fair scheduling.
 type Manager struct {
-	queues       map[string]*ConversationQueue
-	stateMachine StateMachine
-	
-	// Channel for new messages
-	incomingCh chan *Message
-	
-	// Channel for workers to request messages
-	requestCh chan chan *Message
-	
-	// Waiting workers
-	waitingWorkers []chan *Message
-	
-	// Fair scheduling state
+	ctx               context.Context
+	stateMachine      StateMachine
+	cancel            context.CancelFunc
+	queues            map[string]*ConversationQueue
+	incomingCh        chan *Message
+	requestCh         chan chan *Message
 	conversationOrder []string
+	waitingWorkers    []chan *Message
+	wg                sync.WaitGroup
 	currentIndex      int
-	
-	// Shutdown coordination
-	ctx      context.Context
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
-	shutdown bool
-	
-	mu sync.RWMutex
+	mu                sync.RWMutex
+	shutdown          bool
+	started           chan struct{} // Signals that Start() has begun
 }
 
 // NewManager creates a new queue manager.
 func NewManager(ctx context.Context) *Manager {
 	ctx, cancel := context.WithCancel(ctx)
-	
+
 	return &Manager{
 		queues:            make(map[string]*ConversationQueue),
 		stateMachine:      NewStateMachine(),
@@ -47,6 +38,7 @@ func NewManager(ctx context.Context) *Manager {
 		conversationOrder: make([]string, 0),
 		ctx:               ctx,
 		cancel:            cancel,
+		started:           make(chan struct{}),
 	}
 }
 
@@ -56,11 +48,14 @@ func (m *Manager) Start() {
 	defer m.wg.Done()
 	defer m.cleanup()
 	
+	// Signal that we've started
+	close(m.started)
+
 	for {
 		select {
 		case <-m.ctx.Done():
 			return
-			
+
 		case msg := <-m.incomingCh:
 			// Add message to appropriate queue
 			if err := m.enqueue(msg); err != nil {
@@ -70,7 +65,7 @@ func (m *Manager) Start() {
 				// Try to dispatch to waiting worker
 				m.tryDispatch()
 			}
-			
+
 		case workerCh := <-m.requestCh:
 			// Worker is requesting a message
 			msg := m.getNextMessage()
@@ -91,7 +86,7 @@ func (m *Manager) Submit(msg *Message) error {
 	if msg == nil {
 		return fmt.Errorf("cannot submit nil message")
 	}
-	
+
 	// Check if shutting down
 	m.mu.RLock()
 	if m.shutdown {
@@ -99,13 +94,13 @@ func (m *Manager) Submit(msg *Message) error {
 		return fmt.Errorf("queue manager shutting down")
 	}
 	m.mu.RUnlock()
-	
+
 	// Set initial state
 	if err := m.stateMachine.Transition(msg, StateQueued); err != nil {
 		// Message is probably already in a state, just add it
 		msg.SetState(StateQueued)
 	}
-	
+
 	select {
 	case m.incomingCh <- msg:
 		return nil
@@ -119,7 +114,7 @@ func (m *Manager) Submit(msg *Message) error {
 // RequestMessage is called by workers to get the next message to process.
 func (m *Manager) RequestMessage(ctx context.Context) (*Message, error) {
 	respCh := make(chan *Message, 1)
-	
+
 	select {
 	case m.requestCh <- respCh:
 		// Request sent
@@ -128,12 +123,14 @@ func (m *Manager) RequestMessage(ctx context.Context) (*Message, error) {
 	case <-m.ctx.Done():
 		return nil, fmt.Errorf("queue manager shutting down")
 	}
-	
+
 	select {
 	case msg := <-respCh:
 		if msg != nil {
 			// Transition to processing state
-			m.stateMachine.Transition(msg, StateProcessing)
+			if err := m.stateMachine.Transition(msg, StateProcessing); err != nil {
+				log.Printf("Failed to transition message %s to processing: %v", msg.ID, err)
+			}
 		}
 		return msg, nil
 	case <-ctx.Done():
@@ -148,16 +145,39 @@ func (m *Manager) CompleteMessage(msg *Message) error {
 	if msg == nil {
 		return fmt.Errorf("cannot complete nil message")
 	}
-	
+
 	m.mu.Lock()
 	queue, exists := m.queues[msg.ConversationID]
 	m.mu.Unlock()
-	
+
 	if !exists {
 		return fmt.Errorf("no queue found for conversation %s", msg.ConversationID)
 	}
-	
+
 	queue.Complete()
+	
+	// Check if we should clean up this queue now
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	
+	if queue.IsEmpty() && !queue.IsProcessing() {
+		// Remove from queues
+		delete(m.queues, msg.ConversationID)
+		// Remove from order
+		for i, id := range m.conversationOrder {
+			if id == msg.ConversationID {
+				m.conversationOrder = append(
+					m.conversationOrder[:i],
+					m.conversationOrder[i+1:]...,
+				)
+				if m.currentIndex > i {
+					m.currentIndex--
+				}
+				break
+			}
+		}
+	}
+	
 	return nil
 }
 
@@ -167,15 +187,29 @@ func (m *Manager) Shutdown(timeout time.Duration) error {
 	m.mu.Lock()
 	m.shutdown = true
 	m.mu.Unlock()
-	
+
+	// Cancel context to signal shutdown
 	m.cancel()
-	
+
+	// Wait for Start() to have been called
+	select {
+	case <-m.started:
+		// Start() was called, proceed with shutdown
+	case <-time.After(100 * time.Millisecond):
+		// Start() was never called, nothing to shut down
+		return nil
+	}
+
+	// Create done channel before starting goroutine to avoid race
 	done := make(chan struct{})
+	
+	// Start goroutine to signal completion
 	go func() {
 		m.wg.Wait()
 		close(done)
 	}()
-	
+
+	// Wait for completion or timeout
 	select {
 	case <-done:
 		return nil
@@ -188,7 +222,7 @@ func (m *Manager) Shutdown(timeout time.Duration) error {
 func (m *Manager) enqueue(msg *Message) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	queue, exists := m.queues[msg.ConversationID]
 	if !exists {
 		queue = NewConversationQueue(msg.ConversationID)
@@ -196,7 +230,7 @@ func (m *Manager) enqueue(msg *Message) error {
 		// Add to conversation order for fair scheduling
 		m.conversationOrder = append(m.conversationOrder, msg.ConversationID)
 	}
-	
+
 	return queue.Enqueue(msg)
 }
 
@@ -204,11 +238,11 @@ func (m *Manager) enqueue(msg *Message) error {
 func (m *Manager) getNextMessage() *Message {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	if len(m.conversationOrder) == 0 {
 		return nil
 	}
-	
+
 	// Try each conversation in round-robin order
 	attemptsLeft := len(m.conversationOrder)
 	for attemptsLeft > 0 {
@@ -216,10 +250,10 @@ func (m *Manager) getNextMessage() *Message {
 		if m.currentIndex >= len(m.conversationOrder) {
 			m.currentIndex = 0
 		}
-		
+
 		convID := m.conversationOrder[m.currentIndex]
 		queue, exists := m.queues[convID]
-		
+
 		if !exists {
 			// Remove from order and adjust index
 			m.conversationOrder = append(
@@ -232,23 +266,24 @@ func (m *Manager) getNextMessage() *Message {
 			attemptsLeft--
 			continue
 		}
-		
+
 		// Move to next conversation for fairness
 		m.currentIndex++
-		
+
 		// Skip if already processing
 		if queue.IsProcessing() {
 			attemptsLeft--
 			continue
 		}
-		
+
 		msg := queue.Dequeue()
 		if msg != nil {
 			return msg
 		}
-		
-		// Clean up empty queues
-		if queue.IsEmpty() {
+
+		// Don't clean up queues while processing - CompleteMessage needs them
+		// Only clean up if empty AND not processing
+		if queue.IsEmpty() && !queue.IsProcessing() {
 			// Remove from queues
 			delete(m.queues, convID)
 			// Remove from order
@@ -265,10 +300,10 @@ func (m *Manager) getNextMessage() *Message {
 				}
 			}
 		}
-		
+
 		attemptsLeft--
 	}
-	
+
 	return nil
 }
 
@@ -276,23 +311,25 @@ func (m *Manager) getNextMessage() *Message {
 func (m *Manager) tryDispatch() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	if len(m.waitingWorkers) == 0 {
 		return
 	}
-	
+
 	msg := m.getNextMessageLocked()
 	if msg == nil {
 		return
 	}
-	
+
 	// Send to first waiting worker
 	workerCh := m.waitingWorkers[0]
 	m.waitingWorkers = m.waitingWorkers[1:]
-	
+
 	// Transition to processing state
-	m.stateMachine.Transition(msg, StateProcessing)
-	
+	if err := m.stateMachine.Transition(msg, StateProcessing); err != nil {
+		log.Printf("Failed to transition message %s to processing: %v", msg.ID, err)
+	}
+
 	// Send message (non-blocking in case worker gave up)
 	select {
 	case workerCh <- msg:
@@ -301,7 +338,9 @@ func (m *Manager) tryDispatch() {
 		msg.SetState(StateQueued)
 		if queue, exists := m.queues[msg.ConversationID]; exists {
 			queue.Complete() // Reset processing state
-			queue.Enqueue(msg)
+			if err := queue.Enqueue(msg); err != nil {
+				log.Printf("Failed to requeue message %s: %v", msg.ID, err)
+			}
 		}
 	}
 }
@@ -311,7 +350,7 @@ func (m *Manager) getNextMessageLocked() *Message {
 	if len(m.conversationOrder) == 0 {
 		return nil
 	}
-	
+
 	// Try each conversation in round-robin order
 	attemptsLeft := len(m.conversationOrder)
 	for attemptsLeft > 0 {
@@ -319,10 +358,10 @@ func (m *Manager) getNextMessageLocked() *Message {
 		if m.currentIndex >= len(m.conversationOrder) {
 			m.currentIndex = 0
 		}
-		
+
 		convID := m.conversationOrder[m.currentIndex]
 		queue, exists := m.queues[convID]
-		
+
 		if !exists {
 			// Remove from order and adjust index
 			m.conversationOrder = append(
@@ -335,23 +374,24 @@ func (m *Manager) getNextMessageLocked() *Message {
 			attemptsLeft--
 			continue
 		}
-		
+
 		// Move to next conversation for fairness
 		m.currentIndex++
-		
+
 		// Skip if already processing
 		if queue.IsProcessing() {
 			attemptsLeft--
 			continue
 		}
-		
+
 		msg := queue.Dequeue()
 		if msg != nil {
 			return msg
 		}
-		
-		// Clean up empty queues
-		if queue.IsEmpty() {
+
+		// Don't clean up queues while processing - CompleteMessage needs them
+		// Only clean up if empty AND not processing
+		if queue.IsEmpty() && !queue.IsProcessing() {
 			// Remove from queues
 			delete(m.queues, convID)
 			// Remove from order
@@ -368,10 +408,10 @@ func (m *Manager) getNextMessageLocked() *Message {
 				}
 			}
 		}
-		
+
 		attemptsLeft--
 	}
-	
+
 	return nil
 }
 
@@ -379,7 +419,7 @@ func (m *Manager) getNextMessageLocked() *Message {
 func (m *Manager) cleanup() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	// Send nil to all waiting workers to unblock them
 	for _, workerCh := range m.waitingWorkers {
 		select {
@@ -388,7 +428,7 @@ func (m *Manager) cleanup() {
 		}
 	}
 	m.waitingWorkers = nil
-	
+
 	// Close channels
 	close(m.incomingCh)
 	close(m.requestCh)
@@ -398,22 +438,22 @@ func (m *Manager) cleanup() {
 func (m *Manager) Stats() map[string]int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	stats := make(map[string]int)
 	totalQueued := 0
 	totalProcessing := 0
-	
+
 	for _, queue := range m.queues {
 		totalQueued += queue.Size()
 		if queue.IsProcessing() {
 			totalProcessing++
 		}
 	}
-	
+
 	stats["conversations"] = len(m.queues)
 	stats["queued"] = totalQueued
 	stats["processing"] = totalProcessing
 	stats["waiting_workers"] = len(m.waitingWorkers)
-	
+
 	return stats
 }

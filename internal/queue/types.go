@@ -8,66 +8,78 @@ import (
 // State represents the current state of a message in the queue.
 type State string
 
+// MessageState represents the state machine states.
+type MessageState int
+
 const (
 	// StateQueued indicates the message is waiting to be processed.
 	StateQueued State = "queued"
-	
+
 	// StateProcessing indicates the message is being handled by a worker.
 	StateProcessing State = "processing"
-	
+
 	// StateValidating indicates the message is being validated.
 	StateValidating State = "validating"
-	
+
 	// StateCompleted indicates the message was processed successfully.
 	StateCompleted State = "completed"
-	
+
 	// StateFailed indicates the message processing failed permanently.
 	StateFailed State = "failed"
-	
+
 	// StateRetrying indicates the message will be retried.
 	StateRetrying State = "retrying"
 )
 
+// StateTransition represents a state change in message history.
+type StateTransition struct {
+	From      State
+	To        State
+	Timestamp time.Time
+	Reason    string
+}
+
+const (
+	// MessageStateQueued indicates the message is waiting to be processed.
+	MessageStateQueued MessageState = iota
+	// MessageStateProcessing indicates the message is being processed.
+	MessageStateProcessing
+	// MessageStateValidating indicates the message is being validated.
+	MessageStateValidating
+	// MessageStateCompleted indicates processing completed successfully.
+	MessageStateCompleted
+	// MessageStateFailed indicates processing failed permanently.
+	MessageStateFailed
+	// MessageStateRetrying indicates the message will be retried.
+	MessageStateRetrying
+)
+
+// Priority represents message priority levels.
+type Priority int
+
+const (
+	// PriorityNormal is the default priority.
+	PriorityNormal Priority = iota
+	// PriorityHigh is for scheduled tasks and retries.
+	PriorityHigh
+)
+
 // Message represents a message in the queue system.
 type Message struct {
-	// ID is the unique identifier for this message.
-	ID string
-	
-	// ConversationID groups related messages together.
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	Error          error
+	ProcessedAt    *time.Time
+	Sender         string
+	ID             string
 	ConversationID string
-	
-	// Sender is the user who sent the message.
-	Sender string
-	
-	// Text is the message content.
-	Text string
-	
-	// State is the current processing state.
-	State State
-	
-	// Attempts tracks how many times we've tried to process this.
-	Attempts int
-	
-	// MaxAttempts is the maximum number of processing attempts.
-	MaxAttempts int
-	
-	// CreatedAt is when the message entered the queue.
-	CreatedAt time.Time
-	
-	// UpdatedAt is when the message was last modified.
-	UpdatedAt time.Time
-	
-	// ProcessedAt is when processing completed (if applicable).
-	ProcessedAt *time.Time
-	
-	// Error contains the last error if processing failed.
-	Error error
-	
-	// Response contains the LLM response if processing succeeded.
-	Response string
-	
-	// mu protects concurrent access to the message.
-	mu sync.RWMutex
+	Text           string
+	Response       string
+	State          State
+	Attempts       int
+	MaxAttempts    int
+	StateHistory   []StateTransition
+	mu             sync.RWMutex
 }
 
 // NewMessage creates a new message with default values.
@@ -83,6 +95,7 @@ func NewMessage(id, conversationID, sender, text string) *Message {
 		MaxAttempts:    3,
 		CreatedAt:      now,
 		UpdatedAt:      now,
+		StateHistory:   []StateTransition{},
 	}
 }
 
@@ -133,4 +146,70 @@ func (m *Message) CanRetry() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.Attempts < m.MaxAttempts
+}
+
+// AddStateTransition records a state transition in the message history.
+func (m *Message) AddStateTransition(from, to State, reason string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	
+	transition := StateTransition{
+		From:      from,
+		To:        to,
+		Timestamp: time.Now(),
+		Reason:    reason,
+	}
+	
+	m.StateHistory = append(m.StateHistory, transition)
+}
+
+// GetStateHistory returns a copy of the state history.
+func (m *Message) GetStateHistory() []StateTransition {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	
+	// Return a copy to prevent external modifications
+	history := make([]StateTransition, len(m.StateHistory))
+	copy(history, m.StateHistory)
+	return history
+}
+
+// AtomicTransition performs an atomic state transition.
+// It returns true if the transition was successful, false otherwise.
+func (m *Message) AtomicTransition(expectedState, newState State) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	
+	if m.State != expectedState {
+		return false
+	}
+	
+	m.State = newState
+	m.UpdatedAt = time.Now()
+	return true
+}
+
+// QueuedMessage represents a message in the queue with metadata.
+type QueuedMessage struct {
+	QueuedAt       time.Time
+	LastError      error
+	ID             string
+	ConversationID string
+	From           string
+	Text           string
+	State          MessageState
+	Priority       Priority
+	Attempts       int
+}
+
+// Stats provides queue statistics.
+type Stats struct {
+	TotalQueued        int
+	TotalProcessing    int
+	TotalCompleted     int
+	TotalFailed        int
+	ConversationCount  int
+	OldestMessageAge   time.Duration
+	AverageWaitTime    time.Duration
+	AverageProcessTime time.Duration
 }

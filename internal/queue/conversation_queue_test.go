@@ -77,7 +77,9 @@ func TestConversationQueue_IsProcessing(t *testing.T) {
 	cq := NewConversationQueue("conv-1")
 	msg := NewMessage("msg-1", "conv-1", "sender", "test")
 	
-	cq.Enqueue(msg)
+	if err := cq.Enqueue(msg); err != nil {
+		t.Fatalf("Enqueue failed: %v", err)
+	}
 	
 	if cq.IsProcessing() {
 		t.Error("Should not be processing before dequeue")
@@ -104,7 +106,9 @@ func TestConversationQueue_IsEmpty(t *testing.T) {
 	}
 	
 	msg := NewMessage("msg-1", "conv-1", "sender", "test")
-	cq.Enqueue(msg)
+	if err := cq.Enqueue(msg); err != nil {
+		t.Fatalf("Enqueue failed: %v", err)
+	}
 	
 	if cq.IsEmpty() {
 		t.Error("Queue with message should not be empty")

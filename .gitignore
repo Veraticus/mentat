@@ -36,6 +36,7 @@ Thumbs.db
 
 # External libraries
 /vendor/
+/prompts/
 
 # Screenshot tool binary
 /cmd/screenshot/screenshot

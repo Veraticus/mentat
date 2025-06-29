@@ -32,29 +32,59 @@ func (sm *stateMachine) Transition(msg *Message, to State) error {
 		return fmt.Errorf("cannot transition nil message")
 	}
 	
+	// We need to handle this atomically to prevent race conditions
 	currentState := msg.GetState()
 	
 	if !sm.CanTransition(currentState, to) {
 		return fmt.Errorf("invalid transition from %s to %s", currentState, to)
 	}
 	
-	// Log the transition for observability
-	oldState := currentState
-	msg.SetState(to)
+	// Handle state-specific logic and determine final state
+	finalState := to
+	reason := "state transition"
+	shouldIncrement := false
 	
-	// Handle state-specific logic
 	switch to {
 	case StateProcessing:
-		if oldState == StateRetrying {
-			msg.IncrementAttempts()
+		switch currentState {
+		case StateRetrying:
+			shouldIncrement = true
+			reason = fmt.Sprintf("retry attempt %d", msg.Attempts+1)
+		case StateQueued:
+			reason = "starting processing"
 		}
 	case StateFailed:
-		if msg.CanRetry() && oldState == StateProcessing {
+		if msg.CanRetry() && currentState == StateProcessing {
 			// If we can retry, go to retrying instead
-			msg.SetState(StateRetrying)
-			return nil
+			finalState = StateRetrying
+			reason = fmt.Sprintf("failed but retrying (attempt %d/%d)", msg.Attempts, msg.MaxAttempts)
+		} else {
+			reason = "permanently failed"
+			if msg.Error != nil {
+				reason = fmt.Sprintf("permanently failed: %v", msg.Error)
+			}
 		}
+	case StateCompleted:
+		reason = "successfully completed"
+	case StateValidating:
+		reason = "starting validation"
+	case StateRetrying:
+		reason = fmt.Sprintf("scheduling retry (attempt %d/%d)", msg.Attempts, msg.MaxAttempts)
 	}
+	
+	// Attempt atomic transition
+	if !msg.AtomicTransition(currentState, finalState) {
+		// State changed while we were processing
+		return fmt.Errorf("state changed during transition (was %s)", currentState)
+	}
+	
+	// Handle post-transition updates
+	if shouldIncrement {
+		msg.IncrementAttempts()
+	}
+	
+	// Record the transition in history
+	msg.AddStateTransition(currentState, finalState, reason)
 	
 	return nil
 }
@@ -77,6 +107,7 @@ func (sm *stateMachine) CanTransition(from, to State) bool {
 	
 	return false
 }
+
 
 // IsTerminal checks if a state is terminal (no outgoing transitions).
 func (sm *stateMachine) IsTerminal(state State) bool {

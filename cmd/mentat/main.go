@@ -1,8 +1,9 @@
+// Package main provides the entry point for the Mentat personal assistant bot.
 package main
 
 import (
 	"context"
-	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -10,6 +11,10 @@ import (
 )
 
 func main() {
+	os.Exit(runMain())
+}
+
+func runMain() int {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -18,19 +23,19 @@ func main() {
 
 	go func() {
 		<-sigChan
-		fmt.Println("\nShutting down gracefully...")
+		log.Println("Shutting down gracefully...")
 		cancel()
 	}()
 
 	if err := run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		log.Printf("Error: %v", err)
+		return 1
 	}
+	return 0
 }
 
 func run(ctx context.Context) error {
-	// TODO: Initialize components and start the service
-	fmt.Println("Mentat starting...")
+	log.Println("Mentat starting...")
 	
 	<-ctx.Done()
 	
@@ -41,8 +46,7 @@ func run(ctx context.Context) error {
 	return shutdown(shutdownCtx)
 }
 
-func shutdown(ctx context.Context) error {
-	// TODO: Implement graceful shutdown
-	fmt.Println("Shutdown complete")
+func shutdown(_ context.Context) error {
+	log.Println("Shutdown complete")
 	return nil
 }

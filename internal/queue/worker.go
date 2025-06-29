@@ -6,21 +6,25 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"github.com/joshsymonds/mentat/internal/claude"
+	"github.com/joshsymonds/mentat/internal/signal"
 )
 
 // WorkerConfig holds configuration for a worker.
 type WorkerConfig struct {
-	ID           int
-	LLM          LLM
-	Messenger    Messenger
-	QueueManager *Manager
-	RateLimiter  RateLimiter
+	LLM                   claude.LLM
+	Messenger             signal.Messenger
+	RateLimiter           RateLimiter
+	QueueManager          *Manager
+	TypingIndicatorMgr    signal.TypingIndicatorManager
+	ID                    int
 }
 
 // worker processes messages from the queue.
 type worker struct {
-	config      WorkerConfig
-	stateMachine StateMachine
+	stateMachine StateMachine // 16 bytes (interface)
+	config       WorkerConfig // 64 bytes (embedded struct)
 }
 
 // NewWorker creates a new worker instance.
@@ -31,10 +35,10 @@ func NewWorker(config WorkerConfig) Worker {
 	}
 }
 
-// Start begins processing messages. Blocks until context is cancelled.
+// Start begins processing messages. Blocks until context is canceled.
 func (w *worker) Start(ctx context.Context) error {
 	log.Printf("Worker %d starting", w.config.ID)
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -45,24 +49,24 @@ func (w *worker) Start(ctx context.Context) error {
 			reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			msg, err := w.config.QueueManager.RequestMessage(reqCtx)
 			cancel()
-			
+
 			if err != nil {
 				if err == context.DeadlineExceeded {
 					// No messages available, continue
 					continue
 				}
-				// Context cancelled or other error
+				// Context canceled or other error
 				return err
 			}
-			
+
 			if msg == nil {
 				// Queue manager is shutting down
 				return nil
 			}
-			
+
 			// Process the message
 			if err := w.Process(ctx, msg); err != nil {
-				log.Printf("Worker %d error processing message %s: %v", 
+				log.Printf("Worker %d error processing message %s: %v",
 					w.config.ID, msg.ID, err)
 			}
 		}
@@ -72,53 +76,63 @@ func (w *worker) Start(ctx context.Context) error {
 // Process handles a single message through its lifecycle.
 func (w *worker) Process(ctx context.Context, msg *Message) error {
 	// Apply rate limiting
-	if err := w.config.RateLimiter.Wait(ctx, msg.ConversationID); err != nil {
-		return fmt.Errorf("rate limiter error: %w", err)
+	if !w.config.RateLimiter.Allow(msg.ConversationID) {
+		return fmt.Errorf("rate limited")
 	}
-	
+	w.config.RateLimiter.Record(msg.ConversationID)
+
 	// Start typing indicator
-	typingCtx, typingCancel := context.WithCancel(ctx)
-	defer typingCancel()
-	
-	go w.sendTypingIndicator(typingCtx, msg.Sender)
-	
+	if w.config.TypingIndicatorMgr != nil {
+		if err := w.config.TypingIndicatorMgr.Start(ctx, msg.Sender); err != nil {
+			log.Printf("Failed to start typing indicator: %v", err)
+		}
+		defer w.config.TypingIndicatorMgr.Stop(msg.Sender)
+	} else {
+		// Fallback to inline implementation
+		typingCtx, typingCancel := context.WithCancel(ctx)
+		defer typingCancel()
+		go w.sendTypingIndicator(typingCtx, msg.Sender)
+	}
+
 	// Process the message
 	response, err := w.processMessage(ctx, msg)
-	
+
 	if err != nil {
 		msg.SetError(err)
-		
+
 		// Check if we can retry
 		if msg.CanRetry() {
 			// Set retrying state first
-			if err := w.config.QueueManager.stateMachine.Transition(msg, StateRetrying); err != nil {
+			if transitionErr := w.config.QueueManager.stateMachine.Transition(msg, StateRetrying); transitionErr != nil {
 				// If transition fails, just set the state directly
 				msg.SetState(StateRetrying)
 			}
 			// Don't re-submit, the queue manager should handle retries
 		} else {
-			if err := w.config.QueueManager.stateMachine.Transition(msg, StateFailed); err != nil {
+			if transitionErr := w.config.QueueManager.stateMachine.Transition(msg, StateFailed); transitionErr != nil {
 				msg.SetState(StateFailed)
 			}
 		}
-		
+
 		return err
 	}
-	
+
 	// Success - save response and send
 	msg.SetResponse(response)
 	if err := w.config.QueueManager.stateMachine.Transition(msg, StateCompleted); err != nil {
 		msg.SetState(StateCompleted)
 	}
-	
+
 	// Send response to user
 	if err := w.config.Messenger.Send(ctx, msg.Sender, response); err != nil {
 		return fmt.Errorf("failed to send response: %w", err)
 	}
-	
+
 	// Mark message as complete in queue
-	w.config.QueueManager.CompleteMessage(msg)
-	
+	if err := w.config.QueueManager.CompleteMessage(msg); err != nil {
+		log.Printf("Failed to complete message %s: %v", msg.ID, err)
+	}
+
 	return nil
 }
 
@@ -126,26 +140,26 @@ func (w *worker) Process(ctx context.Context, msg *Message) error {
 func (w *worker) processMessage(ctx context.Context, msg *Message) (string, error) {
 	// Create a session ID based on conversation
 	sessionID := fmt.Sprintf("signal-%s", msg.ConversationID)
-	
+
 	// Query the LLM
-	response, err := w.config.LLM.Query(ctx, msg.Text, sessionID)
+	llmResp, err := w.config.LLM.Query(ctx, msg.Text, sessionID)
 	if err != nil {
 		return "", fmt.Errorf("LLM query failed: %w", err)
 	}
-	
-	return response, nil
+
+	return llmResp.Message, nil
 }
 
 // sendTypingIndicator sends typing indicators periodically.
 func (w *worker) sendTypingIndicator(ctx context.Context, recipient string) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
-	
+
 	// Send initial typing indicator
 	if err := w.config.Messenger.SendTypingIndicator(ctx, recipient); err != nil {
 		log.Printf("Failed to send typing indicator: %v", err)
 	}
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -159,34 +173,51 @@ func (w *worker) sendTypingIndicator(ctx context.Context, recipient string) {
 	}
 }
 
+// Stop gracefully stops the worker.
+func (w *worker) Stop() error {
+	log.Printf("Worker %d stopping", w.config.ID)
+	return nil
+}
+
+// ID returns the worker's unique identifier.
+func (w *worker) ID() string {
+	return fmt.Sprintf("worker-%d", w.config.ID)
+}
+
 // WorkerPool manages multiple workers.
 type WorkerPool struct {
-	workers     []Worker
-	queueMgr    *Manager
 	rateLimiter RateLimiter
+	queueMgr    *Manager
+	workers     []Worker
+	typingMgr   signal.TypingIndicatorManager
 	wg          sync.WaitGroup
 	mu          sync.RWMutex
 }
 
 // NewWorkerPool creates a new worker pool.
-func NewWorkerPool(size int, llm LLM, messenger Messenger, queueMgr *Manager, rateLimiter RateLimiter) *WorkerPool {
+func NewWorkerPool(size int, llm claude.LLM, messenger signal.Messenger, queueMgr *Manager, rateLimiter RateLimiter) *WorkerPool {
 	workers := make([]Worker, size)
 	
+	// Create a shared typing indicator manager
+	typingMgr := signal.NewTypingIndicatorManager(messenger)
+
 	for i := 0; i < size; i++ {
 		config := WorkerConfig{
-			ID:           i + 1,
-			LLM:          llm,
-			Messenger:    messenger,
-			QueueManager: queueMgr,
-			RateLimiter:  rateLimiter,
+			ID:                 i + 1,
+			LLM:                llm,
+			Messenger:          messenger,
+			QueueManager:       queueMgr,
+			RateLimiter:        rateLimiter,
+			TypingIndicatorMgr: typingMgr,
 		}
 		workers[i] = NewWorker(config)
 	}
-	
+
 	return &WorkerPool{
 		workers:     workers,
 		queueMgr:    queueMgr,
 		rateLimiter: rateLimiter,
+		typingMgr:   typingMgr,
 	}
 }
 
@@ -194,7 +225,7 @@ func NewWorkerPool(size int, llm LLM, messenger Messenger, queueMgr *Manager, ra
 func (wp *WorkerPool) Start(ctx context.Context) error {
 	wp.mu.Lock()
 	defer wp.mu.Unlock()
-	
+
 	for i, worker := range wp.workers {
 		wp.wg.Add(1)
 		go func(w Worker, id int) {
@@ -204,13 +235,21 @@ func (wp *WorkerPool) Start(ctx context.Context) error {
 			}
 		}(worker, i+1)
 	}
-	
+
 	return nil
 }
 
 // Wait blocks until all workers have stopped.
 func (wp *WorkerPool) Wait() {
 	wp.wg.Wait()
+}
+
+// Stop gracefully stops the worker pool.
+func (wp *WorkerPool) Stop() {
+	// Stop all typing indicators
+	if wp.typingMgr != nil {
+		wp.typingMgr.StopAll()
+	}
 }
 
 // Size returns the number of workers in the pool.

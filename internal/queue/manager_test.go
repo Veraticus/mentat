@@ -46,7 +46,9 @@ func TestManager_SubmitAndRequest(t *testing.T) {
 	}
 	
 	// Complete and request next
-	manager.CompleteMessage(received1)
+	if completeErr := manager.CompleteMessage(received1); completeErr != nil {
+		t.Fatalf("Failed to complete message: %v", completeErr)
+	}
 	
 	received2, err := manager.RequestMessage(reqCtx)
 	if err != nil {
@@ -106,7 +108,9 @@ func TestManager_FairScheduling(t *testing.T) {
 			t.Fatalf("Failed to get message %d: %v", i, err)
 		}
 		convCounts[msg.ConversationID]++
-		manager.CompleteMessage(msg)
+		if err := manager.CompleteMessage(msg); err != nil {
+			t.Errorf("Failed to complete message: %v", err)
+		}
 		
 		// Small delay to ensure proper ordering
 		time.Sleep(5 * time.Millisecond)
@@ -130,7 +134,9 @@ func TestManager_Shutdown(t *testing.T) {
 	
 	// Submit a message
 	msg := NewMessage("msg-1", "conv-1", "sender", "test")
-	manager.Submit(msg)
+	if err := manager.Submit(msg); err != nil {
+		t.Fatalf("Failed to submit message: %v", err)
+	}
 	
 	// Shutdown with timeout
 	err := manager.Shutdown(2 * time.Second)
@@ -159,9 +165,15 @@ func TestManager_Stats(t *testing.T) {
 	}
 	
 	// Submit messages
-	manager.Submit(NewMessage("msg-1", "conv-1", "sender", "test"))
-	manager.Submit(NewMessage("msg-2", "conv-1", "sender", "test"))
-	manager.Submit(NewMessage("msg-3", "conv-2", "sender", "test"))
+	if err := manager.Submit(NewMessage("msg-1", "conv-1", "sender", "test")); err != nil {
+		t.Fatalf("Failed to submit msg-1: %v", err)
+	}
+	if err := manager.Submit(NewMessage("msg-2", "conv-1", "sender", "test")); err != nil {
+		t.Fatalf("Failed to submit msg-2: %v", err)
+	}
+	if err := manager.Submit(NewMessage("msg-3", "conv-2", "sender", "test")); err != nil {
+		t.Errorf("Failed to submit message: %v", err)
+	}
 	
 	// Give time for messages to be queued
 	time.Sleep(10 * time.Millisecond)

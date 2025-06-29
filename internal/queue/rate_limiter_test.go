@@ -122,22 +122,33 @@ func TestRateLimiter_PerConversation(t *testing.T) {
 	rl := NewRateLimiter(2, 1, 50*time.Millisecond)
 	
 	// Each conversation should have its own bucket
-	if !rl.Allow("conv1") || !rl.Allow("conv1") {
-		t.Error("Expected 2 allows for conv1")
+	// Should allow 2 requests for conv1
+	if !rl.Allow("conv1") {
+		t.Error("Expected first allow for conv1")
+	}
+	if !rl.Allow("conv1") {
+		t.Error("Expected second allow for conv1")
 	}
 	if rl.Allow("conv1") {
 		t.Error("Expected conv1 to be rate limited")
 	}
 	
 	// conv2 should still have tokens
-	if !rl.Allow("conv2") || !rl.Allow("conv2") {
-		t.Error("Expected 2 allows for conv2")
+	// Should allow 2 requests for conv2
+	if !rl.Allow("conv2") {
+		t.Error("Expected first allow for conv2")
+	}
+	if !rl.Allow("conv2") {
+		t.Error("Expected second allow for conv2")
 	}
 	if rl.Allow("conv2") {
 		t.Error("Expected conv2 to be rate limited")
 	}
 }
 
+// TestRateLimiter_Wait is disabled as Wait is no longer part of the interface
+// The rate limiting is now handled synchronously via Allow/Record
+/*
 func TestRateLimiter_Wait(t *testing.T) {
 	rl := NewRateLimiter(1, 1, 50*time.Millisecond)
 	ctx := context.Background()
@@ -156,9 +167,14 @@ func TestRateLimiter_Wait(t *testing.T) {
 		t.Errorf("Wait duration unexpected: %v", duration)
 	}
 }
+*/
 
 func TestRateLimiter_CleanupStale(t *testing.T) {
-	rl := NewRateLimiter(1, 1, 50*time.Millisecond).(*rateLimiter)
+	rlInterface := NewRateLimiter(1, 1, 50*time.Millisecond)
+	rl, ok := rlInterface.(*rateLimiter)
+	if !ok {
+		t.Fatal("NewRateLimiter did not return *rateLimiter")
+	}
 	
 	// Create buckets for multiple conversations
 	rl.Allow("old1")
@@ -235,7 +251,11 @@ func TestRateLimiter_Concurrent(t *testing.T) {
 }
 
 func TestRateLimiter_Stats(t *testing.T) {
-	rl := NewRateLimiter(3, 1, 50*time.Millisecond).(*rateLimiter)
+	rlInterface := NewRateLimiter(3, 1, 50*time.Millisecond)
+	rl, ok := rlInterface.(*rateLimiter)
+	if !ok {
+		t.Fatal("Failed to cast to *rateLimiter")
+	}
 	
 	// Create some buckets with different token counts
 	rl.Allow("conv1") // 2 tokens left
@@ -244,11 +264,18 @@ func TestRateLimiter_Stats(t *testing.T) {
 	
 	stats := rl.Stats()
 	
-	if stats["conversations"].(int) != 2 {
+	convCount, ok := stats["conversations"].(int)
+	if !ok {
+		t.Fatal("conversations stat is not an int")
+	}
+	if convCount != 2 {
 		t.Errorf("Expected 2 conversations, got %v", stats["conversations"])
 	}
 	
-	totalTokens := stats["total_tokens"].(int)
+	totalTokens, ok := stats["total_tokens"].(int)
+	if !ok {
+		t.Fatal("total_tokens stat is not an int")
+	}
 	if totalTokens != 3 { // 2 + 1
 		t.Errorf("Expected 3 total tokens, got %d", totalTokens)
 	}

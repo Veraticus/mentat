@@ -8,11 +8,11 @@ import (
 
 // TokenBucket represents a token bucket for rate limiting.
 type TokenBucket struct {
-	capacity     int           // Maximum number of tokens
-	tokens       int           // Current number of tokens
-	refillRate   int           // Tokens added per interval
-	refillPeriod time.Duration // How often to add tokens
-	lastRefill   time.Time     // Last time tokens were added
+	lastRefill   time.Time
+	refillPeriod time.Duration
+	capacity     int
+	tokens       int
+	refillRate   int
 	mu           sync.Mutex
 }
 
@@ -31,28 +31,28 @@ func NewTokenBucket(capacity, refillRate int, refillPeriod time.Duration) *Token
 func (tb *TokenBucket) Allow() bool {
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
-	
+
 	tb.refill()
-	
+
 	if tb.tokens > 0 {
 		tb.tokens--
 		return true
 	}
-	
+
 	return false
 }
 
-// Wait blocks until a token is available or context is cancelled.
+// Wait blocks until a token is available or context is canceled.
 func (tb *TokenBucket) Wait(ctx context.Context) error {
 	// Fast path - check if token available
 	if tb.Allow() {
 		return nil
 	}
-	
+
 	// Slow path - wait for token
 	ticker := time.NewTicker(tb.refillPeriod / 10) // Check 10x per refill period
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -69,22 +69,22 @@ func (tb *TokenBucket) Wait(ctx context.Context) error {
 func (tb *TokenBucket) refill() {
 	now := time.Now()
 	elapsed := now.Sub(tb.lastRefill)
-	
+
 	// How many refill periods have passed?
 	periods := int(elapsed / tb.refillPeriod)
 	if periods <= 0 {
 		return
 	}
-	
+
 	// Add tokens
 	tokensToAdd := periods * tb.refillRate
 	tb.tokens += tokensToAdd
-	
+
 	// Cap at capacity
 	if tb.tokens > tb.capacity {
 		tb.tokens = tb.capacity
 	}
-	
+
 	// Update last refill time
 	tb.lastRefill = tb.lastRefill.Add(time.Duration(periods) * tb.refillPeriod)
 }
@@ -117,7 +117,7 @@ func (rl *rateLimiter) Allow(conversationID string) bool {
 		rl.buckets[conversationID] = bucket
 	}
 	rl.mu.Unlock()
-	
+
 	return bucket.Allow()
 }
 
@@ -130,17 +130,23 @@ func (rl *rateLimiter) Wait(ctx context.Context, conversationID string) error {
 		rl.buckets[conversationID] = bucket
 	}
 	rl.mu.Unlock()
-	
+
 	return bucket.Wait(ctx)
+}
+
+// Record marks a conversation as active.
+func (rl *rateLimiter) Record(_ string) {
+	// This implementation uses token buckets, so recording happens via Allow()
+	// This method exists to satisfy the interface but doesn't need to do anything
 }
 
 // CleanupStale removes token buckets that haven't been used recently.
 func (rl *rateLimiter) CleanupStale(maxAge time.Duration) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
-	
+
 	cutoff := time.Now().Add(-maxAge)
-	
+
 	for convID, bucket := range rl.buckets {
 		bucket.mu.Lock()
 		if bucket.lastRefill.Before(cutoff) {
@@ -151,13 +157,13 @@ func (rl *rateLimiter) CleanupStale(maxAge time.Duration) {
 }
 
 // Stats returns rate limiter statistics.
-func (rl *rateLimiter) Stats() map[string]interface{} {
+func (rl *rateLimiter) Stats() map[string]any {
 	rl.mu.RLock()
 	defer rl.mu.RUnlock()
-	
-	stats := make(map[string]interface{})
+
+	stats := make(map[string]any)
 	stats["conversations"] = len(rl.buckets)
-	
+
 	totalTokens := 0
 	for _, bucket := range rl.buckets {
 		bucket.mu.Lock()
@@ -166,7 +172,7 @@ func (rl *rateLimiter) Stats() map[string]interface{} {
 		bucket.mu.Unlock()
 	}
 	stats["total_tokens"] = totalTokens
-	
+
 	return stats
 }
 
