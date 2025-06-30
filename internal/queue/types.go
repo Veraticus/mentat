@@ -5,6 +5,9 @@ import (
 	"time"
 )
 
+// Import StateTransition from message.go to avoid duplication
+// NOTE: This is a temporary measure until the full refactor is complete
+
 // State represents the current state of a message in the queue.
 type State string
 
@@ -31,12 +34,13 @@ const (
 	StateRetrying State = "retrying"
 )
 
-// StateTransition represents a state change in message history.
+// StateTransition represents a single state change in the message lifecycle.
 type StateTransition struct {
-	From      State
-	To        State
+	From      MessageState
+	To        MessageState
 	Timestamp time.Time
 	Reason    string
+	Error     error
 }
 
 const (
@@ -70,6 +74,7 @@ type Message struct {
 	UpdatedAt      time.Time
 	Error          error
 	ProcessedAt    *time.Time
+	NextRetryAt    *time.Time // When the message should be retried (if in retry state)
 	Sender         string
 	ID             string
 	ConversationID string
@@ -154,8 +159,8 @@ func (m *Message) AddStateTransition(from, to State, reason string) {
 	defer m.mu.Unlock()
 	
 	transition := StateTransition{
-		From:      from,
-		To:        to,
+		From:      stateToMessageState(from),
+		To:        stateToMessageState(to),
 		Timestamp: time.Now(),
 		Reason:    reason,
 	}
@@ -189,17 +194,103 @@ func (m *Message) AtomicTransition(expectedState, newState State) bool {
 	return true
 }
 
-// QueuedMessage represents a message in the queue with metadata.
+// stateToMessageState converts a State to MessageState.
+func stateToMessageState(s State) MessageState {
+	switch s {
+	case StateQueued:
+		return MessageStateQueued
+	case StateProcessing:
+		return MessageStateProcessing
+	case StateValidating:
+		return MessageStateValidating
+	case StateCompleted:
+		return MessageStateCompleted
+	case StateFailed:
+		return MessageStateFailed
+	case StateRetrying:
+		return MessageStateRetrying
+	default:
+		return MessageStateQueued
+	}
+}
+
+// SetNextRetryAt safely sets the next retry time.
+func (m *Message) SetNextRetryAt(t time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.NextRetryAt = &t
+	m.UpdatedAt = time.Now()
+}
+
+// ClearNextRetryAt clears the next retry time.
+func (m *Message) ClearNextRetryAt() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.NextRetryAt = nil
+	m.UpdatedAt = time.Now()
+}
+
+// GetNextRetryAt safely gets the next retry time.
+func (m *Message) GetNextRetryAt() *time.Time {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.NextRetryAt == nil {
+		return nil
+	}
+	t := *m.NextRetryAt
+	return &t
+}
+
+// IsReadyForRetry checks if the message is ready to be retried.
+func (m *Message) IsReadyForRetry() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	// If NextRetryAt is set and in the future, the message is not ready
+	if m.NextRetryAt != nil && time.Now().Before(*m.NextRetryAt) {
+		return false
+	}
+	// Otherwise, the message is ready to process
+	return true
+}
+
+// QueuedMessage represents a message in the queue with comprehensive state tracking.
+// This type is designed to be immutable - state changes return new instances.
 type QueuedMessage struct {
-	QueuedAt       time.Time
-	LastError      error
+	// Core message fields
 	ID             string
 	ConversationID string
 	From           string
 	Text           string
-	State          MessageState
 	Priority       Priority
+	
+	// State tracking
+	State          MessageState
+	StateHistory   []StateTransition
+	
+	// Timing information
+	QueuedAt       time.Time
+	ProcessedAt    *time.Time
+	CompletedAt    *time.Time
+	
+	// Error tracking
+	LastError      error
+	ErrorHistory   []ErrorRecord
+	
+	// Attempt tracking
 	Attempts       int
+	MaxAttempts    int
+	NextRetryAt    *time.Time
+	
+	// Internal fields (not exposed)
+	mu sync.RWMutex
+}
+
+// ErrorRecord tracks an error that occurred during processing.
+type ErrorRecord struct {
+	Timestamp time.Time
+	State     MessageState
+	Error     error
+	Attempt   int
 }
 
 // Stats provides queue statistics.
@@ -212,4 +303,6 @@ type Stats struct {
 	OldestMessageAge   time.Duration
 	AverageWaitTime    time.Duration
 	AverageProcessTime time.Duration
+	ActiveWorkers      int
+	HealthyWorkers     int
 }

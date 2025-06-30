@@ -4,7 +4,7 @@ package queue
 import (
 	"context"
 	
-	"github.com/joshsymonds/mentat/internal/signal"
+	"github.com/Veraticus/mentat/internal/signal"
 )
 
 // MessageQueue provides conversation-aware queuing.
@@ -53,4 +53,10 @@ type StateMachine interface {
 	
 	// IsTerminal checks if a state is terminal (no outgoing transitions)
 	IsTerminal(state State) bool
+}
+
+// ActivityRecorder tracks worker activity for health monitoring.
+type ActivityRecorder interface {
+	// RecordActivity marks a worker as active
+	RecordActivity(workerID string)
 }

@@ -4,25 +4,31 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/joshsymonds/mentat/internal/claude"
-	"github.com/joshsymonds/mentat/internal/signal"
+	"github.com/Veraticus/mentat/internal/claude"
+	"github.com/Veraticus/mentat/internal/signal"
 )
 
 // mockLLM implements the LLM interface for testing.
 type mockLLM struct {
-	err      error
-	response string
-	queries  []string
-	delay    time.Duration
-	mu       sync.Mutex
+	err         error
+	response    string
+	queries     []string
+	delay       time.Duration
+	mu          sync.Mutex
+	queryFunc   func(ctx context.Context, prompt string, sessionID string) (*claude.LLMResponse, error)
 }
 
-func (m *mockLLM) Query(ctx context.Context, prompt string, _ string) (*claude.LLMResponse, error) {
+func (m *mockLLM) Query(ctx context.Context, prompt string, sessionID string) (*claude.LLMResponse, error) {
+	if m.queryFunc != nil {
+		return m.queryFunc(ctx, prompt, sessionID)
+	}
+
 	m.mu.Lock()
 	m.queries = append(m.queries, prompt)
 	m.mu.Unlock()
@@ -53,6 +59,7 @@ type mockMessenger struct {
 	sentMessages []sentMessage
 	mu           sync.Mutex
 	typingCount  int32
+	sendFunc     func(ctx context.Context, recipient string, message string) error
 }
 
 type sentMessage struct {
@@ -60,7 +67,15 @@ type sentMessage struct {
 	message   string
 }
 
-func (m *mockMessenger) Send(_ context.Context, recipient string, message string) error {
+func (m *mockMessenger) Send(ctx context.Context, recipient string, message string) error {
+	m.mu.Lock()
+	sendFunc := m.sendFunc
+	m.mu.Unlock()
+	
+	if sendFunc != nil {
+		return sendFunc(ctx, recipient, message)
+	}
+	
 	m.mu.Lock()
 	m.sentMessages = append(m.sentMessages, sentMessage{recipient, message})
 	m.mu.Unlock()
@@ -327,7 +342,7 @@ func TestWorker_RateLimiting(t *testing.T) {
 	err = worker.Process(ctx, reqMsg)
 	
 	// Should fail with rate limit error
-	if err == nil || err.Error() != "rate limited" {
+	if err == nil || !strings.Contains(err.Error(), "rate limited") {
 		t.Errorf("Expected rate limit error, got: %v", err)
 	}
 
@@ -458,5 +473,326 @@ func TestWorker_TypingIndicator(t *testing.T) {
 	typingCount := atomic.LoadInt32(&messenger.typingCount)
 	if typingCount < 1 {
 		t.Errorf("Expected at least 1 typing indicator, got %d", typingCount)
+	}
+}
+
+func TestWorker_ProcessesMessagesInOrder(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Track message processing order
+	var processedOrder []string
+	var orderMu sync.Mutex
+
+	// Setup LLM that records processing order
+	llm := &mockLLM{
+		response: "Response",
+		delay:    10 * time.Millisecond,
+	}
+	llm.queryFunc = func(ctx context.Context, prompt string, _ string) (*claude.LLMResponse, error) {
+		orderMu.Lock()
+		processedOrder = append(processedOrder, prompt)
+		orderMu.Unlock()
+		
+		// Simulate delay
+		if llm.delay > 0 {
+			select {
+			case <-time.After(llm.delay):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		
+		return &claude.LLMResponse{
+			Message:  llm.response,
+			Metadata: claude.ResponseMetadata{},
+		}, nil
+	}
+
+	messenger := &mockMessenger{}
+	queueMgr := NewManager(ctx)
+	rateLimiter := NewRateLimiter(100, 10, time.Second) // High rate limit
+
+	// Start queue manager
+	go queueMgr.Start()
+	defer func() {
+		if err := queueMgr.Shutdown(time.Second); err != nil {
+			t.Logf("Shutdown error: %v", err)
+		}
+	}()
+
+	// Create single worker to ensure sequential processing
+	config := WorkerConfig{
+		ID:           1,
+		LLM:          llm,
+		Messenger:    messenger,
+		QueueManager: queueMgr,
+		RateLimiter:  rateLimiter,
+	}
+	worker := NewWorker(config)
+
+	// Start worker
+	workerCtx, workerCancel := context.WithCancel(ctx)
+	go func() {
+		if err := worker.Start(workerCtx); err != nil && err != context.Canceled {
+			t.Logf("Worker error: %v", err)
+		}
+	}()
+
+	// Submit messages from same conversation
+	messages := []string{"First", "Second", "Third", "Fourth", "Fifth"}
+	for i, text := range messages {
+		msg := NewMessage(
+			fmt.Sprintf("msg-%d", i),
+			"conv-1", // Same conversation
+			"user123",
+			text,
+		)
+		if err := queueMgr.Submit(msg); err != nil {
+			t.Fatalf("Failed to submit message %d: %v", i, err)
+		}
+		// Small delay to ensure order is preserved
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// Wait for processing
+	time.Sleep(200 * time.Millisecond)
+
+	// Stop worker
+	workerCancel()
+
+	// Verify messages were processed in order
+	orderMu.Lock()
+	defer orderMu.Unlock()
+	
+	if len(processedOrder) != len(messages) {
+		t.Fatalf("Expected %d messages processed, got %d", len(messages), len(processedOrder))
+	}
+
+	for i, expected := range messages {
+		if processedOrder[i] != expected {
+			t.Errorf("Message %d: expected '%s', got '%s'", i, expected, processedOrder[i])
+		}
+	}
+}
+
+func TestWorkerPool_GracefulShutdown(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Track message states
+	var processedCount int32
+
+	// Setup LLM with quick response
+	llm := &mockLLM{
+		response: "Response",
+		delay:    10 * time.Millisecond,
+	}
+
+	// Track sent messages
+	messenger := &mockMessenger{}
+	messenger.sendFunc = func(_ context.Context, recipient string, message string) error {
+		atomic.AddInt32(&processedCount, 1)
+		// Also track in sentMessages
+		messenger.mu.Lock()
+		messenger.sentMessages = append(messenger.sentMessages, sentMessage{recipient, message})
+		messenger.mu.Unlock()
+		return nil
+	}
+
+	queueMgr := NewManager(ctx)
+	rateLimiter := NewRateLimiter(100, 10, time.Second)
+
+	// Start queue manager
+	go queueMgr.Start()
+
+	// Create worker pool
+	pool := NewWorkerPool(2, llm, messenger, queueMgr, rateLimiter)
+
+	// Start pool
+	if err := pool.Start(ctx); err != nil {
+		t.Fatalf("Failed to start pool: %v", err)
+	}
+
+	// Submit messages
+	messageCount := 10
+	for i := 0; i < messageCount; i++ {
+		msg := NewMessage(
+			fmt.Sprintf("msg-%d", i),
+			fmt.Sprintf("conv-%d", i%2), // Two conversations
+			fmt.Sprintf("user-%d", i),
+			fmt.Sprintf("Message %d", i),
+		)
+		if err := queueMgr.Submit(msg); err != nil {
+			t.Errorf("Failed to submit message: %v", err)
+		}
+	}
+
+	// Let some messages process
+	time.Sleep(50 * time.Millisecond)
+
+	// Initiate graceful shutdown
+	cancel()
+	
+	// Wait for workers to finish
+	pool.Wait()
+
+	// Get final stats before shutdown
+	stats := queueMgr.Stats()
+	t.Logf("Queue stats at shutdown: %+v", stats)
+
+	// Shutdown queue manager
+	if err := queueMgr.Shutdown(time.Second); err != nil {
+		t.Errorf("Failed to shutdown queue manager: %v", err)
+	}
+
+	// Stop typing indicators
+	pool.Stop()
+
+	processed := atomic.LoadInt32(&processedCount)
+
+	t.Logf("Processed %d messages successfully", processed)
+	
+	// We should have processed at least some messages
+	if processed == 0 {
+		t.Error("No messages were processed before shutdown")
+	}
+	
+	// In a graceful shutdown, workers stop accepting new work but finish current work
+	// So we expect some messages to be processed, and the rest to remain in queue
+	if processed > int32(messageCount) {
+		t.Errorf("Processed more messages than submitted: %d > %d", processed, messageCount)
+	}
+}
+
+func TestWorker_MessageOrderWithinConversation(t *testing.T) {
+	ctx := context.Background()
+
+	// Track processing order per conversation
+	convOrder := make(map[string][]string)
+	var orderMu sync.Mutex
+
+	// Setup LLM that tracks order
+	llm := &mockLLM{
+		response: "Response",
+		delay:    5 * time.Millisecond,
+	}
+	llm.queryFunc = func(_ context.Context, prompt string, sessionID string) (*claude.LLMResponse, error) {
+		orderMu.Lock()
+		// Extract conversation ID from sessionID (format: "signal-conv-X")
+		var convID string
+		if _, err := fmt.Sscanf(sessionID, "signal-%s", &convID); err == nil {
+			convOrder[convID] = append(convOrder[convID], prompt)
+		}
+		orderMu.Unlock()
+		
+		// Simulate processing
+		time.Sleep(llm.delay)
+		
+		return &claude.LLMResponse{
+			Message:  llm.response,
+			Metadata: claude.ResponseMetadata{},
+		}, nil
+	}
+
+	messenger := &mockMessenger{}
+	queueMgr := NewManager(ctx)
+	rateLimiter := NewRateLimiter(100, 10, time.Second)
+
+	// Start queue manager
+	go queueMgr.Start()
+	defer func() {
+		if err := queueMgr.Shutdown(time.Second); err != nil {
+			t.Logf("Shutdown error: %v", err)
+		}
+	}()
+
+	// Create worker pool with multiple workers
+	pool := NewWorkerPool(3, llm, messenger, queueMgr, rateLimiter)
+
+	// Start pool
+	poolCtx, poolCancel := context.WithCancel(ctx)
+	if err := pool.Start(poolCtx); err != nil {
+		t.Fatalf("Failed to start pool: %v", err)
+	}
+
+	// Submit messages to multiple conversations
+	conversations := []string{"conv-1", "conv-2", "conv-3"}
+	messagesPerConv := 5
+	
+	for _, convID := range conversations {
+		for i := 0; i < messagesPerConv; i++ {
+			msg := NewMessage(
+				fmt.Sprintf("msg-%s-%d", convID, i),
+				convID,
+				"user123",
+				fmt.Sprintf("%s-Message-%d", convID, i),
+			)
+			if err := queueMgr.Submit(msg); err != nil {
+				t.Errorf("Failed to submit message: %v", err)
+			}
+		}
+	}
+
+	// Wait for processing
+	time.Sleep(200 * time.Millisecond)
+
+	// Stop pool
+	poolCancel()
+	pool.Wait()
+
+	// Verify order within each conversation
+	orderMu.Lock()
+	defer orderMu.Unlock()
+
+	for _, convID := range conversations {
+		messages := convOrder[convID]
+		if len(messages) != messagesPerConv {
+			t.Errorf("Conversation %s: expected %d messages, got %d", 
+				convID, messagesPerConv, len(messages))
+		}
+		
+		// Check order
+		for i := 0; i < len(messages); i++ {
+			expected := fmt.Sprintf("%s-Message-%d", convID, i)
+			if messages[i] != expected {
+				t.Errorf("Conversation %s: message %d out of order. Expected '%s', got '%s'",
+					convID, i, expected, messages[i])
+			}
+		}
+	}
+}
+
+func TestWorker_StartStopIdempotent(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup
+	llm := &mockLLM{response: "Response"}
+	messenger := &mockMessenger{}
+	queueMgr := NewManager(ctx)
+	rateLimiter := NewRateLimiter(10, 1, time.Second)
+
+	// Create worker
+	config := WorkerConfig{
+		ID:           1,
+		LLM:          llm,
+		Messenger:    messenger,
+		QueueManager: queueMgr,
+		RateLimiter:  rateLimiter,
+	}
+	worker := NewWorker(config)
+
+	// Multiple stops should not panic
+	if err := worker.Stop(); err != nil {
+		t.Errorf("First stop failed: %v", err)
+	}
+	if err := worker.Stop(); err != nil {
+		t.Errorf("Second stop failed: %v", err)
+	}
+
+	// Verify ID is consistent
+	expectedID := "worker-1"
+	if worker.ID() != expectedID {
+		t.Errorf("Expected worker ID %s, got %s", expectedID, worker.ID())
 	}
 }

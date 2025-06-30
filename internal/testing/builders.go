@@ -3,12 +3,12 @@ package testing
 import (
 	"time"
 
-	"github.com/joshsymonds/mentat/internal/agent"
-	"github.com/joshsymonds/mentat/internal/claude"
-	"github.com/joshsymonds/mentat/internal/conversation"
-	"github.com/joshsymonds/mentat/internal/queue"
-	"github.com/joshsymonds/mentat/internal/signal"
-	"github.com/joshsymonds/mentat/internal/storage"
+	"github.com/Veraticus/mentat/internal/agent"
+	"github.com/Veraticus/mentat/internal/claude"
+	"github.com/Veraticus/mentat/internal/conversation"
+	"github.com/Veraticus/mentat/internal/queue"
+	"github.com/Veraticus/mentat/internal/signal"
+	"github.com/Veraticus/mentat/internal/storage"
 )
 
 // MessageBuilder creates queue.Message instances for testing.
@@ -226,8 +226,24 @@ func WithQueuedError(err error) QueuedMessageOption {
 
 // Build creates the queued message with all options applied.
 func (b *QueuedMessageBuilder) Build(opts ...QueuedMessageOption) *queue.QueuedMessage {
-	// Create a copy of the message
-	msg := *b.msg
+	// Create a new message copying all fields except the mutex
+	msg := queue.QueuedMessage{
+		ID:             b.msg.ID,
+		ConversationID: b.msg.ConversationID,
+		From:           b.msg.From,
+		Text:           b.msg.Text,
+		Priority:       b.msg.Priority,
+		State:          b.msg.State,
+		StateHistory:   b.msg.StateHistory,
+		QueuedAt:       b.msg.QueuedAt,
+		ProcessedAt:    b.msg.ProcessedAt,
+		CompletedAt:    b.msg.CompletedAt,
+		LastError:      b.msg.LastError,
+		ErrorHistory:   b.msg.ErrorHistory,
+		Attempts:       b.msg.Attempts,
+		MaxAttempts:    b.msg.MaxAttempts,
+		NextRetryAt:    b.msg.NextRetryAt,
+	}
 	
 	// Create a temporary builder with the copy
 	tempBuilder := &QueuedMessageBuilder{msg: &msg}

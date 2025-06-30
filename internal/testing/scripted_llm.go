@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/joshsymonds/mentat/internal/claude"
+	"github.com/Veraticus/mentat/internal/claude"
 )
 
 // ScriptedResponse represents a scripted response for the LLM.

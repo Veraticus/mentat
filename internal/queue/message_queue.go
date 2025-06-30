@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/joshsymonds/mentat/internal/signal"
+	"github.com/Veraticus/mentat/internal/signal"
 )
 
 // simpleMessageQueue implements the MessageQueue interface.

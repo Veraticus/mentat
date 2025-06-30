@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joshsymonds/mentat/internal/claude"
+	"github.com/Veraticus/mentat/internal/claude"
 )
 
 func TestScriptedLLM_SimpleSequence(t *testing.T) {

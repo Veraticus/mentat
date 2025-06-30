@@ -290,7 +290,7 @@ func TestMessageStateHistory(t *testing.T) {
 		t.Fatalf("Expected 1 history entry, got %d", len(history))
 	}
 	
-	if history[0].From != StateQueued || history[0].To != StateProcessing {
+	if history[0].From != MessageStateQueued || history[0].To != MessageStateProcessing {
 		t.Error("State transition not recorded correctly")
 	}
 	
@@ -323,10 +323,10 @@ func TestStateTransitionZeroValue(t *testing.T) {
 	var st StateTransition
 	
 	// Zero value should be identifiable as uninitialized
-	if st.From != "" {
-		t.Error("Expected empty From state for zero value")
+	if st.From != 0 {
+		t.Error("Expected zero From state for zero value")
 	}
-	if st.To != "" {
+	if st.To != 0 {
 		t.Error("Expected empty To state for zero value")
 	}
 	if st.Reason != "" {

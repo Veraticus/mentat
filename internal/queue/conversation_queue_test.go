@@ -161,3 +161,107 @@ func TestConversationQueue_ConcurrentOperations(t *testing.T) {
 		t.Errorf("Expected 10 messages, got %d", cq.Size())
 	}
 }
+
+func TestConversationQueue_DepthLimit(t *testing.T) {
+	// Test with custom depth limit
+	maxDepth := 3
+	cq := NewConversationQueueWithDepth("conv-1", maxDepth)
+	
+	if cq.MaxDepth() != maxDepth {
+		t.Errorf("Expected max depth %d, got %d", maxDepth, cq.MaxDepth())
+	}
+	
+	// Fill queue to limit
+	for i := 0; i < maxDepth; i++ {
+		msg := NewMessage(fmt.Sprintf("msg-%d", i), "conv-1", "sender", "test")
+		if err := cq.Enqueue(msg); err != nil {
+			t.Fatalf("Failed to enqueue message %d: %v", i, err)
+		}
+	}
+	
+	// Verify queue is at capacity
+	if cq.Size() != maxDepth {
+		t.Errorf("Expected size %d, got %d", maxDepth, cq.Size())
+	}
+	
+	// Try to exceed limit
+	overflowMsg := NewMessage("overflow", "conv-1", "sender", "test")
+	err := cq.Enqueue(overflowMsg)
+	if err == nil {
+		t.Error("Expected error when exceeding depth limit")
+	}
+	
+	// Verify error message is clear
+	expectedErr := fmt.Sprintf("conversation queue full: maximum depth of %d messages reached", maxDepth)
+	if err.Error() != expectedErr {
+		t.Errorf("Expected error %q, got %q", expectedErr, err.Error())
+	}
+	
+	// Verify size didn't change
+	if cq.Size() != maxDepth {
+		t.Errorf("Queue size changed after overflow: expected %d, got %d", maxDepth, cq.Size())
+	}
+}
+
+func TestConversationQueue_DepthLimitAfterDequeue(t *testing.T) {
+	maxDepth := 2
+	cq := NewConversationQueueWithDepth("conv-1", maxDepth)
+	
+	// Fill queue
+	msg1 := NewMessage("msg-1", "conv-1", "sender", "test1")
+	msg2 := NewMessage("msg-2", "conv-1", "sender", "test2")
+	
+	if err := cq.Enqueue(msg1); err != nil {
+		t.Fatalf("Failed to enqueue msg1: %v", err)
+	}
+	if err := cq.Enqueue(msg2); err != nil {
+		t.Fatalf("Failed to enqueue msg2: %v", err)
+	}
+	
+	// Queue should be full
+	msg3 := NewMessage("msg-3", "conv-1", "sender", "test3")
+	if err := cq.Enqueue(msg3); err == nil {
+		t.Error("Expected error when queue is full")
+	}
+	
+	// Dequeue one message
+	dequeued := cq.Dequeue()
+	if dequeued == nil || dequeued.ID != "msg-1" {
+		t.Errorf("Expected to dequeue msg-1, got %v", dequeued)
+	}
+	
+	// Complete processing
+	cq.Complete()
+	
+	// Now we should be able to enqueue again
+	if err := cq.Enqueue(msg3); err != nil {
+		t.Errorf("Failed to enqueue after dequeue: %v", err)
+	}
+	
+	// Verify queue size
+	if cq.Size() != maxDepth {
+		t.Errorf("Expected size %d, got %d", maxDepth, cq.Size())
+	}
+}
+
+func TestConversationQueue_DefaultDepthLimit(t *testing.T) {
+	cq := NewConversationQueue("conv-1")
+	
+	if cq.MaxDepth() != DefaultMaxDepth {
+		t.Errorf("Expected default max depth %d, got %d", DefaultMaxDepth, cq.MaxDepth())
+	}
+}
+
+func TestConversationQueue_InvalidDepthLimit(t *testing.T) {
+	// Test with zero depth
+	cq := NewConversationQueueWithDepth("conv-1", 0)
+	if cq.MaxDepth() != DefaultMaxDepth {
+		t.Errorf("Expected default max depth for zero input, got %d", cq.MaxDepth())
+	}
+	
+	// Test with negative depth
+	cq = NewConversationQueueWithDepth("conv-1", -10)
+	if cq.MaxDepth() != DefaultMaxDepth {
+		t.Errorf("Expected default max depth for negative input, got %d", cq.MaxDepth())
+	}
+}

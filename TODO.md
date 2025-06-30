@@ -93,7 +93,7 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Go idiom: Use time.Ticker for periodic tasks
 
 ### Queue State Machine
-- [ ] Implement simple state machine - Phase 11
+- [X] Implement simple state machine - Phase 11
   - Test: Valid transitions succeed, invalid fail
   - Location: `internal/queue/state.go`
   - States: Queued, Processing, Validating, Completed, Failed, Retrying
@@ -107,14 +107,14 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Go idiom: Make invalid states unrepresentable
 
 ### Message Queue Core
-- [ ] Implement QueuedMessage with state tracking - Phase 13
+- [X] Implement QueuedMessage with state tracking - Phase 13
   - Test: Messages track all state changes
   - Location: `internal/queue/message.go`
   - Features: State history, attempt counting, error tracking
   - Acceptance: Can query message history
   - Go idiom: Avoid mutations, prefer immutable updates
 
-- [ ] Implement ConversationQueue - Phase 14
+- [X] Implement ConversationQueue - Phase 14
   - Test: Messages maintain order within conversation
   - Location: `internal/queue/conversation.go`
   - Features: FIFO ordering, depth limits
@@ -122,42 +122,42 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Go idiom: Protect invariants with mutex
 
 ### Queue Manager
-- [ ] Implement QueueManager coordinating conversations - Phase 15
+- [X] Implement QueueManager coordinating conversations - Phase 15
   - Test: Parallel conversations don't interfere
   - Location: `internal/queue/manager.go`
   - Features: Conversation isolation, statistics
   - Acceptance: Can handle 100 concurrent conversations
   - Go idiom: Use sync.Map for concurrent access
 
-- [ ] Add GetNext logic for workers - Phase 16
+- [X] Add GetNext logic for workers - Phase 16
   - Test: Workers get oldest unprocessed message
   - Features: Fair scheduling, conversation affinity
   - Acceptance: No starvation across conversations
   - Go idiom: Avoid holding locks during I/O
 
 ### Rate Limiting
-- [ ] Implement token bucket rate limiter - Phase 17
+- [X] Implement token bucket rate limiter - Phase 17
   - Test: Burst allows N rapid requests then limits
   - Location: `internal/queue/limiter.go`
   - Features: Per-conversation limits, refill rate
   - Acceptance: Rate limit errors are clear
   - Go idiom: Use time.Since for duration calculations
 
-- [ ] Integrate rate limiting with queue - Phase 18
+- [X] Integrate rate limiting with queue - Phase 18
   - Test: Rate-limited messages retry with backoff
   - Features: Automatic retry scheduling
   - Acceptance: Eventually processes all messages
   - Go idiom: Use exponential backoff
 
 ### Worker Pool
-- [ ] Implement Worker interface and QueueWorker - Phase 19
+- [X] Implement Worker interface and QueueWorker - Phase 19
   - Test: Worker processes messages in order
   - Location: `internal/queue/worker.go`
   - Features: Graceful shutdown, error handling
   - Acceptance: No message loss on shutdown
   - Go idiom: Use sync.WaitGroup for coordination
 
-- [ ] Implement WorkerPool manager - Phase 20
+- [X] Implement WorkerPool manager - Phase 20
   - Test: Pool scales workers up/down
   - Location: `internal/queue/pool.go`
   - Features: Dynamic sizing, health checks
@@ -165,13 +165,13 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Go idiom: Prefer channels over shared memory
 
 ### Queue Integration
-- [ ] Wire queue components together - Phase 21
+- [X] Wire queue components together - Phase 21
   - Test: End-to-end message flow works
   - Features: All components integrate cleanly
   - Acceptance: Message goes from enqueue to completion
   - Go idiom: Use dependency injection
 
-- [ ] Add queue statistics and monitoring - Phase 22
+- [X] Add queue statistics and monitoring - Phase 22
   - Test: Stats accurately reflect queue state
   - Location: `internal/queue/stats.go`
   - Features: Queue depth, processing time, success rate
@@ -179,14 +179,14 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Go idiom: Use atomic operations for counters
 
 ### Basic Claude Client
-- [ ] Implement Claude CLI wrapper - Phase 23
+- [X] Implement Claude CLI wrapper - Phase 23
   - Test: Handles CLI errors and timeouts
   - Location: `internal/claude/client.go`
   - Features: Command execution, timeout handling
   - Acceptance: Returns clear errors on failure
   - Go idiom: Use exec.CommandContext for timeouts
 
-- [ ] Add response parsing - Phase 24
+- [X] Add response parsing - Phase 24
   - Test: Extracts message from various outputs
   - Features: Handle multiline responses, errors
   - Acceptance: Never returns empty responses

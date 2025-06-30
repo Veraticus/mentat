@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -84,6 +85,16 @@ func TestStateMachine_Transition(t *testing.T) {
 			sm := NewStateMachine()
 			msg := NewMessage("test-id", "conv-1", "sender", "test message")
 			msg.SetState(tt.from)
+
+			// Set up message state for validation rules
+			switch tt.name {
+			case "processing to validating":
+				msg.SetResponse("test response")
+			case "processing to failed when can retry":
+				msg.SetError(fmt.Errorf("processing error"))
+			case "validating to completed":
+				msg.SetResponse("validated response")
+			}
 
 			err := sm.Transition(msg, tt.to)
 
@@ -245,14 +256,17 @@ func TestStateMachine_StateHistory(t *testing.T) {
 		t.Fatalf("Expected 1 history entry, got %d", len(history))
 	}
 
-	if history[0].From != StateQueued || history[0].To != StateProcessing {
-		t.Errorf("Expected transition from %s to %s, got from %s to %s", 
-			StateQueued, StateProcessing, history[0].From, history[0].To)
+	if history[0].From != MessageStateQueued || history[0].To != MessageStateProcessing {
+		t.Errorf("Expected transition from %d to %d, got from %d to %d", 
+			MessageStateQueued, MessageStateProcessing, history[0].From, history[0].To)
 	}
 
 	if history[0].Reason != "starting processing" {
 		t.Errorf("Expected reason 'starting processing', got '%s'", history[0].Reason)
 	}
+
+	// Set response before validating
+	msg.SetResponse("test response")
 
 	// Transition to validating
 	err = sm.Transition(msg, StateValidating)
@@ -291,6 +305,9 @@ func TestStateMachine_RetryHistory(t *testing.T) {
 	msg.SetState(StateProcessing)
 	msg.MaxAttempts = 3
 	msg.Attempts = 1
+
+	// Set error before failing
+	msg.SetError(fmt.Errorf("processing failed"))
 
 	// Simulate a failure that should trigger retry
 	err := sm.Transition(msg, StateFailed)

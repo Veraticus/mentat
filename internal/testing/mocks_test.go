@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joshsymonds/mentat/internal/agent"
-	"github.com/joshsymonds/mentat/internal/claude"
-	"github.com/joshsymonds/mentat/internal/queue"
-	"github.com/joshsymonds/mentat/internal/scheduler"
-	"github.com/joshsymonds/mentat/internal/signal"
-	"github.com/joshsymonds/mentat/internal/storage"
+	"github.com/Veraticus/mentat/internal/agent"
+	"github.com/Veraticus/mentat/internal/claude"
+	"github.com/Veraticus/mentat/internal/queue"
+	"github.com/Veraticus/mentat/internal/scheduler"
+	"github.com/Veraticus/mentat/internal/signal"
+	"github.com/Veraticus/mentat/internal/storage"
 )
 
 func TestMockLLM(t *testing.T) {

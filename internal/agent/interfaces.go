@@ -4,8 +4,8 @@ package agent
 import (
 	"context"
 
-	"github.com/joshsymonds/mentat/internal/claude"
-	"github.com/joshsymonds/mentat/internal/signal"
+	"github.com/Veraticus/mentat/internal/claude"
+	"github.com/Veraticus/mentat/internal/signal"
 )
 
 // Handler processes incoming messages through the multi-agent system.

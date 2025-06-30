@@ -9,20 +9,32 @@ import (
 )
 
 // Manager orchestrates multiple conversation queues with fair scheduling.
+// It implements a round-robin algorithm with conversation affinity to ensure:
+//   - Fair processing across all conversations (no starvation)
+//   - Only one message per conversation is processed at a time
+//   - Messages within a conversation are processed in order
+//   - Conversations with more messages don't starve those with fewer
+//
+// The scheduling algorithm works as follows:
+//   1. Conversations are tracked in a slice maintaining their arrival order
+//   2. A currentIndex rotates through conversations in round-robin fashion
+//   3. Each conversation can have at most one message in processing state
+//   4. Within each conversation, messages are processed in FIFO order
+//   5. Empty conversations are automatically cleaned up
 type Manager struct {
 	ctx               context.Context
 	stateMachine      StateMachine
 	cancel            context.CancelFunc
-	queues            map[string]*ConversationQueue
-	incomingCh        chan *Message
-	requestCh         chan chan *Message
-	conversationOrder []string
-	waitingWorkers    []chan *Message
-	wg                sync.WaitGroup
-	currentIndex      int
-	mu                sync.RWMutex
-	shutdown          bool
-	started           chan struct{} // Signals that Start() has begun
+	queues            map[string]*ConversationQueue    // conversation ID -> queue
+	incomingCh        chan *Message                     // channel for new messages
+	requestCh         chan chan *Message                // channel for worker requests
+	conversationOrder []string                          // ordered list of conversation IDs for fair scheduling
+	waitingWorkers    []chan *Message                   // workers waiting for messages
+	wg                sync.WaitGroup                    // tracks active goroutines
+	currentIndex      int                               // current position in round-robin
+	mu                sync.RWMutex                      // protects shared state
+	shutdown          bool                              // indicates shutdown in progress
+	started           chan struct{}                     // signals that Start() has begun
 }
 
 // NewManager creates a new queue manager.
@@ -70,6 +82,10 @@ func (m *Manager) Start() {
 			// Worker is requesting a message
 			msg := m.getNextMessage()
 			if msg != nil {
+				// Transition to processing state
+				if err := m.stateMachine.Transition(msg, StateProcessing); err != nil {
+					log.Printf("Failed to transition message %s to processing: %v", msg.ID, err)
+				}
 				workerCh <- msg
 			} else {
 				// No messages available, add to waiting list
@@ -95,10 +111,25 @@ func (m *Manager) Submit(msg *Message) error {
 	}
 	m.mu.RUnlock()
 
-	// Set initial state
-	if err := m.stateMachine.Transition(msg, StateQueued); err != nil {
-		// Message is probably already in a state, just add it
-		msg.SetState(StateQueued)
+	// Handle state based on current state
+	currentState := msg.GetState()
+	switch currentState {
+	case StateRetrying:
+		// Only transition to queued if the message is ready for retry
+		if msg.IsReadyForRetry() {
+			if err := m.stateMachine.Transition(msg, StateQueued); err != nil {
+				// If transition fails, force it to queued
+				msg.SetState(StateQueued)
+			}
+		}
+		// Otherwise keep it in StateRetrying with its NextRetryAt time
+	case "":
+		// New message, set initial state
+		if err := m.stateMachine.Transition(msg, StateQueued); err != nil {
+			msg.SetState(StateQueued)
+		}
+	default:
+		// For other states, keep the current state
 	}
 
 	select {
@@ -112,6 +143,10 @@ func (m *Manager) Submit(msg *Message) error {
 }
 
 // RequestMessage is called by workers to get the next message to process.
+// It implements a pull-based model where workers request work when ready.
+// If no message is immediately available, the worker's request is queued
+// and will be fulfilled when a message becomes available.
+// The method respects the context timeout/cancellation.
 func (m *Manager) RequestMessage(ctx context.Context) (*Message, error) {
 	respCh := make(chan *Message, 1)
 
@@ -126,12 +161,7 @@ func (m *Manager) RequestMessage(ctx context.Context) (*Message, error) {
 
 	select {
 	case msg := <-respCh:
-		if msg != nil {
-			// Transition to processing state
-			if err := m.stateMachine.Transition(msg, StateProcessing); err != nil {
-				log.Printf("Failed to transition message %s to processing: %v", msg.ID, err)
-			}
-		}
+		// Message state transition is handled by Start() method when dispatching
 		return msg, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -179,6 +209,33 @@ func (m *Manager) CompleteMessage(msg *Message) error {
 	}
 	
 	return nil
+}
+
+// RetryMessage marks a message for retry and re-enqueues it.
+func (m *Manager) RetryMessage(msg *Message) error {
+	if msg == nil {
+		return fmt.Errorf("cannot retry nil message")
+	}
+
+	m.mu.Lock()
+	queue, exists := m.queues[msg.ConversationID]
+	m.mu.Unlock()
+
+	if !exists {
+		return fmt.Errorf("no queue found for conversation %s", msg.ConversationID)
+	}
+
+	// Mark the current processing as complete
+	queue.Complete()
+	
+	// Transition to queued state for re-processing
+	if err := m.stateMachine.Transition(msg, StateQueued); err != nil {
+		// If transition fails, force it to queued
+		msg.SetState(StateQueued)
+	}
+	
+	// Re-submit the message
+	return m.Submit(msg)
 }
 
 // Shutdown gracefully stops the queue manager.
@@ -235,76 +292,116 @@ func (m *Manager) enqueue(msg *Message) error {
 }
 
 // getNextMessage implements fair scheduling across conversations.
+// It minimizes lock holding time by taking snapshots and releasing locks during queue operations.
+//
+// The algorithm ensures fairness by:
+//   - Using round-robin to cycle through all conversations
+//   - Skipping conversations that already have a message in processing
+//   - Processing messages within each conversation in FIFO order
+//   - Cleaning up empty conversation queues automatically
+//
+// Lock optimization strategy:
+//   - Takes a snapshot of conversation order to avoid holding lock during iteration
+//   - Releases lock while checking individual queue states
+//   - Only holds lock when modifying shared state (queues map, conversation order)
+//   - Uses double-checking pattern for queue cleanup to prevent race conditions
 func (m *Manager) getNextMessage() *Message {
+	// Take a snapshot of conversations to check
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if len(m.conversationOrder) == 0 {
+		m.mu.Unlock()
 		return nil
 	}
+	
+	// Create a snapshot of conversation order to avoid holding lock during iteration
+	snapshot := make([]string, len(m.conversationOrder))
+	copy(snapshot, m.conversationOrder)
+	startIndex := m.currentIndex
+	m.mu.Unlock()
 
 	// Try each conversation in round-robin order
-	attemptsLeft := len(m.conversationOrder)
-	for attemptsLeft > 0 {
-		// Wrap around if needed
-		if m.currentIndex >= len(m.conversationOrder) {
-			m.currentIndex = 0
-		}
-
-		convID := m.conversationOrder[m.currentIndex]
+	for i := 0; i < len(snapshot); i++ {
+		// Calculate index with wraparound
+		idx := (startIndex + i) % len(snapshot)
+		convID := snapshot[idx]
+		
+		// Get queue reference
+		m.mu.Lock()
 		queue, exists := m.queues[convID]
-
 		if !exists {
-			// Remove from order and adjust index
-			m.conversationOrder = append(
-				m.conversationOrder[:m.currentIndex],
-				m.conversationOrder[m.currentIndex+1:]...,
-			)
-			if m.currentIndex >= len(m.conversationOrder) && len(m.conversationOrder) > 0 {
-				m.currentIndex = 0
-			}
-			attemptsLeft--
+			// Queue was removed, clean it from order
+			m.removeConversationFromOrder(convID)
+			m.mu.Unlock()
 			continue
 		}
-
-		// Move to next conversation for fairness
-		m.currentIndex++
-
-		// Skip if already processing
+		m.mu.Unlock()
+		
+		// Check if already processing (without lock)
 		if queue.IsProcessing() {
-			attemptsLeft--
 			continue
 		}
-
+		
+		// Try to dequeue (queue has its own locking)
 		msg := queue.Dequeue()
 		if msg != nil {
-			return msg
-		}
-
-		// Don't clean up queues while processing - CompleteMessage needs them
-		// Only clean up if empty AND not processing
-		if queue.IsEmpty() && !queue.IsProcessing() {
-			// Remove from queues
-			delete(m.queues, convID)
-			// Remove from order
+			// Update current index for next call
+			m.mu.Lock()
+			// Find the actual current position of this conversation
+			actualIdx := -1
 			for i, id := range m.conversationOrder {
 				if id == convID {
-					m.conversationOrder = append(
-						m.conversationOrder[:i],
-						m.conversationOrder[i+1:]...,
-					)
-					if m.currentIndex > i {
-						m.currentIndex--
-					}
+					actualIdx = i
 					break
 				}
 			}
+			if actualIdx >= 0 {
+				// Move to next conversation using actual position
+				m.currentIndex = (actualIdx + 1) % len(m.conversationOrder)
+			}
+			m.mu.Unlock()
+			return msg
 		}
-
-		attemptsLeft--
+		
+		// Check if queue should be cleaned up
+		if queue.IsEmpty() && !queue.IsProcessing() {
+			m.mu.Lock()
+			// Double-check queue is still empty after acquiring lock
+			if queue.IsEmpty() && !queue.IsProcessing() {
+				delete(m.queues, convID)
+				m.removeConversationFromOrder(convID)
+			}
+			m.mu.Unlock()
+		}
 	}
 
+	// Update index even if no message found
+	m.mu.Lock()
+	m.currentIndex = (startIndex + len(snapshot)) % len(m.conversationOrder)
+	if m.currentIndex >= len(m.conversationOrder) && len(m.conversationOrder) > 0 {
+		m.currentIndex = 0
+	}
+	m.mu.Unlock()
+
 	return nil
+}
+
+// removeConversationFromOrder removes a conversation from the order slice.
+// Must be called with m.mu held.
+func (m *Manager) removeConversationFromOrder(convID string) {
+	for i, id := range m.conversationOrder {
+		if id == convID {
+			m.conversationOrder = append(
+				m.conversationOrder[:i],
+				m.conversationOrder[i+1:]...,
+			)
+			if m.currentIndex > i {
+				m.currentIndex--
+			} else if m.currentIndex >= len(m.conversationOrder) && len(m.conversationOrder) > 0 {
+				m.currentIndex = 0
+			}
+			break
+		}
+	}
 }
 
 // tryDispatch attempts to send a message to a waiting worker.
@@ -346,6 +443,7 @@ func (m *Manager) tryDispatch() {
 }
 
 // getNextMessageLocked is like getNextMessage but assumes lock is held.
+// It's used internally by tryDispatch and other methods that already hold the lock.
 func (m *Manager) getNextMessageLocked() *Message {
 	if len(m.conversationOrder) == 0 {
 		return nil
@@ -364,49 +462,34 @@ func (m *Manager) getNextMessageLocked() *Message {
 
 		if !exists {
 			// Remove from order and adjust index
-			m.conversationOrder = append(
-				m.conversationOrder[:m.currentIndex],
-				m.conversationOrder[m.currentIndex+1:]...,
-			)
-			if m.currentIndex >= len(m.conversationOrder) && len(m.conversationOrder) > 0 {
-				m.currentIndex = 0
-			}
+			m.removeConversationFromOrder(convID)
 			attemptsLeft--
 			continue
 		}
 
-		// Move to next conversation for fairness
-		m.currentIndex++
-
 		// Skip if already processing
 		if queue.IsProcessing() {
+			m.currentIndex++ // Move to next conversation
 			attemptsLeft--
 			continue
 		}
 
 		msg := queue.Dequeue()
 		if msg != nil {
+			// Move to next conversation for fairness only after successful dequeue
+			m.currentIndex++
 			return msg
 		}
+		
+		// No message available, move to next conversation
+		m.currentIndex++
 
 		// Don't clean up queues while processing - CompleteMessage needs them
 		// Only clean up if empty AND not processing
 		if queue.IsEmpty() && !queue.IsProcessing() {
 			// Remove from queues
 			delete(m.queues, convID)
-			// Remove from order
-			for i, id := range m.conversationOrder {
-				if id == convID {
-					m.conversationOrder = append(
-						m.conversationOrder[:i],
-						m.conversationOrder[i+1:]...,
-					)
-					if m.currentIndex > i {
-						m.currentIndex--
-					}
-					break
-				}
-			}
+			m.removeConversationFromOrder(convID)
 		}
 
 		attemptsLeft--
@@ -429,9 +512,9 @@ func (m *Manager) cleanup() {
 	}
 	m.waitingWorkers = nil
 
-	// Close channels
-	close(m.incomingCh)
-	close(m.requestCh)
+	// Don't close channels here - let them be garbage collected
+	// Closing them can cause "send on closed channel" panics
+	// The context cancellation is sufficient to stop all operations
 }
 
 // Stats returns current queue statistics.

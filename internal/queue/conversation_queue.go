@@ -12,14 +12,27 @@ type ConversationQueue struct {
 	messages       *list.List
 	processing     *Message
 	conversationID string
+	maxDepth       int
 	mu             sync.Mutex
 }
 
-// NewConversationQueue creates a new queue for a conversation.
+// DefaultMaxDepth is the default maximum queue depth per conversation.
+const DefaultMaxDepth = 100
+
+// NewConversationQueue creates a new queue for a conversation with default depth limit.
 func NewConversationQueue(conversationID string) *ConversationQueue {
+	return NewConversationQueueWithDepth(conversationID, DefaultMaxDepth)
+}
+
+// NewConversationQueueWithDepth creates a new queue with a specific depth limit.
+func NewConversationQueueWithDepth(conversationID string, maxDepth int) *ConversationQueue {
+	if maxDepth <= 0 {
+		maxDepth = DefaultMaxDepth
+	}
 	return &ConversationQueue{
 		conversationID: conversationID,
 		messages:       list.New(),
+		maxDepth:       maxDepth,
 	}
 }
 
@@ -37,12 +50,18 @@ func (cq *ConversationQueue) Enqueue(msg *Message) error {
 			msg.ConversationID, cq.conversationID)
 	}
 
+	// Check depth limit
+	if cq.messages.Len() >= cq.maxDepth {
+		return fmt.Errorf("conversation queue full: maximum depth of %d messages reached", cq.maxDepth)
+	}
+
 	cq.messages.PushBack(msg)
 	return nil
 }
 
 // Dequeue removes and returns the next message to process.
-// Returns nil if the queue is empty or a message is already being processed.
+// Returns nil if the queue is empty, a message is already being processed,
+// or the next message is not ready for retry yet.
 func (cq *ConversationQueue) Dequeue() *Message {
 	cq.mu.Lock()
 	defer cq.mu.Unlock()
@@ -52,20 +71,25 @@ func (cq *ConversationQueue) Dequeue() *Message {
 		return nil
 	}
 
-	// Get the front message
-	front := cq.messages.Front()
-	if front == nil {
-		return nil
+	// Find the first message that's ready to process
+	for elem := cq.messages.Front(); elem != nil; elem = elem.Next() {
+		msg, ok := elem.Value.(*Message)
+		if !ok {
+			continue
+		}
+		
+		// Check if message is ready for retry
+		if !msg.IsReadyForRetry() {
+			continue
+		}
+		
+		// Found a message ready to process
+		cq.messages.Remove(elem)
+		cq.processing = msg
+		return msg
 	}
 
-	msg, ok := front.Value.(*Message)
-	if !ok {
-		return nil
-	}
-	cq.messages.Remove(front)
-	cq.processing = msg
-
-	return msg
+	return nil
 }
 
 // Complete marks the current processing message as done.
@@ -98,4 +122,37 @@ func (cq *ConversationQueue) IsEmpty() bool {
 	defer cq.mu.Unlock()
 
 	return cq.messages.Len() == 0 && cq.processing == nil
+}
+
+// HasReadyMessages returns true if the queue has messages ready to be processed.
+// This considers the NextRetryAt field for messages in retry state.
+func (cq *ConversationQueue) HasReadyMessages() bool {
+	cq.mu.Lock()
+	defer cq.mu.Unlock()
+
+	// Can't process if already processing
+	if cq.processing != nil {
+		return false
+	}
+
+	// Check if any message is ready
+	for elem := cq.messages.Front(); elem != nil; elem = elem.Next() {
+		msg, ok := elem.Value.(*Message)
+		if !ok {
+			continue
+		}
+		if msg.IsReadyForRetry() {
+			return true
+		}
+	}
+
+	return false
+}
+
+// MaxDepth returns the maximum depth limit for this queue.
+func (cq *ConversationQueue) MaxDepth() int {
+	cq.mu.Lock()
+	defer cq.mu.Unlock()
+
+	return cq.maxDepth
 }

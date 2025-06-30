@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/joshsymonds/mentat/internal/queue"
+	"github.com/Veraticus/mentat/internal/queue"
 )
 
 // Storage provides persistent state management across all components.

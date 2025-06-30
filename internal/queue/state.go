@@ -9,6 +9,8 @@ import (
 type stateMachine struct {
 	// transitions defines valid state transitions.
 	transitions map[State][]State
+	// validator provides enhanced transition validation.
+	validator   *stateValidator
 	mu          sync.RWMutex
 }
 
@@ -17,12 +19,13 @@ func NewStateMachine() StateMachine {
 	return &stateMachine{
 		transitions: map[State][]State{
 			StateQueued:     {StateProcessing},
-			StateProcessing: {StateValidating, StateRetrying, StateFailed},
+			StateProcessing: {StateValidating, StateRetrying, StateFailed, StateCompleted},
 			StateValidating: {StateCompleted, StateRetrying, StateFailed},
-			StateRetrying:   {StateProcessing},
+			StateRetrying:   {StateQueued, StateProcessing, StateFailed},
 			StateCompleted:  {}, // Terminal state
 			StateFailed:     {}, // Terminal state
 		},
+		validator: newStateValidator(),
 	}
 }
 
@@ -35,8 +38,16 @@ func (sm *stateMachine) Transition(msg *Message, to State) error {
 	// We need to handle this atomically to prevent race conditions
 	currentState := msg.GetState()
 	
+	// Check structural validity first
 	if !sm.CanTransition(currentState, to) {
-		return fmt.Errorf("invalid transition from %s to %s", currentState, to)
+		// Provide detailed explanation for invalid transitions
+		explanation := sm.validator.explainInvalidTransition(currentState, to)
+		return fmt.Errorf("invalid transition from %s to %s: %s", currentState, to, explanation)
+	}
+	
+	// Validate business rules
+	if err := sm.validator.validateTransition(msg, currentState, to); err != nil {
+		return err
 	}
 	
 	// Handle state-specific logic and determine final state
@@ -76,6 +87,12 @@ func (sm *stateMachine) Transition(msg *Message, to State) error {
 	if !msg.AtomicTransition(currentState, finalState) {
 		// State changed while we were processing
 		return fmt.Errorf("state changed during transition (was %s)", currentState)
+	}
+	
+	// Clear NextRetryAt when transitioning from retrying to queued
+	// This ensures the message is immediately available for processing
+	if currentState == StateRetrying && finalState == StateQueued {
+		msg.ClearNextRetryAt()
 	}
 	
 	// Handle post-transition updates
