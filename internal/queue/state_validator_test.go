@@ -186,7 +186,7 @@ func TestStateValidator_ValidateTransition(t *testing.T) {
 	
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg := NewMessage("test-id", "conv-1", "sender", "test message")
+			msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
 			msg.SetState(tt.from)
 			
 			if tt.setup != nil {
@@ -284,7 +284,7 @@ func TestStateMachine_EnhancedValidation(t *testing.T) {
 	sm := NewStateMachine()
 	
 	t.Run("invalid transition with detailed error", func(t *testing.T) {
-		msg := NewMessage("test-id", "conv-1", "sender", "test message")
+		msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
 		msg.SetState(StateCompleted)
 		
 		err := sm.Transition(msg, StateProcessing)
@@ -299,7 +299,7 @@ func TestStateMachine_EnhancedValidation(t *testing.T) {
 	})
 	
 	t.Run("business rule validation failure", func(t *testing.T) {
-		msg := NewMessage("test-id", "conv-1", "sender", "test message")
+		msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
 		msg.SetState(StateProcessing)
 		// No response set
 		
@@ -314,7 +314,7 @@ func TestStateMachine_EnhancedValidation(t *testing.T) {
 	})
 	
 	t.Run("successful transition with business rules", func(t *testing.T) {
-		msg := NewMessage("test-id", "conv-1", "sender", "test message")
+		msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
 		msg.SetState(StateProcessing)
 		msg.SetResponse("test response")
 		
@@ -329,7 +329,7 @@ func TestStateMachine_EnhancedValidation(t *testing.T) {
 	})
 	
 	t.Run("retry validation with max attempts", func(t *testing.T) {
-		msg := NewMessage("test-id", "conv-1", "sender", "test message")
+		msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
 		msg.SetState(StateProcessing)
 		msg.Attempts = 3
 		msg.MaxAttempts = 3
@@ -350,7 +350,7 @@ func TestStateMachine_CompleteWorkflow(t *testing.T) {
 	sm := NewStateMachine()
 	
 	t.Run("successful message flow", func(t *testing.T) {
-		msg := NewMessage("test-id", "conv-1", "sender", "test message")
+		msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
 		
 		// Queued -> Processing
 		err := sm.Transition(msg, StateProcessing)
@@ -391,7 +391,7 @@ func TestStateMachine_CompleteWorkflow(t *testing.T) {
 	})
 	
 	t.Run("retry workflow", func(t *testing.T) {
-		msg := NewMessage("test-id", "conv-1", "sender", "test message")
+		msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
 		msg.MaxAttempts = 2
 		msg.Attempts = 0 // Start with 0 attempts
 		

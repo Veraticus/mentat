@@ -190,7 +190,7 @@ func TestClient_Query(t *testing.T) {
 			sessionID:  "test-session",
 			mockOutput: `{"metadata": {"model": "claude-3-opus"}}`,
 			wantErr:    true,
-			errMsg:     "claude response missing message field",
+			errMsg:     "claude response missing message/result field",
 		},
 		{
 			name:      "empty prompt",

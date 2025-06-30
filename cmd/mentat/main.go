@@ -184,8 +184,8 @@ func initializeComponents(ctx context.Context) (*components, error) {
 	messenger := signalpkg.NewMessenger(signalClient, botPhoneNumber)
 
 	// 2. Validate embedded system prompt
-	if err := config.ValidateSystemPrompt(embeddedSystemPrompt); err != nil {
-		return nil, err
+	if validateErr := config.ValidateSystemPrompt(embeddedSystemPrompt); validateErr != nil {
+		return nil, validateErr
 	}
 	log.Printf("Using embedded system prompt (%d characters)", len(embeddedSystemPrompt))
 

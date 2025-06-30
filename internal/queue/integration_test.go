@@ -56,9 +56,10 @@ func TestQueueSystemIntegration(t *testing.T) {
 	// Test 1: Simple message flow
 	t.Run("SimpleMessageFlow", func(t *testing.T) {
 		msg := signal.IncomingMessage{
-			From:      "test-user",
-			Text:      "Hello",
-			Timestamp: time.Now(),
+			From:       "test-user",
+			FromNumber: "+1234567890",
+			Text:       "Hello",
+			Timestamp:  time.Now(),
 		}
 
 		// Enqueue the message
@@ -118,9 +119,10 @@ func TestQueueSystemIntegration(t *testing.T) {
 		// Send multiple messages from same user
 		for i := 1; i <= 3; i++ {
 			msg := signal.IncomingMessage{
-				From:      "conversation-test-user",
-				Text:      fmt.Sprintf("Message %d", i),
-				Timestamp: time.Now(),
+				From:       "conversation-test-user",
+				FromNumber: "+1234567890",
+				Text:       fmt.Sprintf("Message %d", i),
+				Timestamp:  time.Now(),
 			}
 			if err := system.Enqueue(msg); err != nil {
 				t.Fatalf("Failed to enqueue message %d: %v", i, err)
@@ -162,9 +164,10 @@ func TestQueueSystemIntegration(t *testing.T) {
 		burstSize := config.BurstLimit + 2 // Send more than burst allows
 		for i := 1; i <= burstSize; i++ {
 			msg := signal.IncomingMessage{
-				From:      user,
-				Text:      fmt.Sprintf("Rate limit test %d", i),
-				Timestamp: time.Now(),
+				From:       user,
+				FromNumber: "+1234567890",
+				Text:       fmt.Sprintf("Rate limit test %d", i),
+				Timestamp:  time.Now(),
 			}
 			if err := system.Enqueue(msg); err != nil {
 				t.Fatalf("Failed to enqueue message %d: %v", i, err)
@@ -233,9 +236,10 @@ func TestQueueSystemIntegration(t *testing.T) {
 		}
 
 		msg := signal.IncomingMessage{
-			From:      "retry-test-user",
-			Text:      "Test retry",
-			Timestamp: time.Now(),
+			From:       "retry-test-user",
+			FromNumber: "+1234567890",
+			Text:       "Test retry",
+			Timestamp:  time.Now(),
 		}
 
 		if err := system.Enqueue(msg); err != nil {
@@ -301,9 +305,10 @@ func TestQueueSystemShutdown(t *testing.T) {
 	// Enqueue some messages
 	for i := 0; i < 5; i++ {
 		msg := signal.IncomingMessage{
-			From:      fmt.Sprintf("user-%d", i),
-			Text:      "Test message",
-			Timestamp: time.Now(),
+			From:       fmt.Sprintf("user-%d", i),
+			FromNumber: fmt.Sprintf("+123456789%d", i),
+			Text:       "Test message",
+			Timestamp:  time.Now(),
 		}
 		if err := system.Enqueue(msg); err != nil {
 			t.Fatalf("Failed to enqueue message: %v", err)
@@ -430,9 +435,10 @@ func BenchmarkQueueSystemThroughput(b *testing.B) {
 	// Enqueue messages
 	for i := 0; i < b.N; i++ {
 		msg := signal.IncomingMessage{
-			From:      fmt.Sprintf("user-%d", i%10), // Distribute across 10 users
-			Text:      "Benchmark message",
-			Timestamp: time.Now(),
+			From:       fmt.Sprintf("user-%d", i%10), // Distribute across 10 users
+			FromNumber: fmt.Sprintf("+123456789%d", i%10),
+			Text:       "Benchmark message",
+			Timestamp:  time.Now(),
 		}
 		if err := system.Enqueue(msg); err != nil {
 			b.Fatalf("Failed to enqueue message: %v", err)

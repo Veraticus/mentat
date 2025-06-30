@@ -141,9 +141,7 @@ func (m *messenger) runSubscription(sub *subscription) {
 				// Send read receipt for data messages
 				if envelope.DataMessage != nil {
 					go func() {
-						if err := m.client.SendReceipt(context.Background(), envelope.Source, envelope.Timestamp, "read"); err != nil {
-							} else {
-							}
+						_ = m.client.SendReceipt(context.Background(), envelope.Source, envelope.Timestamp, "read")
 					}()
 				}
 				
@@ -152,7 +150,6 @@ func (m *messenger) runSubscription(sub *subscription) {
 				case <-sub.ctx.Done():
 					return
 				}
-			} else {
 			}
 		}
 	}

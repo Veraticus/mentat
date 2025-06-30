@@ -110,7 +110,7 @@ func TestRateLimitDetection(t *testing.T) {
 			}
 
 			// Test retry logic
-			msg := NewMessage("test-123", "conv-123", "user123", "test message")
+			msg := NewMessage("test-123", "conv-123", "user123", "+1234567890", "test message")
 			msg.Attempts = tt.currentAttempts
 			msg.MaxAttempts = tt.maxAttempts
 
@@ -212,9 +212,10 @@ func TestRateLimitIntegration(t *testing.T) {
 	
 	// Submit a message
 	msg := signal.IncomingMessage{
-		From:      "user123",
-		Text:      "test message",
-		Timestamp: time.Now(),
+		From:       "user123",
+		FromNumber: "+1234567890",
+		Text:       "test message",
+		Timestamp:  time.Now(),
 	}
 	err = coordinator.Enqueue(msg)
 	if err != nil {

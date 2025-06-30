@@ -2,7 +2,6 @@ package queue
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +13,7 @@ import (
 // mockLLMAuth simulates Claude authentication errors.
 type mockLLMAuth struct{}
 
-func (m *mockLLMAuth) Query(ctx context.Context, prompt string, sessionID string) (*claude.LLMResponse, error) {
+func (m *mockLLMAuth) Query(_ context.Context, _ string, _ string) (*claude.LLMResponse, error) {
 	return nil, &claude.AuthenticationError{
 		Message: "Claude Code authentication required",
 	}
@@ -30,7 +29,7 @@ type authTestSentMessage struct {
 	message   string
 }
 
-func (m *mockMessengerCapture) Send(ctx context.Context, recipient string, message string) error {
+func (m *mockMessengerCapture) Send(_ context.Context, recipient string, message string) error {
 	m.sentMessages = append(m.sentMessages, authTestSentMessage{
 		recipient: recipient,
 		message:   message,
@@ -38,16 +37,13 @@ func (m *mockMessengerCapture) Send(ctx context.Context, recipient string, messa
 	return nil
 }
 
-func (m *mockMessengerCapture) SendTypingIndicator(ctx context.Context, recipient string) error {
+func (m *mockMessengerCapture) SendTypingIndicator(_ context.Context, _ string) error {
 	return nil
 }
 
-func (m *mockMessengerCapture) Start(ctx context.Context) error {
-	return nil
-}
-
-func (m *mockMessengerCapture) Stop() error {
-	return nil
+func (m *mockMessengerCapture) Subscribe(_ context.Context) (<-chan signal.IncomingMessage, error) {
+	ch := make(chan signal.IncomingMessage)
+	return ch, nil
 }
 
 func TestWorkerHandlesAuthenticationError(t *testing.T) {

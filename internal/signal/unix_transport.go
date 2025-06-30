@@ -146,12 +146,10 @@ func (t *UnixSocketTransport) readLoop() {
 			case <-t.ctx.Done():
 				return
 			}
-		} else {
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
-	}
+	_ = scanner.Err()
 }
 
 // Subscribe implements Transport.Subscribe.

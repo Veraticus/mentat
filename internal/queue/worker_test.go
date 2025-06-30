@@ -126,7 +126,7 @@ func TestWorker_ProcessSuccess(t *testing.T) {
 	}
 
 	// Create and submit message to queue first
-	msg := NewMessage("msg-1", "conv-1", "user123", "Hello Claude")
+	msg := NewMessage("msg-1", "conv-1", "user123", "+1234567890", "Hello Claude")
 	if err := queueMgr.Submit(msg); err != nil {
 		t.Fatalf("Failed to submit message: %v", err)
 	}
@@ -154,8 +154,8 @@ func TestWorker_ProcessSuccess(t *testing.T) {
 	if len(messenger.sentMessages) != 1 {
 		t.Fatalf("Expected 1 sent message, got %d", len(messenger.sentMessages))
 	}
-	if messenger.sentMessages[0].recipient != "user123" {
-		t.Errorf("Expected recipient 'user123', got %s", messenger.sentMessages[0].recipient)
+	if messenger.sentMessages[0].recipient != "+1234567890" {
+		t.Errorf("Expected recipient '+1234567890', got %s", messenger.sentMessages[0].recipient)
 	}
 	if messenger.sentMessages[0].message != "Hello from Claude!" {
 		t.Errorf("Expected message 'Hello from Claude!', got %s", messenger.sentMessages[0].message)
@@ -208,7 +208,7 @@ func TestWorker_ProcessLLMError(t *testing.T) {
 	}
 
 	// Create and submit message to queue first
-	msg := NewMessage("msg-1", "conv-1", "user123", "Hello")
+	msg := NewMessage("msg-1", "conv-1", "user123", "+1234567890", "Hello")
 	msg.MaxAttempts = 3
 	if err := queueMgr.Submit(msg); err != nil {
 		t.Fatalf("Failed to submit message: %v", err)
@@ -268,7 +268,7 @@ func TestWorker_ProcessMaxRetries(t *testing.T) {
 	}
 
 	// Create message at max attempts
-	msg := NewMessage("msg-1", "conv-1", "user123", "Hello")
+	msg := NewMessage("msg-1", "conv-1", "user123", "+1234567890", "Hello")
 	msg.MaxAttempts = 3
 	msg.Attempts = 3
 	if err := queueMgr.Submit(msg); err != nil {
@@ -327,7 +327,7 @@ func TestWorker_RateLimiting(t *testing.T) {
 	rateLimiter.Allow("conv-1")
 
 	// Submit message to queue first
-	msg := NewMessage("msg-1", "conv-1", "user123", "Hello")
+	msg := NewMessage("msg-1", "conv-1", "user123", "+1234567890", "Hello")
 	if err := queueMgr.Submit(msg); err != nil {
 		t.Fatalf("Failed to submit message: %v", err)
 	}
@@ -383,6 +383,7 @@ func TestWorkerPool_Start(t *testing.T) {
 			fmt.Sprintf("msg-%d", i),
 			fmt.Sprintf("conv-%d", i%2),
 			"user",
+			"+1234567890",
 			fmt.Sprintf("Message %d", i),
 		)
 		if err := queueMgr.Submit(msg); err != nil {
@@ -454,7 +455,7 @@ func TestWorker_TypingIndicator(t *testing.T) {
 	}
 
 	// Submit and get message from queue
-	msg := NewMessage("msg-1", "conv-1", "user123", "Hello")
+	msg := NewMessage("msg-1", "conv-1", "user123", "+1234567890", "Hello")
 	if err := queueMgr.Submit(msg); err != nil {
 		t.Fatalf("Failed to submit message: %v", err)
 	}
@@ -546,6 +547,7 @@ func TestWorker_ProcessesMessagesInOrder(t *testing.T) {
 			fmt.Sprintf("msg-%d", i),
 			"conv-1", // Same conversation
 			"user123",
+			"+1234567890",
 			text,
 		)
 		if err := queueMgr.Submit(msg); err != nil {
@@ -621,6 +623,7 @@ func TestWorkerPool_GracefulShutdown(t *testing.T) {
 			fmt.Sprintf("msg-%d", i),
 			fmt.Sprintf("conv-%d", i%2), // Two conversations
 			fmt.Sprintf("user-%d", i),
+			fmt.Sprintf("+123456789%d", i),
 			fmt.Sprintf("Message %d", i),
 		)
 		if err := queueMgr.Submit(msg); err != nil {
@@ -726,6 +729,7 @@ func TestWorker_MessageOrderWithinConversation(t *testing.T) {
 				fmt.Sprintf("msg-%s-%d", convID, i),
 				convID,
 				"user123",
+				"+1234567890",
 				fmt.Sprintf("%s-Message-%d", convID, i),
 			)
 			if err := queueMgr.Submit(msg); err != nil {

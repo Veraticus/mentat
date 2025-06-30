@@ -35,13 +35,13 @@ func TestParseResponse(t *testing.T) {
 			name:        "empty JSON message",
 			input:       `{"message": "", "metadata": {}}`,
 			wantErr:     true,
-			errContains: "missing message field",
+			errContains: "missing message/result field",
 		},
 		{
 			name:        "JSON missing message field",
 			input:       `{"metadata": {"model": "claude-3-opus"}}`,
 			wantErr:     true,
-			errContains: "missing message field",
+			errContains: "missing message/result field",
 		},
 		{
 			name: "plain text single line",

@@ -43,7 +43,7 @@ func TestRetryIntegration(t *testing.T) {
 	defer pool.Stop()
 
 	// Submit a message
-	msg := NewMessage("test-msg", "test-conv", "sender", "test message")
+	msg := NewMessage("test-msg", "test-conv", "sender", "+1234567890", "test message")
 	if err := manager.Submit(msg); err != nil {
 		t.Fatalf("Failed to submit message: %v", err)
 	}

@@ -154,6 +154,9 @@ func TestMessengerSubscribe(t *testing.T) {
 			SubscribeFunc: func(_ context.Context) (<-chan *Envelope, error) {
 				return clientCh, nil
 			},
+			SendReceiptFunc: func(_ context.Context, _ string, _ int64, _ string) error {
+				return nil
+			},
 		}
 		m := NewMessenger(client, "+1234567890")
 
@@ -246,6 +249,9 @@ func TestMessengerSubscribe(t *testing.T) {
 		client := &MockClient{
 			SubscribeFunc: func(_ context.Context) (<-chan *Envelope, error) {
 				return clientCh, nil
+			},
+			SendReceiptFunc: func(_ context.Context, _ string, _ int64, _ string) error {
+				return nil
 			},
 		}
 		m := NewMessenger(client, selfPhone)

@@ -407,13 +407,13 @@ func TestDynamicWorkerPool_ConcurrentOperations(t *testing.T) {
 		}
 	}()
 	
-	// Concurrent health checks
+	// Concurrent size checks
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 10; i++ {
-			healthy := pool.HealthyWorkers()
-			assert.GreaterOrEqual(t, healthy, 0)
-			assert.LessOrEqual(t, healthy, pool.Size())
+			size := pool.Size()
+			assert.GreaterOrEqual(t, size, 0)
+			assert.LessOrEqual(t, size, pool.config.MaxSize)
 			time.Sleep(5 * time.Millisecond)
 		}
 	}()

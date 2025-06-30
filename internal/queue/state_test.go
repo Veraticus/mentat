@@ -83,7 +83,7 @@ func TestStateMachine_Transition(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			sm := NewStateMachine()
-			msg := NewMessage("test-id", "conv-1", "sender", "test message")
+			msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
 			msg.SetState(tt.from)
 
 			// Set up message state for validation rules
@@ -111,7 +111,7 @@ func TestStateMachine_Transition(t *testing.T) {
 
 func TestStateMachine_TransitionWithMaxAttempts(t *testing.T) {
 	sm := NewStateMachine()
-	msg := NewMessage("test-id", "conv-1", "sender", "test message")
+	msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
 	msg.SetState(StateProcessing)
 	msg.MaxAttempts = 3
 	msg.Attempts = 3 // Already at max attempts
@@ -177,7 +177,7 @@ func TestStateMachine_CanTransition(t *testing.T) {
 
 func TestStateMachine_RetryingIncrementsAttempts(t *testing.T) {
 	sm := NewStateMachine()
-	msg := NewMessage("test-id", "conv-1", "sender", "test message")
+	msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
 
 	// Start in retrying state
 	msg.SetState(StateRetrying)
@@ -197,7 +197,7 @@ func TestStateMachine_RetryingIncrementsAttempts(t *testing.T) {
 
 func TestStateMachine_ConcurrentTransitions(t *testing.T) {
 	sm := NewStateMachine()
-	msg := NewMessage("test-id", "conv-1", "sender", "test message")
+	msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
 
 	// Run multiple goroutines trying to transition
 	done := make(chan bool, 10)
@@ -237,7 +237,7 @@ func TestStateMachine_ConcurrentTransitions(t *testing.T) {
 
 func TestStateMachine_StateHistory(t *testing.T) {
 	sm := NewStateMachine()
-	msg := NewMessage("test-id", "conv-1", "sender", "test message")
+	msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
 
 	// Initial state should have no history
 	history := msg.GetStateHistory()
@@ -301,7 +301,7 @@ func TestStateMachine_StateHistory(t *testing.T) {
 
 func TestStateMachine_RetryHistory(t *testing.T) {
 	sm := NewStateMachine()
-	msg := NewMessage("test-id", "conv-1", "sender", "test message")
+	msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
 	msg.SetState(StateProcessing)
 	msg.MaxAttempts = 3
 	msg.Attempts = 1

@@ -15,6 +15,9 @@ func TestMessengerIntegrationMessageFlow(t *testing.T) {
 		SubscribeFunc: func(_ context.Context) (<-chan *Envelope, error) {
 			return clientCh, nil
 		},
+		SendReceiptFunc: func(_ context.Context, _ string, _ int64, _ string) error {
+			return nil
+		},
 	}
 
 	selfPhone := "+1234567890"
@@ -176,6 +179,9 @@ func TestMessengerIntegrationConcurrentMessages(t *testing.T) {
 		SubscribeFunc: func(_ context.Context) (<-chan *Envelope, error) {
 			return clientCh, nil
 		},
+		SendReceiptFunc: func(_ context.Context, _ string, _ int64, _ string) error {
+			return nil
+		},
 	}
 
 	m := NewMessenger(client, "+1234567890")
@@ -236,6 +242,9 @@ func TestMessengerIntegrationContextCancellation(t *testing.T) {
 			clientCtx = ctx
 			close(ctxCaptured)
 			return clientCh, nil
+		},
+		SendReceiptFunc: func(_ context.Context, _ string, _ int64, _ string) error {
+			return nil
 		},
 	}
 
@@ -307,6 +316,9 @@ func TestMessengerIntegrationSubscriptionReplacement(t *testing.T) {
 				close(ch)
 			}()
 			return ch, nil
+		},
+		SendReceiptFunc: func(_ context.Context, _ string, _ int64, _ string) error {
+			return nil
 		},
 	}
 

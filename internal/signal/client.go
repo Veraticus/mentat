@@ -297,7 +297,6 @@ func (c *client) Subscribe(ctx context.Context) (<-chan *Envelope, error) {
 					case <-ctx.Done():
 						return
 					}
-				} else {
 				}
 			}
 		}

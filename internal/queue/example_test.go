@@ -62,9 +62,10 @@ func ExampleSystem() {
 
 	// Enqueue a message
 	msg := signal.IncomingMessage{
-		From:      "+1234567890",
-		Text:      "Hello, world!",
-		Timestamp: time.Now(),
+		From:       "John Doe",
+		FromNumber: "+1234567890",
+		Text:       "Hello, world!",
+		Timestamp:  time.Now(),
 	}
 
 	if err := system.Enqueue(msg); err != nil {

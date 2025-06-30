@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strings"
 	"sync"
 	"time"
 
@@ -199,37 +198,37 @@ func (w *worker) Process(ctx context.Context, msg *Message) error {
 				
 				// Return error so manager knows to retry
 				return err
-			} else {
-				// Max retries exceeded even for rate limit
-				log.Printf("Worker %d: Message %s exceeded max retries on rate limit",
-					w.config.ID, msg.ID)
-				msg.SetState(StateFailed)
-				
-				// Return error so manager knows it failed
-				return err
 			}
+			
+			// Max retries exceeded even for rate limit
+			log.Printf("Worker %d: Message %s exceeded max retries on rate limit",
+				w.config.ID, msg.ID)
+			msg.SetState(StateFailed)
+			
+			// Return error so manager knows it failed
+			return err
+		}
+		
+		// Non-rate-limit error - check if we can retry
+		if msg.CanRetry() {
+			// Calculate standard retry delay
+			retryDelay := CalculateRetryDelay(msg.Attempts)
+			retryTime := time.Now().Add(retryDelay)
+			msg.SetNextRetryAt(retryTime)
+			
+			log.Printf("Worker %d: Message %s will retry at %v (delay: %v)",
+				w.config.ID, msg.ID, retryTime.Format(time.RFC3339), retryDelay)
+			
+			msg.AddStateTransition(msg.GetState(), StateRetrying, fmt.Sprintf("Error: %v", err))
+			msg.SetState(StateRetrying)
+			
+			// Return error so manager knows to retry
+			// State is already set on the message
 		} else {
-			// Non-rate-limit error - check if we can retry
-			if msg.CanRetry() {
-				// Calculate standard retry delay
-				retryDelay := CalculateRetryDelay(msg.Attempts)
-				retryTime := time.Now().Add(retryDelay)
-				msg.SetNextRetryAt(retryTime)
-				
-				log.Printf("Worker %d: Message %s will retry at %v (delay: %v)",
-					w.config.ID, msg.ID, retryTime.Format(time.RFC3339), retryDelay)
-				
-				msg.AddStateTransition(msg.GetState(), StateRetrying, fmt.Sprintf("Error: %v", err))
-				msg.SetState(StateRetrying)
-				
-				// Return error so manager knows to retry
-				// State is already set on the message
-			} else {
-				msg.SetState(StateFailed)
-				
-				// Return error so manager knows it failed
-				// State is already set on the message
-			}
+			msg.SetState(StateFailed)
+			
+			// Return error so manager knows it failed
+			// State is already set on the message
 		}
 
 		return err
@@ -242,6 +241,13 @@ func (w *worker) Process(ctx context.Context, msg *Message) error {
 	// Send response to user
 	if err := w.config.Messenger.Send(ctx, msg.SenderNumber, response); err != nil {
 		return fmt.Errorf("failed to send response: %w", err)
+	}
+
+	// Update state through MessageQueue interface (for stats)
+	if w.config.MessageQueue != nil {
+		if err := w.config.MessageQueue.UpdateState(msg.ID, MessageStateCompleted, "Successfully processed"); err != nil {
+			log.Printf("Failed to update state for completed message %s: %v", msg.ID, err)
+		}
 	}
 
 	// Mark message as complete in queue
@@ -258,12 +264,7 @@ func (w *worker) Process(ctx context.Context, msg *Message) error {
 // processMessage queries the LLM and returns the response.
 func (w *worker) processMessage(ctx context.Context, msg *Message) (string, error) {
 	// Create a session ID based on conversation
-	// Remove special characters from phone number to create a valid session ID
-	cleanNumber := msg.ConversationID
-	if strings.HasPrefix(cleanNumber, "+") {
-		cleanNumber = cleanNumber[1:]
-	}
-	sessionID := fmt.Sprintf("signal%s", cleanNumber)
+	sessionID := fmt.Sprintf("signal-%s", msg.ConversationID)
 
 	// Query the LLM
 	llmResp, err := w.config.LLM.Query(ctx, msg.Text, sessionID)

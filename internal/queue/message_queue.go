@@ -38,7 +38,11 @@ func (q *simpleMessageQueue) Enqueue(msg signal.IncomingMessage) error {
 
 	// Use the sender's phone number as the conversation ID
 	// In a real system, this might be more sophisticated
-	conversationID := msg.From
+	conversationID := msg.FromNumber
+	if conversationID == "" {
+		// Fallback to From if FromNumber is not provided
+		conversationID = msg.From
+	}
 
 	// Create a new Message from the IncomingMessage
 	queuedMsg := NewMessage(msgID, conversationID, msg.From, msg.FromNumber, msg.Text)

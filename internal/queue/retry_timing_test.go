@@ -11,7 +11,7 @@ func TestConversationQueueRespectsNextRetryAt(t *testing.T) {
 	queue := NewConversationQueue("test-conv")
 
 	// Create a message that should be retried in the future
-	msg := NewMessage("msg-1", "test-conv", "sender", "test message")
+	msg := NewMessage("msg-1", "test-conv", "sender", "+1234567890", "test message")
 	msg.SetState(StateRetrying)
 	msg.IncrementAttempts()
 	
@@ -58,14 +58,14 @@ func TestConversationQueueMixedRetryMessages(t *testing.T) {
 	queue := NewConversationQueue("test-conv")
 
 	// Create messages with different retry times
-	msg1 := NewMessage("msg-1", "test-conv", "sender", "message 1")
+	msg1 := NewMessage("msg-1", "test-conv", "sender", "+1234567890", "message 1")
 	msg1.SetState(StateRetrying)
 	msg1.SetNextRetryAt(time.Now().Add(2 * time.Second)) // Not ready
 
-	msg2 := NewMessage("msg-2", "test-conv", "sender", "message 2")
+	msg2 := NewMessage("msg-2", "test-conv", "sender", "+1234567890", "message 2")
 	msg2.SetState(StateQueued) // Ready (not in retry state)
 
-	msg3 := NewMessage("msg-3", "test-conv", "sender", "message 3")
+	msg3 := NewMessage("msg-3", "test-conv", "sender", "+1234567890", "message 3")
 	msg3.SetState(StateRetrying)
 	msg3.SetNextRetryAt(time.Now().Add(-1 * time.Second)) // Ready (past time)
 
@@ -136,7 +136,7 @@ func TestWorkerSetsNextRetryAt(t *testing.T) {
 	worker := w
 
 	// Create a test message
-	msg := NewMessage("test-msg", "test-conv", "sender", "test message")
+	msg := NewMessage("test-msg", "test-conv", "sender", "+1234567890", "test message")
 
 	// Process the message (will fail with rate limit error)
 	err := worker.Process(ctx, msg)

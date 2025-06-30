@@ -102,7 +102,7 @@ func TestMessageZeroValue(t *testing.T) {
 
 func TestNewMessage(t *testing.T) {
 	beforeCreate := time.Now()
-	msg := NewMessage("msg-123", "conv-123", "+1234567890", "Test message")
+	msg := NewMessage("msg-123", "conv-123", "sender", "+1234567890", "Test message")
 	afterCreate := time.Now()
 	
 	// Verify ID is generated
@@ -114,8 +114,11 @@ func TestNewMessage(t *testing.T) {
 	if msg.ConversationID != "conv-123" {
 		t.Error("ConversationID not set correctly")
 	}
-	if msg.Sender != "+1234567890" {
+	if msg.Sender != "sender" {
 		t.Error("Sender not set correctly")
+	}
+	if msg.SenderNumber != "+1234567890" {
+		t.Error("SenderNumber not set correctly")
 	}
 	if msg.Text != "Test message" {
 		t.Error("Text not set correctly")
@@ -142,7 +145,7 @@ func TestNewMessage(t *testing.T) {
 }
 
 func TestMessageSetState(t *testing.T) {
-	msg := NewMessage("msg-123", "conv-123", "+1234567890", "Test")
+	msg := NewMessage("msg-123", "conv-123", "sender", "+1234567890", "Test")
 	originalUpdatedAt := msg.UpdatedAt
 	
 	// Sleep briefly to ensure time difference
@@ -159,7 +162,7 @@ func TestMessageSetState(t *testing.T) {
 }
 
 func TestMessageSetError(t *testing.T) {
-	msg := NewMessage("msg-123", "conv-123", "+1234567890", "Test")
+	msg := NewMessage("msg-123", "conv-123", "sender", "+1234567890", "Test")
 	originalAttempts := msg.Attempts
 	
 	testErr := fmt.Errorf("Test error")
@@ -176,7 +179,7 @@ func TestMessageSetError(t *testing.T) {
 }
 
 func TestMessageSetResponse(t *testing.T) {
-	msg := NewMessage("msg-123", "conv-123", "+1234567890", "Test")
+	msg := NewMessage("msg-123", "conv-123", "sender", "+1234567890", "Test")
 	beforeProcess := time.Now()
 	
 	msg.SetResponse("Test response")
@@ -235,7 +238,7 @@ func TestStatsZeroValue(t *testing.T) {
 }
 
 func TestMessageThreadSafety(_ *testing.T) {
-	msg := NewMessage("msg-123", "conv-123", "+1234567890", "Test")
+	msg := NewMessage("msg-123", "conv-123", "sender", "+1234567890", "Test")
 	
 	// Run concurrent operations
 	done := make(chan bool, 3)
@@ -274,7 +277,7 @@ func TestMessageThreadSafety(_ *testing.T) {
 }
 
 func TestMessageStateHistory(t *testing.T) {
-	msg := NewMessage("msg-123", "conv-123", "+1234567890", "Test")
+	msg := NewMessage("msg-123", "conv-123", "sender", "+1234567890", "Test")
 	
 	// Initially, history should be empty
 	history := msg.GetStateHistory()

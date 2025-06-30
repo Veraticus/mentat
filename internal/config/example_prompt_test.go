@@ -2,7 +2,6 @@ package config_test
 
 import (
 	"fmt"
-	"log"
 	"os"
 
 	"github.com/Veraticus/mentat/internal/claude"
@@ -13,7 +12,8 @@ func ExampleLoadSystemPrompt() {
 	// Create a temporary prompt file for the example
 	tmpFile, err := os.CreateTemp("", "system_prompt_*.txt")
 	if err != nil {
-		log.Fatal(err)
+		fmt.Fprintf(os.Stderr, "Error creating temp file: %v\n", err)
+		return
 	}
 	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
@@ -21,16 +21,19 @@ func ExampleLoadSystemPrompt() {
 	promptContent := "You are Mentat, a helpful personal assistant specialized in scheduling and task management."
 	if _, writeErr := tmpFile.WriteString(promptContent); writeErr != nil {
 		_ = tmpFile.Close()
-		log.Fatal(writeErr)
+		fmt.Fprintf(os.Stderr, "Error writing to temp file: %v\n", writeErr)
+		return
 	}
-	if err := tmpFile.Close(); err != nil {
-		log.Fatal(err)
+	if closeErr := tmpFile.Close(); closeErr != nil {
+		fmt.Fprintf(os.Stderr, "Error closing temp file: %v\n", closeErr)
+		return
 	}
 
 	// Load the system prompt
 	prompt, err := config.LoadSystemPrompt(tmpFile.Name())
 	if err != nil {
-		log.Fatalf("Failed to load system prompt: %v", err)
+		fmt.Fprintf(os.Stderr, "Failed to load system prompt: %v\n", err)
+		return
 	}
 
 	fmt.Println("Loaded system prompt successfully")
@@ -45,23 +48,27 @@ func ExampleLoadSystemPrompt_withClaude() {
 	// Create a temporary prompt file
 	tmpFile, err := os.CreateTemp("", "mentat_prompt_*.txt")
 	if err != nil {
-		log.Fatal(err)
+		fmt.Fprintf(os.Stderr, "Error creating temp file: %v\n", err)
+		return
 	}
 	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	// Write the system prompt
 	if _, writeErr := tmpFile.WriteString("You are a scheduling assistant."); writeErr != nil {
 		_ = tmpFile.Close()
-		log.Fatal(writeErr)
+		fmt.Fprintf(os.Stderr, "Error writing to temp file: %v\n", writeErr)
+		return
 	}
-	if err := tmpFile.Close(); err != nil {
-		log.Fatal(err)
+	if closeErr := tmpFile.Close(); closeErr != nil {
+		fmt.Fprintf(os.Stderr, "Error closing temp file: %v\n", closeErr)
+		return
 	}
 
 	// Load the system prompt
 	systemPrompt, err := config.LoadSystemPrompt(tmpFile.Name())
 	if err != nil {
-		log.Fatalf("Failed to load system prompt: %v", err)
+		fmt.Fprintf(os.Stderr, "Failed to load system prompt: %v\n", err)
+		return
 	}
 
 	// Use with Claude client

@@ -13,9 +13,10 @@ func TestMessageQueue_EnqueueAndGetNext(t *testing.T) {
 
 	// Enqueue a message
 	msg := signal.IncomingMessage{
-		From:      "+1234567890",
-		Text:      "Test message",
-		Timestamp: time.Now(),
+		From:       "John Doe",
+		FromNumber: "+1234567890",
+		Text:       "Test message",
+		Timestamp:  time.Now(),
 	}
 
 	err := q.Enqueue(msg)
@@ -56,9 +57,10 @@ func TestMessageQueue_UpdateState(t *testing.T) {
 
 	// Enqueue a message
 	msg := signal.IncomingMessage{
-		From:      "+1234567890",
-		Text:      "Test message",
-		Timestamp: time.Now(),
+		From:       "John Doe",
+		FromNumber: "+1234567890",
+		Text:       "Test message",
+		Timestamp:  time.Now(),
 	}
 
 	err := q.Enqueue(msg)
@@ -119,9 +121,10 @@ func TestMessageQueue_Stats(t *testing.T) {
 	var msgIDs []string
 	for i := 0; i < 5; i++ {
 		msg := signal.IncomingMessage{
-			From:      fmt.Sprintf("+123456789%d", i%2), // 2 conversations
-			Text:      "Test message",
-			Timestamp: time.Now(),
+			From:       fmt.Sprintf("User %d", i%2),
+			FromNumber: fmt.Sprintf("+123456789%d", i%2), // 2 conversations
+			Text:       "Test message",
+			Timestamp:  time.Now(),
 		}
 		err := q.Enqueue(msg)
 		if err != nil {
@@ -215,9 +218,10 @@ func TestMessageQueue_FIFO(t *testing.T) {
 	var enqueuedMsgs []signal.IncomingMessage
 	for i := 0; i < 3; i++ {
 		msg := signal.IncomingMessage{
-			From:      "+1234567890",
-			Text:      fmt.Sprintf("Message %d", i+1),
-			Timestamp: time.Now(),
+			From:       "John Doe",
+			FromNumber: "+1234567890",
+			Text:       fmt.Sprintf("Message %d", i+1),
+			Timestamp:  time.Now(),
 		}
 		enqueuedMsgs = append(enqueuedMsgs, msg)
 		err := q.Enqueue(msg)
