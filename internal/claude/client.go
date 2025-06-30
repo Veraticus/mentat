@@ -114,8 +114,14 @@ func (c *Client) Query(ctx context.Context, prompt string, sessionID string) (*L
 		args = append(args, "--mcp-config", c.config.MCPConfigPath)
 	}
 	
-	// Add the prompt last
-	args = append(args, prompt)
+	// Combine system prompt with user prompt if specified
+	finalPrompt := prompt
+	if c.config.SystemPrompt != "" {
+		finalPrompt = "<system>\n" + c.config.SystemPrompt + "\n</system>\n\n<user>\n" + prompt + "\n</user>"
+	}
+	
+	// Add the combined prompt last
+	args = append(args, finalPrompt)
 
 	// Execute the command
 	output, err := c.cmdRunner.RunCommandContext(queryCtx, c.config.Command, args...)

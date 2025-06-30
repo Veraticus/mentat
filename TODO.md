@@ -209,7 +209,7 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Acceptance: Can receive and process Signal message
   - Go idiom: Keep main small
 
-- [ ] Test real end-to-end flow - Phase 27
+- [X] Test real end-to-end flow - Phase 27
   - Test: Send Signal message, get Claude response
   - Features: Full Signal → Queue → Worker → Claude → Signal
   - Acceptance: Response arrives in Signal
@@ -217,14 +217,14 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Go idiom: Test the whole system early
 
 ### Claude Configuration
-- [ ] Implement MCP config generation - Phase 28
+- [X] Implement MCP config generation - Phase 28
   - Test: Generates valid JSON config
   - Location: `internal/config/mcp.go`
   - Features: HTTP transport for all servers
   - Acceptance: Claude accepts generated config
   - Go idiom: Use struct tags for JSON
 
-- [ ] Add system prompt loading - Phase 29
+- [X] Add system prompt loading - Phase 29
   - Test: Loads and validates prompt
   - Location: `internal/config/prompt.go`
   - Features: File loading, validation

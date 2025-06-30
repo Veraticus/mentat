@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"log"
 	"os"
 	"os/signal"
@@ -12,9 +13,13 @@ import (
 	"time"
 
 	"github.com/Veraticus/mentat/internal/claude"
+	"github.com/Veraticus/mentat/internal/config"
 	"github.com/Veraticus/mentat/internal/queue"
 	signalpkg "github.com/Veraticus/mentat/internal/signal"
 )
+
+//go:embed system-prompt.md
+var embeddedSystemPrompt string
 
 // Hardcoded configuration for MVP.
 const (
@@ -23,7 +28,7 @@ const (
 	phoneNumberFilePath  = "/etc/signal-bot/phone-number"
 
 	// Claude configuration.
-	claudeCommand = "/usr/local/bin/claude-mentat"
+	claudeCommand = "/home/joshsymonds/.npm-global/bin/claude"
 	mcpConfigPath = "" // Empty means no MCP config
 	claudeTimeout = 120 * time.Second
 
@@ -178,10 +183,17 @@ func initializeComponents(ctx context.Context) (*components, error) {
 	signalClient := signalpkg.NewClient(transport)
 	messenger := signalpkg.NewMessenger(signalClient, botPhoneNumber)
 
-	// 2. Initialize Claude client
+	// 2. Validate embedded system prompt
+	if err := config.ValidateSystemPrompt(embeddedSystemPrompt); err != nil {
+		return nil, err
+	}
+	log.Printf("Using embedded system prompt (%d characters)", len(embeddedSystemPrompt))
+
+	// 3. Initialize Claude client
 	claudeConfig := claude.Config{
 		Command:       claudeCommand,
 		MCPConfigPath: mcpConfigPath,
+		SystemPrompt:  embeddedSystemPrompt,
 		Timeout:       claudeTimeout,
 	}
 
@@ -190,14 +202,14 @@ func initializeComponents(ctx context.Context) (*components, error) {
 		return nil, err
 	}
 
-	// 3. Initialize support services
+	// 4. Initialize support services
 	messageQueue := queue.NewMessageQueue()
 	rateLimiter := queue.NewRateLimiter(rateLimitCapacity, rateLimitRefill, rateLimitPeriod)
 
-	// 4. Initialize queue manager
+	// 5. Initialize queue manager
 	queueManager := queue.NewManager(ctx)
 
-	// 5. Initialize worker pool
+	// 6. Initialize worker pool
 	poolConfig := queue.PoolConfig{
 		InitialSize:        initialWorkers,
 		MinSize:            minWorkers,
@@ -215,7 +227,7 @@ func initializeComponents(ctx context.Context) (*components, error) {
 		return nil, err
 	}
 
-	// 6. Initialize Signal handler
+	// 7. Initialize Signal handler
 	enqueuer := &messageEnqueuerAdapter{manager: queueManager}
 	signalHandler, err := signalpkg.NewHandler(messenger, enqueuer)
 	if err != nil {

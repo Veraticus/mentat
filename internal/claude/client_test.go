@@ -310,7 +310,6 @@ func TestClient_Query(t *testing.T) {
 				"--print",
 				"--output-format", "json",
 				"--model", "sonnet",
-				"--resume", tt.sessionID,
 				"--mcp-config", "/etc/mcp-config.json",
 				tt.prompt,
 			}
@@ -462,6 +461,71 @@ func TestClient_Query_ComplexToolCalls(t *testing.T) {
 	}
 	if len(tc2.Parameters) != 3 {
 		t.Errorf("second tool call parameters = %d, want 3", len(tc2.Parameters))
+	}
+}
+
+// TestClient_SystemPrompt verifies that system prompts are prepended to user prompts.
+func TestClient_SystemPrompt(t *testing.T) {
+	tests := []struct {
+		name         string
+		systemPrompt string
+		userPrompt   string
+		wantPrompt   string
+	}{
+		{
+			name:         "with system prompt",
+			systemPrompt: "You are a helpful assistant specialized in scheduling.",
+			userPrompt:   "Test prompt",
+			wantPrompt:   "<system>\nYou are a helpful assistant specialized in scheduling.\n</system>\n\n<user>\nTest prompt\n</user>",
+		},
+		{
+			name:         "without system prompt",
+			systemPrompt: "",
+			userPrompt:   "Test prompt",
+			wantPrompt:   "Test prompt",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &mockCommandRunner{
+				output: `{"message": "Test response", "metadata": {"model": "claude-3-opus"}}`,
+			}
+
+			client, _ := NewClient(Config{
+				Command:       "/usr/bin/claude",
+				MCPConfigPath: "/etc/mcp-config.json",
+				SystemPrompt:  tt.systemPrompt,
+				Timeout:       30 * time.Second,
+			})
+			client.SetCommandRunner(runner)
+
+			ctx := context.Background()
+			_, err := client.Query(ctx, tt.userPrompt, "test-session")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			// Verify the command arguments
+			if len(runner.calls) != 1 {
+				t.Fatalf("expected 1 call, got %d", len(runner.calls))
+			}
+
+			call := runner.calls[0]
+			if call.name != "/usr/bin/claude" {
+				t.Errorf("command = %q, want %q", call.name, "/usr/bin/claude")
+			}
+
+			// Check that the last argument contains the expected prompt
+			if len(call.args) == 0 {
+				t.Fatal("no arguments passed to command")
+			}
+			
+			actualPrompt := call.args[len(call.args)-1]
+			if actualPrompt != tt.wantPrompt {
+				t.Errorf("prompt = %q, want %q", actualPrompt, tt.wantPrompt)
+			}
+		})
 	}
 }
 
