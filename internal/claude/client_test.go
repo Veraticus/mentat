@@ -53,15 +53,6 @@ func TestNewClient(t *testing.T) {
 			errMsg:  "command path is required",
 		},
 		{
-			name: "missing MCP config path",
-			config: Config{
-				Command: "/usr/bin/claude",
-				Timeout: 30 * time.Second,
-			},
-			wantErr: true,
-			errMsg:  "MCP config path is required",
-		},
-		{
 			name: "zero timeout uses default",
 			config: Config{
 				Command:       "/usr/bin/claude",
@@ -316,10 +307,11 @@ func TestClient_Query(t *testing.T) {
 
 			// Verify arguments
 			expectedArgs := []string{
-				"chat",
+				"--print",
+				"--output-format", "json",
+				"--model", "sonnet",
+				"--resume", tt.sessionID,
 				"--mcp-config", "/etc/mcp-config.json",
-				"--session-id", tt.sessionID,
-				"--format", "json",
 				tt.prompt,
 			}
 

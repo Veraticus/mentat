@@ -75,7 +75,8 @@ type Message struct {
 	Error          error
 	ProcessedAt    *time.Time
 	NextRetryAt    *time.Time // When the message should be retried (if in retry state)
-	Sender         string
+	Sender         string      // Display name of sender
+	SenderNumber   string      // Phone number of sender
 	ID             string
 	ConversationID string
 	Text           string
@@ -88,12 +89,13 @@ type Message struct {
 }
 
 // NewMessage creates a new message with default values.
-func NewMessage(id, conversationID, sender, text string) *Message {
+func NewMessage(id, conversationID, sender, senderNumber, text string) *Message {
 	now := time.Now()
 	return &Message{
 		ID:             id,
 		ConversationID: conversationID,
 		Sender:         sender,
+		SenderNumber:   senderNumber,
 		Text:           text,
 		State:          StateQueued,
 		Attempts:       0,

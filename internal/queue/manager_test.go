@@ -16,8 +16,8 @@ func TestManager_SubmitAndRequest(t *testing.T) {
 	go manager.Start()
 	
 	// Submit messages
-	msg1 := NewMessage("msg-1", "conv-1", "sender1", "hello")
-	msg2 := NewMessage("msg-2", "conv-2", "sender2", "world")
+	msg1 := NewMessage("msg-1", "conv-1", "sender1", "+1234567890", "hello")
+	msg2 := NewMessage("msg-2", "conv-2", "sender2", "+0987654321", "world")
 	
 	if err := manager.Submit(msg1); err != nil {
 		t.Fatalf("Failed to submit msg1: %v", err)
@@ -85,6 +85,7 @@ func TestManager_FairScheduling(t *testing.T) {
 				fmt.Sprintf("%s-msg-%d", convID, i),
 				convID,
 				"sender",
+				"+1234567890",
 				"test",
 			)
 			if err := manager.Submit(msg); err != nil {
@@ -133,7 +134,7 @@ func TestManager_Shutdown(t *testing.T) {
 	go manager.Start()
 	
 	// Submit a message
-	msg := NewMessage("msg-1", "conv-1", "sender", "test")
+	msg := NewMessage("msg-1", "conv-1", "sender", "+1234567890", "test")
 	if err := manager.Submit(msg); err != nil {
 		t.Fatalf("Failed to submit message: %v", err)
 	}
@@ -145,7 +146,7 @@ func TestManager_Shutdown(t *testing.T) {
 	}
 	
 	// Should not be able to submit after shutdown
-	err = manager.Submit(NewMessage("msg-2", "conv-1", "sender", "test"))
+	err = manager.Submit(NewMessage("msg-2", "conv-1", "sender", "+1234567890", "test"))
 	if err == nil {
 		t.Error("Expected error submitting after shutdown")
 	}
@@ -165,13 +166,13 @@ func TestManager_Stats(t *testing.T) {
 	}
 	
 	// Submit messages
-	if err := manager.Submit(NewMessage("msg-1", "conv-1", "sender", "test")); err != nil {
+	if err := manager.Submit(NewMessage("msg-1", "conv-1", "sender", "+1234567890", "test")); err != nil {
 		t.Fatalf("Failed to submit msg-1: %v", err)
 	}
-	if err := manager.Submit(NewMessage("msg-2", "conv-1", "sender", "test")); err != nil {
+	if err := manager.Submit(NewMessage("msg-2", "conv-1", "sender", "+1234567890", "test")); err != nil {
 		t.Fatalf("Failed to submit msg-2: %v", err)
 	}
-	if err := manager.Submit(NewMessage("msg-3", "conv-2", "sender", "test")); err != nil {
+	if err := manager.Submit(NewMessage("msg-3", "conv-2", "sender", "+0987654321", "test")); err != nil {
 		t.Errorf("Failed to submit message: %v", err)
 	}
 	
@@ -223,6 +224,7 @@ func TestManager_ConcurrentSubmit(t *testing.T) {
 					fmt.Sprintf("g%d-m%d", goroutineID, j),
 					fmt.Sprintf("conv-%d", goroutineID%3), // 3 conversations
 					"sender",
+					"+1234567890",
 					"test",
 				)
 				if err := manager.Submit(msg); err != nil {
@@ -252,7 +254,7 @@ func TestManager_CompleteNonExistentMessage(t *testing.T) {
 	go manager.Start()
 	
 	// Try to complete a message that was never submitted
-	msg := NewMessage("fake", "fake-conv", "sender", "test")
+	msg := NewMessage("fake", "fake-conv", "sender", "+1234567890", "test")
 	err := manager.CompleteMessage(msg)
 	if err == nil {
 		t.Error("Expected error completing non-existent message")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,7 +20,6 @@ type WorkerConfig struct {
 	QueueManager          *Manager
 	MessageQueue          MessageQueue  // For updating state and getting messages
 	TypingIndicatorMgr    signal.TypingIndicatorManager
-	ActivityRecorder      ActivityRecorder
 	ID                    int
 }
 
@@ -102,11 +102,6 @@ func (w *worker) Start(ctx context.Context) error {
 
 // Process handles a single message through its lifecycle.
 func (w *worker) Process(ctx context.Context, msg *Message) error {
-	// Record activity for health monitoring
-	if w.config.ActivityRecorder != nil {
-		w.config.ActivityRecorder.RecordActivity(w.ID())
-	}
-	
 	log.Printf("Worker %d: In Process for message %s", w.config.ID, msg.ID)
 	
 	// Apply rate limiting
@@ -163,15 +158,15 @@ func (w *worker) Process(ctx context.Context, msg *Message) error {
 
 	// Start typing indicator
 	if w.config.TypingIndicatorMgr != nil {
-		if err := w.config.TypingIndicatorMgr.Start(ctx, msg.Sender); err != nil {
+		if err := w.config.TypingIndicatorMgr.Start(ctx, msg.SenderNumber); err != nil {
 			log.Printf("Failed to start typing indicator: %v", err)
 		}
-		defer w.config.TypingIndicatorMgr.Stop(msg.Sender)
+		defer w.config.TypingIndicatorMgr.Stop(msg.SenderNumber)
 	} else {
 		// Fallback to inline implementation
 		typingCtx, typingCancel := context.WithCancel(ctx)
 		defer typingCancel()
-		go w.sendTypingIndicator(typingCtx, msg.Sender)
+		go w.sendTypingIndicator(typingCtx, msg.SenderNumber)
 	}
 
 	// Process the message
@@ -202,26 +197,16 @@ func (w *worker) Process(ctx context.Context, msg *Message) error {
 				msg.AddStateTransition(msg.GetState(), StateRetrying, "Rate limited by LLM provider")
 				msg.SetState(StateRetrying)
 				
-				// Update state through MessageQueue interface
-				if w.config.MessageQueue != nil {
-					if updateErr := w.config.MessageQueue.UpdateState(msg.ID, MessageStateRetrying, "Rate limited by LLM provider"); updateErr != nil {
-						log.Printf("Failed to update state for rate-limited message %s: %v", msg.ID, updateErr)
-					}
-					return err
-				}
+				// Return error so manager knows to retry
+				return err
 			} else {
 				// Max retries exceeded even for rate limit
 				log.Printf("Worker %d: Message %s exceeded max retries on rate limit",
 					w.config.ID, msg.ID)
 				msg.SetState(StateFailed)
 				
-				// Update state through MessageQueue interface
-				if w.config.MessageQueue != nil {
-					if updateErr := w.config.MessageQueue.UpdateState(msg.ID, MessageStateFailed, "Rate limit retry limit exceeded"); updateErr != nil {
-						log.Printf("Failed to update state for failed message %s: %v", msg.ID, updateErr)
-					}
-					return err
-				}
+				// Return error so manager knows it failed
+				return err
 			}
 		} else {
 			// Non-rate-limit error - check if we can retry
@@ -237,21 +222,13 @@ func (w *worker) Process(ctx context.Context, msg *Message) error {
 				msg.AddStateTransition(msg.GetState(), StateRetrying, fmt.Sprintf("Error: %v", err))
 				msg.SetState(StateRetrying)
 				
-				// Update state through MessageQueue interface
-				if w.config.MessageQueue != nil {
-					if updateErr := w.config.MessageQueue.UpdateState(msg.ID, MessageStateRetrying, fmt.Sprintf("Error: %v", err)); updateErr != nil {
-						log.Printf("Failed to update state for retrying message %s: %v", msg.ID, updateErr)
-					}
-				}
+				// Return error so manager knows to retry
+				// State is already set on the message
 			} else {
 				msg.SetState(StateFailed)
 				
-				// Update state through MessageQueue interface
-				if w.config.MessageQueue != nil {
-					if updateErr := w.config.MessageQueue.UpdateState(msg.ID, MessageStateFailed, fmt.Sprintf("Max retries exceeded: %v", err)); updateErr != nil {
-						log.Printf("Failed to update state for failed message %s: %v", msg.ID, updateErr)
-					}
-				}
+				// Return error so manager knows it failed
+				// State is already set on the message
 			}
 		}
 
@@ -263,18 +240,13 @@ func (w *worker) Process(ctx context.Context, msg *Message) error {
 	msg.SetState(StateCompleted)
 
 	// Send response to user
-	if err := w.config.Messenger.Send(ctx, msg.Sender, response); err != nil {
+	if err := w.config.Messenger.Send(ctx, msg.SenderNumber, response); err != nil {
 		return fmt.Errorf("failed to send response: %w", err)
 	}
 
 	// Mark message as complete in queue
-	if w.config.MessageQueue != nil {
-		// Use MessageQueue interface to update state (which updates stats)
-		if err := w.config.MessageQueue.UpdateState(msg.ID, MessageStateCompleted, "Successfully processed"); err != nil {
-			log.Printf("Failed to update message state to completed %s: %v", msg.ID, err)
-		}
-	} else if w.config.QueueManager != nil {
-		// Fallback to direct manager call
+	// Use QueueManager which actually tracks the messages
+	if w.config.QueueManager != nil {
 		if err := w.config.QueueManager.CompleteMessage(msg); err != nil {
 			log.Printf("Failed to complete message %s: %v", msg.ID, err)
 		}
@@ -286,11 +258,23 @@ func (w *worker) Process(ctx context.Context, msg *Message) error {
 // processMessage queries the LLM and returns the response.
 func (w *worker) processMessage(ctx context.Context, msg *Message) (string, error) {
 	// Create a session ID based on conversation
-	sessionID := fmt.Sprintf("signal-%s", msg.ConversationID)
+	// Remove special characters from phone number to create a valid session ID
+	cleanNumber := msg.ConversationID
+	if strings.HasPrefix(cleanNumber, "+") {
+		cleanNumber = cleanNumber[1:]
+	}
+	sessionID := fmt.Sprintf("signal%s", cleanNumber)
 
 	// Query the LLM
 	llmResp, err := w.config.LLM.Query(ctx, msg.Text, sessionID)
 	if err != nil {
+		// Check if it's an authentication error
+		if claude.IsAuthenticationError(err) {
+			// Return a user-friendly message about authentication
+			return "Claude Code authentication required. Please run the following command on the server to log in:\n\n" +
+				"sudo -u signal-cli /usr/local/bin/claude-mentat /login\n\n" +
+				"Once authenticated, I'll be able to respond to your messages.", nil
+		}
 		return "", fmt.Errorf("LLM query failed: %w", err)
 	}
 
@@ -304,7 +288,7 @@ func (w *worker) sendTypingIndicator(ctx context.Context, recipient string) {
 
 	// Send initial typing indicator
 	if err := w.config.Messenger.SendTypingIndicator(ctx, recipient); err != nil {
-		log.Printf("Failed to send typing indicator: %v", err)
+		log.Printf("Failed to send initial typing indicator to %s: %v", recipient, err)
 	}
 
 	for {
@@ -313,7 +297,7 @@ func (w *worker) sendTypingIndicator(ctx context.Context, recipient string) {
 			return
 		case <-ticker.C:
 			if err := w.config.Messenger.SendTypingIndicator(ctx, recipient); err != nil {
-				log.Printf("Failed to send typing indicator: %v", err)
+				log.Printf("Failed to send typing indicator to %s: %v", recipient, err)
 				return
 			}
 		}

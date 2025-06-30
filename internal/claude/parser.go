@@ -16,8 +16,9 @@ func parseResponse(output string) (*jsonResponse, error) {
 	var jsonResp jsonResponse
 	if err := json.Unmarshal([]byte(output), &jsonResp); err == nil {
 		// Successfully parsed JSON
-		if jsonResp.Message == "" {
-			return nil, fmt.Errorf("claude response missing message field")
+		// Check for message in either Message or Result field (Claude Code uses Result)
+		if jsonResp.Message == "" && jsonResp.Result == "" {
+			return nil, fmt.Errorf("claude response missing message/result field")
 		}
 		return &jsonResp, nil
 	}

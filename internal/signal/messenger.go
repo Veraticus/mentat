@@ -72,6 +72,7 @@ func (m *messenger) Subscribe(ctx context.Context) (<-chan IncomingMessage, erro
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+
 	// If there's an existing subscription, close it first
 	if m.subscription != nil {
 		m.subscription.cancel()
@@ -103,6 +104,7 @@ func (m *messenger) runSubscription(sub *subscription) {
 	defer close(sub.done)
 	defer close(sub.outCh) // Close channel from sender side only
 
+
 	// Subscribe to messages from the client
 	msgCh, err := m.client.Subscribe(sub.ctx)
 	if err != nil {
@@ -118,6 +120,7 @@ func (m *messenger) runSubscription(sub *subscription) {
 		return
 	}
 
+
 	// Process incoming messages
 	for {
 		select {
@@ -130,14 +133,26 @@ func (m *messenger) runSubscription(sub *subscription) {
 				return
 			}
 
+
 			// Convert envelope to IncomingMessage
 			msg := m.convertEnvelope(envelope)
 			if msg != nil {
+				
+				// Send read receipt for data messages
+				if envelope.DataMessage != nil {
+					go func() {
+						if err := m.client.SendReceipt(context.Background(), envelope.Source, envelope.Timestamp, "read"); err != nil {
+							} else {
+							}
+					}()
+				}
+				
 				select {
 				case sub.outCh <- *msg:
 				case <-sub.ctx.Done():
 					return
 				}
+			} else {
 			}
 		}
 	}
@@ -153,9 +168,10 @@ func (m *messenger) convertEnvelope(env *Envelope) *IncomingMessage {
 	// Handle data messages
 	if env.DataMessage != nil && env.DataMessage.Message != "" {
 		return &IncomingMessage{
-			Timestamp: time.Unix(0, env.Timestamp*int64(time.Millisecond)),
-			From:      m.getSource(env),
-			Text:      env.DataMessage.Message,
+			Timestamp:  time.Unix(0, env.Timestamp*int64(time.Millisecond)),
+			From:       m.getSourceName(env),
+			FromNumber: m.getSourceNumber(env),
+			Text:       env.DataMessage.Message,
 		}
 	}
 
@@ -169,16 +185,22 @@ func (m *messenger) convertEnvelope(env *Envelope) *IncomingMessage {
 	return nil
 }
 
-// getSource extracts the sender's identifier from an envelope.
-func (m *messenger) getSource(env *Envelope) string {
+// getSourceName extracts the sender's display name from an envelope.
+func (m *messenger) getSourceName(env *Envelope) string {
 	if env.SourceName != "" {
 		return env.SourceName
 	}
+	// Fall back to number if no name
+	return m.getSourceNumber(env)
+}
+
+// getSourceNumber extracts the sender's phone number from an envelope.
+func (m *messenger) getSourceNumber(env *Envelope) string {
 	if env.SourceNumber != "" {
 		return env.SourceNumber
 	}
 	if env.Source != "" {
 		return env.Source
 	}
-	return "unknown"
+	return ""
 }

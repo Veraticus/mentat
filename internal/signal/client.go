@@ -15,6 +15,9 @@ type Client interface {
 	// SendTypingIndicator sends a typing indicator
 	SendTypingIndicator(ctx context.Context, recipient string, stop bool) error
 
+	// SendReceipt sends a read or viewed receipt for a message
+	SendReceipt(ctx context.Context, recipient string, timestamp int64, receiptType string) error
+
 	// Subscribe starts receiving incoming messages
 	Subscribe(ctx context.Context) (<-chan *Envelope, error)
 
@@ -232,6 +235,22 @@ func (c *client) SendTypingIndicator(ctx context.Context, recipient string, stop
 	return err
 }
 
+// SendReceipt implements Client.SendReceipt.
+func (c *client) SendReceipt(ctx context.Context, recipient string, timestamp int64, receiptType string) error {
+	params := map[string]any{
+		"recipient":       []string{recipient},
+		"targetTimestamp": timestamp,
+		"type":            receiptType,
+	}
+
+	if c.account != "" {
+		params["account"] = c.account
+	}
+
+	_, err := c.transport.Call(ctx, "sendReceipt", params)
+	return err
+}
+
 // Subscribe implements Client.Subscribe.
 func (c *client) Subscribe(ctx context.Context) (<-chan *Envelope, error) {
 	// Get notification channel from transport
@@ -242,6 +261,7 @@ func (c *client) Subscribe(ctx context.Context) (<-chan *Envelope, error) {
 
 	// Create envelope channel
 	envelopes := make(chan *Envelope, 10)
+
 
 	// Start processing notifications
 	go func() {
@@ -256,6 +276,7 @@ func (c *client) Subscribe(ctx context.Context) (<-chan *Envelope, error) {
 					return
 				}
 
+
 				// Only process "receive" notifications
 				if notif.Method != "receive" {
 					continue
@@ -267,7 +288,6 @@ func (c *client) Subscribe(ctx context.Context) (<-chan *Envelope, error) {
 				}
 
 				if err := json.Unmarshal(notif.Params, &params); err != nil {
-					// Log error in production
 					continue
 				}
 
@@ -277,6 +297,7 @@ func (c *client) Subscribe(ctx context.Context) (<-chan *Envelope, error) {
 					case <-ctx.Done():
 						return
 					}
+				} else {
 				}
 			}
 		}
@@ -294,12 +315,14 @@ func (c *client) Close() error {
 type MockClient struct {
 	SendFunc               func(ctx context.Context, req *SendRequest) (*SendResponse, error)
 	SendTypingIndicatorFunc func(ctx context.Context, recipient string, stop bool) error
+	SendReceiptFunc        func(ctx context.Context, recipient string, timestamp int64, receiptType string) error
 	SubscribeFunc          func(ctx context.Context) (<-chan *Envelope, error)
 	CloseFunc              func() error
 
 	// For simpler testing
 	SentMessages     []SentMessage
 	TypingIndicators []MockTypingIndicator
+	Receipts         []MockReceipt
 	incomingMessages chan *Envelope
 	SendError        error
 	closed           bool
@@ -317,6 +340,13 @@ type SentMessage struct {
 type MockTypingIndicator struct {
 	Recipient string
 	Stop      bool
+}
+
+// MockReceipt records a receipt for testing.
+type MockReceipt struct {
+	Recipient    string
+	Timestamp    int64
+	ReceiptType  string
 }
 
 // NewMockClient creates a new mock client.
@@ -351,6 +381,15 @@ func NewMockClient() *MockClient {
 		return nil
 	}
 
+	m.SendReceiptFunc = func(_ context.Context, recipient string, timestamp int64, receiptType string) error {
+		m.Receipts = append(m.Receipts, MockReceipt{
+			Recipient:   recipient,
+			Timestamp:   timestamp,
+			ReceiptType: receiptType,
+		})
+		return nil
+	}
+
 	m.SubscribeFunc = func(_ context.Context) (<-chan *Envelope, error) {
 		return m.incomingMessages, nil
 	}
@@ -374,6 +413,11 @@ func (m *MockClient) Send(ctx context.Context, req *SendRequest) (*SendResponse,
 // SendTypingIndicator implements Client.SendTypingIndicator.
 func (m *MockClient) SendTypingIndicator(ctx context.Context, recipient string, stop bool) error {
 	return m.SendTypingIndicatorFunc(ctx, recipient, stop)
+}
+
+// SendReceipt implements Client.SendReceipt.
+func (m *MockClient) SendReceipt(ctx context.Context, recipient string, timestamp int64, receiptType string) error {
+	return m.SendReceiptFunc(ctx, recipient, timestamp, receiptType)
 }
 
 // Subscribe implements Client.Subscribe.

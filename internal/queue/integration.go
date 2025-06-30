@@ -80,8 +80,6 @@ func NewSystem(ctx context.Context, config SystemConfig) (*System, error) {
 		InitialSize:        config.WorkerPoolSize,
 		MinSize:            config.MinWorkers,
 		MaxSize:            config.MaxWorkers,
-		HealthCheckPeriod:  config.HealthCheckPeriod,
-		UnhealthyThreshold: config.UnhealthyThreshold,
 		LLM:                config.LLM,
 		Messenger:          config.Messenger,
 		QueueManager:       coordinator.manager,
@@ -113,7 +111,6 @@ func NewSystem(ctx context.Context, config SystemConfig) (*System, error) {
 func (qs *System) GetDetailedStats() DetailedStats {
 	// Update worker stats first
 	active := qs.WorkerPool.Size()
-	healthy := qs.WorkerPool.HealthyWorkers()
 	total := active
 	
 	// Safely convert to int32 with bounds checking
@@ -123,16 +120,13 @@ func (qs *System) GetDetailedStats() DetailedStats {
 	if active > maxInt32 {
 		active = maxInt32
 	}
-	if healthy > maxInt32 {
-		healthy = maxInt32
-	}
 	if total > maxInt32 {
 		total = maxInt32
 	}
 	
 	// Safe to convert now - values are guaranteed to fit in int32
 	//nolint:gosec // Values are bounded by maxInt32 check above
-	qs.Coordinator.statsCollector.UpdateWorkerCount(int32(active), int32(healthy), int32(total))
+	qs.Coordinator.statsCollector.UpdateWorkerCount(int32(active), int32(active), int32(total))
 	
 	return qs.Coordinator.GetDetailedStats()
 }
@@ -175,7 +169,6 @@ func (qs *System) Enqueue(msg signal.IncomingMessage) error {
 func (qs *System) Stats() Stats {
 	// Update worker stats in the StatsCollector
 	active := qs.WorkerPool.Size()
-	healthy := qs.WorkerPool.HealthyWorkers()
 	total := active // For now, total equals active
 	
 	// Safely convert to int32 with bounds checking
@@ -185,22 +178,19 @@ func (qs *System) Stats() Stats {
 	if active > maxInt32 {
 		active = maxInt32
 	}
-	if healthy > maxInt32 {
-		healthy = maxInt32
-	}
 	if total > maxInt32 {
 		total = maxInt32
 	}
 	
 	// Safe to convert now - values are guaranteed to fit in int32
 	//nolint:gosec // Values are bounded by maxInt32 check above
-	qs.Coordinator.statsCollector.UpdateWorkerCount(int32(active), int32(healthy), int32(total))
+	qs.Coordinator.statsCollector.UpdateWorkerCount(int32(active), int32(active), int32(total))
 	
 	stats := qs.Coordinator.Stats()
 	
 	// Add worker pool stats
 	stats.ActiveWorkers = active
-	stats.HealthyWorkers = qs.WorkerPool.HealthyWorkers()
+	stats.HealthyWorkers = active // All active workers are considered healthy
 	
 	return stats
 }

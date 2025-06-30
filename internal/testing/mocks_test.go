@@ -382,7 +382,7 @@ func TestMockWorker(t *testing.T) {
 
 func TestMockStateMachine(t *testing.T) {
 	mock := NewMockStateMachine()
-	msg := queue.NewMessage("msg1", "conv1", "user1", "test")
+	msg := queue.NewMessage("msg1", "conv1", "user1", "+1234567890", "test")
 
 	// Test valid transition
 	if !mock.CanTransition(queue.StateQueued, queue.StateProcessing) {

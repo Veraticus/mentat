@@ -74,7 +74,7 @@ func (qm *Coordinator) Enqueue(msg signal.IncomingMessage) error {
 	conversationID := msg.From // Use sender as conversation ID
 
 	// Create internal Message from IncomingMessage
-	internalMsg := NewMessage(msgID, conversationID, msg.From, msg.Text)
+	internalMsg := NewMessage(msgID, conversationID, msg.From, msg.FromNumber, msg.Text)
 	
 	// Store the message for later retrieval
 	qm.messages.Store(msgID, internalMsg)

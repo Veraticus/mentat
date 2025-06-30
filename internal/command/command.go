@@ -32,6 +32,8 @@ func RunCommandContext(ctx context.Context, name string, args ...string) (string
 	}
 
 	cmd := exec.CommandContext(ctx, name, args...)
+	// Set working directory to /tmp to avoid permission issues
+	cmd.Dir = "/tmp"
 	output, err := cmd.CombinedOutput()
 	
 	if err != nil {

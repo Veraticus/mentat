@@ -33,7 +33,8 @@ type TypingIndicator struct {
 
 // IncomingMessage represents a message received from a user.
 type IncomingMessage struct {
-	Timestamp time.Time // 8 bytes
-	From      string    // 16 bytes
-	Text      string    // 16 bytes
+	Timestamp   time.Time // 8 bytes
+	From        string    // 16 bytes - Display name
+	FromNumber  string    // 16 bytes - Phone number
+	Text        string    // 16 bytes
 }

@@ -23,7 +23,8 @@ func NewMessageBuilder() *MessageBuilder {
 		msg: &queue.Message{
 			ID:             "test-msg-123",
 			ConversationID: "+15551234567",
-			Sender:         "+15551234567",
+			Sender:         "Test User",
+			SenderNumber:   "+15551234567",
 			Text:           "Test message content",
 			State:          queue.StateQueued,
 			Attempts:       0,
@@ -113,7 +114,7 @@ func WithError(err error) MessageOption {
 // Build creates the message with all options applied.
 func (b *MessageBuilder) Build(opts ...MessageOption) *queue.Message {
 	// Create a new message with the same values (avoiding mutex copy)
-	msg := queue.NewMessage(b.msg.ID, b.msg.ConversationID, b.msg.Sender, b.msg.Text)
+	msg := queue.NewMessage(b.msg.ID, b.msg.ConversationID, b.msg.Sender, b.msg.SenderNumber, b.msg.Text)
 	msg.State = b.msg.State
 	msg.Attempts = b.msg.Attempts
 	msg.MaxAttempts = b.msg.MaxAttempts

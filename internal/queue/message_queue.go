@@ -41,7 +41,7 @@ func (q *simpleMessageQueue) Enqueue(msg signal.IncomingMessage) error {
 	conversationID := msg.From
 
 	// Create a new Message from the IncomingMessage
-	queuedMsg := NewMessage(msgID, conversationID, msg.From, msg.Text)
+	queuedMsg := NewMessage(msgID, conversationID, msg.From, msg.FromNumber, msg.Text)
 	
 	// Store the message
 	q.messages[msgID] = queuedMsg

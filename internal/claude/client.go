@@ -2,7 +2,9 @@ package claude
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Veraticus/mentat/internal/command"
@@ -29,8 +31,13 @@ type Client struct {
 // jsonResponse is the JSON structure returned by Claude CLI.
 type jsonResponse struct {
 	Message   string                `json:"message"`
+	Result    string                `json:"result"`      // Claude Code uses "result" field
+	Type      string                `json:"type"`        // Response type
+	IsError   bool                  `json:"is_error"`    // Whether it's an error
 	ToolCalls []jsonToolCall        `json:"tool_calls,omitempty"`
 	Metadata  jsonResponseMetadata  `json:"metadata,omitempty"`
+	Usage     jsonUsage            `json:"usage,omitempty"`        // Usage stats
+	TotalCost float64              `json:"total_cost_usd,omitempty"` // Cost in USD
 }
 
 // jsonToolCall is the JSON structure for tool calls.
@@ -52,14 +59,18 @@ type jsonResponseMetadata struct {
 	TokensUsed int    `json:"tokens_used"`
 }
 
+// jsonUsage is the JSON structure for usage stats.
+type jsonUsage struct {
+	InputTokens   int `json:"input_tokens"`
+	OutputTokens  int `json:"output_tokens"`
+	CacheReadTokens int `json:"cache_read_input_tokens"`
+}
+
 // NewClient creates a new Claude CLI client.
 func NewClient(config Config) (*Client, error) {
 	// Validate configuration
 	if config.Command == "" {
 		return nil, fmt.Errorf("command path is required")
-	}
-	if config.MCPConfigPath == "" {
-		return nil, fmt.Errorf("MCP config path is required")
 	}
 
 	// Set default timeout if not specified
@@ -93,12 +104,18 @@ func (c *Client) Query(ctx context.Context, prompt string, sessionID string) (*L
 
 	// Build command arguments
 	args := []string{
-		"chat",
-		"--mcp-config", c.config.MCPConfigPath,
-		"--session-id", sessionID,
-		"--format", "json",
-		prompt,
+		"--print",  // Non-interactive mode
+		"--output-format", "json",
+		"--model", "sonnet",
 	}
+	
+	// Only add MCP config if specified
+	if c.config.MCPConfigPath != "" {
+		args = append(args, "--mcp-config", c.config.MCPConfigPath)
+	}
+	
+	// Add the prompt last
+	args = append(args, prompt)
 
 	// Execute the command
 	output, err := c.cmdRunner.RunCommandContext(queryCtx, c.config.Command, args...)
@@ -107,6 +124,31 @@ func (c *Client) Query(ctx context.Context, prompt string, sessionID string) (*L
 		if queryCtx.Err() != nil {
 			return nil, fmt.Errorf("claude query timed out: %w", queryCtx.Err())
 		}
+		
+		// Check if the error contains JSON output (command package embeds output in error)
+		// Look for JSON in the error message itself
+		errorStr := err.Error()
+		if jsonStart := strings.Index(errorStr, "{"); jsonStart >= 0 {
+			// Extract JSON from error message
+			jsonOutput := errorStr[jsonStart:]
+			// Find the end of JSON (last closing brace)
+			if jsonEnd := strings.LastIndex(jsonOutput, "}"); jsonEnd >= 0 {
+				jsonOutput = jsonOutput[:jsonEnd+1]
+				
+				// Try to parse the JSON
+				var jsonResp jsonResponse
+				if parseErr := json.Unmarshal([]byte(jsonOutput), &jsonResp); parseErr == nil {
+					// Check for authentication error
+					if jsonResp.IsError && (strings.Contains(jsonResp.Result, "Invalid API key") || 
+						strings.Contains(jsonResp.Result, "Please run /login")) {
+						return nil, &AuthenticationError{
+							Message: "Claude Code authentication required",
+						}
+					}
+				}
+			}
+		}
+		
 		// Try to extract useful error information from output
 		errMsg := extractErrorMessage(output)
 		return nil, fmt.Errorf("failed to execute claude CLI: %w (output: %s)", err, errMsg)
@@ -115,16 +157,35 @@ func (c *Client) Query(ctx context.Context, prompt string, sessionID string) (*L
 	// Parse the response using our robust parser
 	jsonResp, err := parseResponse(output)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse claude response: %w", err)
+		return nil, fmt.Errorf("failed to parse claude response: %w\nPrompt: %s\nOutput: %s", err, prompt, output)
+	}
+
+	// Check for authentication error
+	if jsonResp.IsError && strings.Contains(jsonResp.Result, "Invalid API key") {
+		return nil, &AuthenticationError{
+			Message: "Claude Code authentication required",
+		}
 	}
 
 	// Convert to LLMResponse
+	// Use Result field if Message is empty (Claude Code format)
+	message := strings.TrimSpace(jsonResp.Message)
+	if message == "" && jsonResp.Result != "" {
+		message = strings.TrimSpace(jsonResp.Result)
+	}
+	
+	// Calculate total tokens if using Claude Code format
+	totalTokens := jsonResp.Metadata.TokensUsed
+	if totalTokens == 0 && jsonResp.Usage.InputTokens > 0 {
+		totalTokens = jsonResp.Usage.InputTokens + jsonResp.Usage.OutputTokens
+	}
+	
 	response := &LLMResponse{
-		Message: jsonResp.Message,
+		Message: message,
 		Metadata: ResponseMetadata{
 			ModelVersion: jsonResp.Metadata.Model,
 			Latency:      time.Duration(jsonResp.Metadata.LatencyMs) * time.Millisecond,
-			TokensUsed:   jsonResp.Metadata.TokensUsed,
+			TokensUsed:   totalTokens,
 		},
 	}
 
