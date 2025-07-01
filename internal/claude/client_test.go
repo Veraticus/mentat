@@ -156,12 +156,12 @@ func TestClient_Query(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:       "command execution error",
-			prompt:     "Test prompt",
-			sessionID:  "test-session",
-			mockErr:    errors.New("executable not found"),
-			wantErr:    true,
-			errMsg:     "failed to execute claude CLI",
+			name:      "command execution error",
+			prompt:    "Test prompt",
+			sessionID: "test-session",
+			mockErr:   errors.New("executable not found"),
+			wantErr:   true,
+			errMsg:    "failed to execute claude CLI",
 		},
 		{
 			name:       "plain text output fallback",
@@ -174,7 +174,7 @@ func TestClient_Query(t *testing.T) {
 					ModelVersion: "unknown",
 				},
 			},
-			wantErr:    false,
+			wantErr: false,
 		},
 		{
 			name:       "empty response",
@@ -207,9 +207,9 @@ func TestClient_Query(t *testing.T) {
 			errMsg:    "session ID cannot be empty",
 		},
 		{
-			name:       "multiline plain text response",
-			prompt:     "Tell me a story",
-			sessionID:  "test-multiline",
+			name:      "multiline plain text response",
+			prompt:    "Tell me a story",
+			sessionID: "test-multiline",
 			mockOutput: `Once upon a time...
 			
 			There was a developer
@@ -223,101 +223,153 @@ func TestClient_Query(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:       "error prefix in output",
-			prompt:     "Bad request",
-			sessionID:  "test-error",
+			name:      "error prefix in output",
+			prompt:    "Bad request",
+			sessionID: "test-error",
 			mockOutput: `error: Invalid API key
 			Please check your configuration`,
-			wantErr:    true,
-			errMsg:     "Invalid API key Please check your configuration",
+			wantErr: true,
+			errMsg:  "Invalid API key Please check your configuration",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			runner := &mockCommandRunner{
-				output: tt.mockOutput,
-				err:    tt.mockErr,
-			}
-
-			client, _ := NewClient(Config{
-				Command:       "/usr/bin/claude",
-				MCPConfigPath: "/etc/mcp-config.json",
-				Timeout:       30 * time.Second,
-			})
-			client.SetCommandRunner(runner)
-
-			ctx := context.Background()
-			got, err := client.Query(ctx, tt.prompt, tt.sessionID)
-
-			if tt.wantErr {
-				if err == nil {
-					t.Fatal("expected error but got none")
-				}
-				if tt.errMsg != "" && !containsString(err.Error(), tt.errMsg) {
-					t.Errorf("error = %q, want to contain %q", err.Error(), tt.errMsg)
-				}
-				return
-			}
-
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-
-			// Verify the response
-			if got.Message != tt.want.Message {
-				t.Errorf("Message = %q, want %q", got.Message, tt.want.Message)
-			}
-
-			if len(got.ToolCalls) != len(tt.want.ToolCalls) {
-				t.Fatalf("ToolCalls length = %d, want %d", len(got.ToolCalls), len(tt.want.ToolCalls))
-			}
-
-			// Verify tool calls
-			for i, tc := range got.ToolCalls {
-				wantTC := tt.want.ToolCalls[i]
-				if tc.Tool != wantTC.Tool {
-					t.Errorf("ToolCall[%d].Tool = %q, want %q", i, tc.Tool, wantTC.Tool)
-				}
-				if len(tc.Parameters) != len(wantTC.Parameters) {
-					t.Errorf("ToolCall[%d].Parameters length = %d, want %d", i, len(tc.Parameters), len(wantTC.Parameters))
-				}
-			}
-
-			// Verify metadata
-			if got.Metadata.ModelVersion != tt.want.Metadata.ModelVersion {
-				t.Errorf("Metadata.ModelVersion = %q, want %q", got.Metadata.ModelVersion, tt.want.Metadata.ModelVersion)
-			}
-			if got.Metadata.Latency != tt.want.Metadata.Latency {
-				t.Errorf("Metadata.Latency = %v, want %v", got.Metadata.Latency, tt.want.Metadata.Latency)
-			}
-			if got.Metadata.TokensUsed != tt.want.Metadata.TokensUsed {
-				t.Errorf("Metadata.TokensUsed = %d, want %d", got.Metadata.TokensUsed, tt.want.Metadata.TokensUsed)
-			}
-
-			// Verify command was called correctly
-			if len(runner.calls) != 1 {
-				t.Fatalf("expected 1 command call, got %d", len(runner.calls))
-			}
-
-			call := runner.calls[0]
-			if call.name != "/usr/bin/claude" {
-				t.Errorf("command = %q, want %q", call.name, "/usr/bin/claude")
-			}
-
-			// Verify arguments
-			expectedArgs := []string{
-				"--print",
-				"--output-format", "json",
-				"--model", "sonnet",
-				"--mcp-config", "/etc/mcp-config.json",
-				tt.prompt,
-			}
-
-			if !equalStringSlices(call.args, expectedArgs) {
-				t.Errorf("args = %v, want %v", call.args, expectedArgs)
-			}
+			runTestQueryCase(t, tt)
 		})
+	}
+}
+
+// runTestQueryCase executes a single test case for TestClient_Query.
+func runTestQueryCase(t *testing.T, tt struct {
+	name       string
+	prompt     string
+	sessionID  string
+	mockOutput string
+	mockErr    error
+	want       *LLMResponse
+	wantErr    bool
+	errMsg     string
+}) {
+	t.Helper()
+
+	runner := &mockCommandRunner{
+		output: tt.mockOutput,
+		err:    tt.mockErr,
+	}
+
+	client, _ := NewClient(Config{
+		Command:       "/usr/bin/claude",
+		MCPConfigPath: "/etc/mcp-config.json",
+		Timeout:       30 * time.Second,
+	})
+	client.SetCommandRunner(runner)
+
+	ctx := context.Background()
+	got, err := client.Query(ctx, tt.prompt, tt.sessionID)
+
+	// Handle error cases
+	if tt.wantErr {
+		verifyExpectedError(t, err, tt.errMsg)
+		return
+	}
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify response content
+	verifyResponseContent(t, got, tt.want)
+
+	// Verify command execution
+	verifyCommandExecution(t, runner, tt.prompt)
+}
+
+// verifyExpectedError checks that an error occurred and contains the expected message.
+func verifyExpectedError(t *testing.T, err error, errMsg string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected error but got none")
+	}
+	if errMsg != "" && !containsString(err.Error(), errMsg) {
+		t.Errorf("error = %q, want to contain %q", err.Error(), errMsg)
+	}
+}
+
+// verifyResponseContent verifies the LLM response matches expectations.
+func verifyResponseContent(t *testing.T, got, want *LLMResponse) {
+	t.Helper()
+
+	// Verify message
+	if got.Message != want.Message {
+		t.Errorf("Message = %q, want %q", got.Message, want.Message)
+	}
+
+	// Verify tool calls
+	verifyToolCalls(t, got.ToolCalls, want.ToolCalls)
+
+	// Verify metadata
+	verifyMetadata(t, got.Metadata, want.Metadata)
+}
+
+// verifyToolCalls compares tool calls.
+func verifyToolCalls(t *testing.T, got, want []ToolCall) {
+	t.Helper()
+
+	if len(got) != len(want) {
+		t.Fatalf("ToolCalls length = %d, want %d", len(got), len(want))
+	}
+
+	for i, tc := range got {
+		wantTC := want[i]
+		if tc.Tool != wantTC.Tool {
+			t.Errorf("ToolCall[%d].Tool = %q, want %q", i, tc.Tool, wantTC.Tool)
+		}
+		if len(tc.Parameters) != len(wantTC.Parameters) {
+			t.Errorf("ToolCall[%d].Parameters length = %d, want %d", i, len(tc.Parameters), len(wantTC.Parameters))
+		}
+	}
+}
+
+// verifyMetadata compares response metadata.
+func verifyMetadata(t *testing.T, got, want ResponseMetadata) {
+	t.Helper()
+
+	if got.ModelVersion != want.ModelVersion {
+		t.Errorf("Metadata.ModelVersion = %q, want %q", got.ModelVersion, want.ModelVersion)
+	}
+	if got.Latency != want.Latency {
+		t.Errorf("Metadata.Latency = %v, want %v", got.Latency, want.Latency)
+	}
+	if got.TokensUsed != want.TokensUsed {
+		t.Errorf("Metadata.TokensUsed = %d, want %d", got.TokensUsed, want.TokensUsed)
+	}
+}
+
+// verifyCommandExecution checks that the command was called correctly.
+func verifyCommandExecution(t *testing.T, runner *mockCommandRunner, prompt string) {
+	t.Helper()
+
+	if len(runner.calls) != 1 {
+		t.Fatalf("expected 1 command call, got %d", len(runner.calls))
+	}
+
+	call := runner.calls[0]
+	if call.name != "/usr/bin/claude" {
+		t.Errorf("command = %q, want %q", call.name, "/usr/bin/claude")
+	}
+
+	// Verify arguments
+	expectedArgs := []string{
+		"--print",
+		"--output-format", "json",
+		"--model", "sonnet",
+		"--mcp-config", "/etc/mcp-config.json",
+		prompt,
+	}
+
+	if !equalStringSlices(call.args, expectedArgs) {
+		t.Errorf("args = %v, want %v", call.args, expectedArgs)
 	}
 }
 
@@ -520,7 +572,7 @@ func TestClient_SystemPrompt(t *testing.T) {
 			if len(call.args) == 0 {
 				t.Fatal("no arguments passed to command")
 			}
-			
+
 			actualPrompt := call.args[len(call.args)-1]
 			if actualPrompt != tt.wantPrompt {
 				t.Errorf("prompt = %q, want %q", actualPrompt, tt.wantPrompt)
@@ -531,7 +583,7 @@ func TestClient_SystemPrompt(t *testing.T) {
 
 // Helper functions.
 func containsString(s, substr string) bool {
-	return substr != "" && len(s) >= len(substr) && 
+	return substr != "" && len(s) >= len(substr) &&
 		(s == substr || len(s) > len(substr) && containsSubstring(s, substr))
 }
 

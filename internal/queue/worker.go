@@ -13,13 +13,13 @@ import (
 
 // WorkerConfig holds configuration for a worker.
 type WorkerConfig struct {
-	LLM                   claude.LLM
-	Messenger             signal.Messenger
-	RateLimiter           RateLimiter
-	QueueManager          *Manager
-	MessageQueue          MessageQueue  // For updating state and getting messages
-	TypingIndicatorMgr    signal.TypingIndicatorManager
-	ID                    int
+	LLM                claude.LLM
+	Messenger          signal.Messenger
+	RateLimiter        RateLimiter
+	QueueManager       *Manager
+	MessageQueue       MessageQueue // For updating state and getting messages
+	TypingIndicatorMgr signal.TypingIndicatorManager
+	ID                 int
 }
 
 // worker processes messages from the queue.
@@ -36,6 +36,79 @@ func NewWorker(config WorkerConfig) Worker {
 	}
 }
 
+// requestMessage requests a message from the queue manager.
+func (w *worker) requestMessage(ctx context.Context) (*Message, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	msg, err := w.config.QueueManager.RequestMessage(reqCtx)
+	if err != nil {
+		if err == context.DeadlineExceeded {
+			// No messages available, return nil message with no error
+			// The caller will check for nil message
+			return nil, err
+		}
+		return nil, err
+	}
+
+	return msg, nil
+}
+
+// handleRetryMessage handles re-submission of messages that need to be retried.
+func (w *worker) handleRetryMessage(ctx context.Context, msg *Message) {
+	// Check if we're shutting down before trying to re-submit
+	select {
+	case <-ctx.Done():
+		log.Printf("Worker %d: Shutting down, not re-submitting message %s",
+			w.config.ID, msg.ID)
+		return
+	default:
+	}
+
+	// Complete current processing
+	if err := w.config.QueueManager.CompleteMessage(msg); err != nil {
+		log.Printf("Worker %d: Failed to complete message %s: %v",
+			w.config.ID, msg.ID, err)
+	}
+
+	// Re-submit for retry
+	if err := w.config.QueueManager.Submit(msg); err != nil {
+		log.Printf("Worker %d: Failed to re-submit message %s for retry: %v",
+			w.config.ID, msg.ID, err)
+	}
+}
+
+// processNextMessage handles processing of a single message.
+func (w *worker) processNextMessage(ctx context.Context) error {
+	msg, err := w.requestMessage(ctx)
+	if err != nil {
+		if err == context.DeadlineExceeded {
+			// No messages available, continue
+			return nil
+		}
+		return err
+	}
+
+	if msg == nil {
+		// Queue manager shutting down
+		return nil
+	}
+
+	// Process the message (message is already in processing state from Manager)
+	log.Printf("Worker %d: Processing message %s", w.config.ID, msg.ID)
+	if err := w.Process(ctx, msg); err != nil {
+		log.Printf("Worker %d error processing message %s: %v",
+			w.config.ID, msg.ID, err)
+
+		// If message is in retry state, we need to complete current processing and re-submit
+		if msg.GetState() == StateRetrying {
+			w.handleRetryMessage(ctx, msg)
+		}
+	}
+
+	return nil
+}
+
 // Start begins processing messages. Blocks until context is canceled.
 func (w *worker) Start(ctx context.Context) error {
 	log.Printf("Worker %d starting", w.config.ID)
@@ -46,127 +119,171 @@ func (w *worker) Start(ctx context.Context) error {
 			log.Printf("Worker %d shutting down", w.config.ID)
 			return ctx.Err()
 		default:
-			// Request a message from the queue
-			reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			msg, err := w.config.QueueManager.RequestMessage(reqCtx)
-			cancel()
-
-			if err != nil {
-				if err == context.DeadlineExceeded {
-					// No messages available, continue
-					continue
-				}
-				// Context canceled or other error
+			if err := w.processNextMessage(ctx); err != nil {
 				return err
-			}
-
-			if msg == nil {
-				// Queue manager is shutting down
-				return nil
-			}
-
-			// Process the message (message is already in processing state from Manager)
-			log.Printf("Worker %d: Processing message %s", w.config.ID, msg.ID)
-			if err := w.Process(ctx, msg); err != nil {
-				log.Printf("Worker %d error processing message %s: %v",
-					w.config.ID, msg.ID, err)
-				
-				// If message is in retry state, we need to complete current processing and re-submit
-				if msg.GetState() == StateRetrying {
-					// Check if we're shutting down before trying to re-submit
-					select {
-					case <-ctx.Done():
-						log.Printf("Worker %d: Shutting down, not re-submitting message %s",
-							w.config.ID, msg.ID)
-						return ctx.Err()
-					default:
-					}
-					
-					// Complete current processing
-					if err := w.config.QueueManager.CompleteMessage(msg); err != nil {
-						log.Printf("Worker %d: Failed to complete message %s: %v",
-							w.config.ID, msg.ID, err)
-					}
-					
-					// Re-submit for retry
-					if err := w.config.QueueManager.Submit(msg); err != nil {
-						log.Printf("Worker %d: Failed to re-submit message %s for retry: %v",
-							w.config.ID, msg.ID, err)
-					}
-				}
 			}
 		}
 	}
 }
 
+// handleRateLimitCheck checks rate limiting and handles rate limited messages.
+func (w *worker) handleRateLimitCheck(msg *Message) error {
+	if w.config.RateLimiter.Allow(msg.ConversationID) {
+		w.config.RateLimiter.Record(msg.ConversationID)
+		return nil
+	}
+
+	// Rate limited - treat this like other rate limit errors
+	err := fmt.Errorf("rate limited by local rate limiter")
+	msg.SetError(err)
+	msg.IncrementAttempts()
+
+	if msg.CanRetry() {
+		w.handleRateLimitRetry(msg, "Rate limited by local rate limiter")
+	} else {
+		log.Printf("Worker %d: Message %s exceeded max retries on local rate limit",
+			w.config.ID, msg.ID)
+		msg.SetState(StateFailed)
+	}
+
+	w.updateMessageState(msg)
+	return err
+}
+
+// handleRateLimitRetry sets up a rate-limited message for retry.
+func (w *worker) handleRateLimitRetry(msg *Message, reason string) {
+	retryDelay := calculateRateLimitRetryDelay(msg.Attempts)
+	retryTime := time.Now().Add(retryDelay)
+	msg.SetNextRetryAt(retryTime)
+
+	log.Printf("Worker %d: Message %s rate limited, will retry at %v (delay: %v)",
+		w.config.ID, msg.ID, retryTime.Format(time.RFC3339), retryDelay)
+
+	msg.AddStateTransition(msg.GetState(), StateRetrying, reason)
+	msg.SetState(StateRetrying)
+}
+
+// updateMessageState updates the message state through the appropriate interface.
+func (w *worker) updateMessageState(msg *Message) {
+	if w.config.MessageQueue != nil {
+		w.updateStateViaQueue(msg)
+	} else if w.config.QueueManager != nil {
+		w.updateStateViaManager(msg)
+	}
+}
+
+// updateStateViaQueue updates state through MessageQueue interface.
+func (w *worker) updateStateViaQueue(msg *Message) {
+	var state MessageState
+	var reason string
+
+	switch msg.GetState() {
+	case StateRetrying:
+		state = MessageStateRetrying
+		reason = "Rate limited"
+	case StateFailed:
+		state = MessageStateFailed
+		reason = "Retry limit exceeded"
+	case StateCompleted:
+		state = MessageStateCompleted
+		reason = "Successfully processed"
+	default:
+		return
+	}
+
+	if err := w.config.MessageQueue.UpdateState(msg.ID, state, reason); err != nil {
+		log.Printf("Failed to update state for message %s: %v", msg.ID, err)
+	}
+}
+
+// updateStateViaManager updates state through QueueManager interface.
+func (w *worker) updateStateViaManager(msg *Message) {
+	if err := w.config.QueueManager.CompleteMessage(msg); err != nil {
+		log.Printf("Failed to complete message %s: %v", msg.ID, err)
+	}
+
+	if msg.GetState() == StateRetrying {
+		if err := w.config.QueueManager.Submit(msg); err != nil {
+			log.Printf("Failed to re-submit message %s: %v", msg.ID, err)
+		}
+	}
+}
+
+// handleProcessingError handles errors from message processing.
+func (w *worker) handleProcessingError(msg *Message, err error) error {
+	msg.SetError(err)
+	msg.IncrementAttempts()
+
+	if IsRateLimitError(err) {
+		return w.handleRateLimitError(msg, err)
+	}
+
+	return w.handleGeneralError(msg, err)
+}
+
+// handleRateLimitError handles rate limit errors from LLM provider.
+func (w *worker) handleRateLimitError(msg *Message, err error) error {
+	log.Printf("Worker %d: Message %s rate limited by LLM provider",
+		w.config.ID, msg.ID)
+
+	if msg.CanRetry() {
+		w.handleRateLimitRetry(msg, "Rate limited by LLM provider")
+		return err
+	}
+
+	log.Printf("Worker %d: Message %s exceeded max retries on rate limit",
+		w.config.ID, msg.ID)
+	msg.SetState(StateFailed)
+	return err
+}
+
+// handleGeneralError handles non-rate-limit errors.
+func (w *worker) handleGeneralError(msg *Message, err error) error {
+	if msg.CanRetry() {
+		retryDelay := CalculateRetryDelay(msg.Attempts)
+		retryTime := time.Now().Add(retryDelay)
+		msg.SetNextRetryAt(retryTime)
+
+		log.Printf("Worker %d: Message %s will retry at %v (delay: %v)",
+			w.config.ID, msg.ID, retryTime.Format(time.RFC3339), retryDelay)
+
+		msg.AddStateTransition(msg.GetState(), StateRetrying, fmt.Sprintf("Error: %v", err))
+		msg.SetState(StateRetrying)
+	} else {
+		msg.SetState(StateFailed)
+	}
+
+	return err
+}
+
+// startTypingIndicator starts the typing indicator for the message.
+func (w *worker) startTypingIndicator(ctx context.Context, recipient string) func() {
+	if w.config.TypingIndicatorMgr != nil {
+		if err := w.config.TypingIndicatorMgr.Start(ctx, recipient); err != nil {
+			log.Printf("Failed to start typing indicator: %v", err)
+		}
+		return func() { w.config.TypingIndicatorMgr.Stop(recipient) }
+	}
+
+	// Fallback to inline implementation
+	typingCtx, typingCancel := context.WithCancel(ctx)
+	go w.sendTypingIndicator(typingCtx, recipient)
+	return typingCancel
+}
+
 // Process handles a single message through its lifecycle.
 func (w *worker) Process(ctx context.Context, msg *Message) error {
 	log.Printf("Worker %d: In Process for message %s", w.config.ID, msg.ID)
-	
+
 	// Apply rate limiting
-	if !w.config.RateLimiter.Allow(msg.ConversationID) {
-		// Rate limited - treat this like other rate limit errors
-		err := fmt.Errorf("rate limited by local rate limiter")
-		msg.SetError(err)
-		msg.IncrementAttempts()
-		
-		if msg.CanRetry() {
-			// Calculate retry delay
-			retryDelay := calculateRateLimitRetryDelay(msg.Attempts)
-			retryTime := time.Now().Add(retryDelay)
-			msg.SetNextRetryAt(retryTime)
-			
-			log.Printf("Worker %d: Message %s rate limited locally, will retry at %v (delay: %v)",
-				w.config.ID, msg.ID, retryTime.Format(time.RFC3339), retryDelay)
-			
-			msg.AddStateTransition(msg.GetState(), StateRetrying, "Rate limited by local rate limiter")
-			msg.SetState(StateRetrying)
-		} else {
-			log.Printf("Worker %d: Message %s exceeded max retries on local rate limit",
-				w.config.ID, msg.ID)
-			msg.SetState(StateFailed)
-		}
-		
-		// Update state through MessageQueue interface
-		if w.config.MessageQueue != nil {
-			if msg.GetState() == StateRetrying {
-				if updateErr := w.config.MessageQueue.UpdateState(msg.ID, MessageStateRetrying, "Rate limited by local rate limiter"); updateErr != nil {
-					log.Printf("Failed to update state for rate-limited message %s: %v", msg.ID, updateErr)
-				}
-			} else {
-				if updateErr := w.config.MessageQueue.UpdateState(msg.ID, MessageStateFailed, "Rate limit retry limit exceeded"); updateErr != nil {
-					log.Printf("Failed to update state for failed message %s: %v", msg.ID, updateErr)
-				}
-			}
-		} else {
-			// Fallback to direct manager calls
-			if completeErr := w.config.QueueManager.CompleteMessage(msg); completeErr != nil {
-				log.Printf("Failed to complete rate-limited message %s: %v", msg.ID, completeErr)
-			}
-			
-			if msg.GetState() == StateRetrying {
-				if submitErr := w.config.QueueManager.Submit(msg); submitErr != nil {
-					log.Printf("Failed to re-submit rate-limited message %s: %v", msg.ID, submitErr)
-				}
-			}
-		}
-		
+	if err := w.handleRateLimitCheck(msg); err != nil {
+		w.updateMessageState(msg)
 		return err
 	}
-	w.config.RateLimiter.Record(msg.ConversationID)
 
 	// Start typing indicator
-	if w.config.TypingIndicatorMgr != nil {
-		if err := w.config.TypingIndicatorMgr.Start(ctx, msg.SenderNumber); err != nil {
-			log.Printf("Failed to start typing indicator: %v", err)
-		}
-		defer w.config.TypingIndicatorMgr.Stop(msg.SenderNumber)
-	} else {
-		// Fallback to inline implementation
-		typingCtx, typingCancel := context.WithCancel(ctx)
-		defer typingCancel()
-		go w.sendTypingIndicator(typingCtx, msg.SenderNumber)
-	}
+	stopTyping := w.startTypingIndicator(ctx, msg.SenderNumber)
+	defer stopTyping()
 
 	// Process the message
 	log.Printf("Worker %d: Calling processMessage for %s", w.config.ID, msg.ID)
@@ -174,64 +291,7 @@ func (w *worker) Process(ctx context.Context, msg *Message) error {
 	log.Printf("Worker %d: processMessage returned for %s, err=%v", w.config.ID, msg.ID, err)
 
 	if err != nil {
-		msg.SetError(err)
-		msg.IncrementAttempts()
-
-		// Check if this is a rate limit error
-		if IsRateLimitError(err) {
-			log.Printf("Worker %d: Message %s rate limited by LLM provider",
-				w.config.ID, msg.ID)
-			
-			// Always retry rate-limited requests if we have attempts left
-			if msg.CanRetry() {
-				// Calculate retry delay for rate limit
-				retryDelay := calculateRateLimitRetryDelay(msg.Attempts)
-				retryTime := time.Now().Add(retryDelay)
-				msg.SetNextRetryAt(retryTime)
-				
-				log.Printf("Worker %d: Message %s will retry at %v (delay: %v)",
-					w.config.ID, msg.ID, retryTime.Format(time.RFC3339), retryDelay)
-				
-				// Mark as retrying with rate limit reason
-				msg.AddStateTransition(msg.GetState(), StateRetrying, "Rate limited by LLM provider")
-				msg.SetState(StateRetrying)
-				
-				// Return error so manager knows to retry
-				return err
-			}
-			
-			// Max retries exceeded even for rate limit
-			log.Printf("Worker %d: Message %s exceeded max retries on rate limit",
-				w.config.ID, msg.ID)
-			msg.SetState(StateFailed)
-			
-			// Return error so manager knows it failed
-			return err
-		}
-		
-		// Non-rate-limit error - check if we can retry
-		if msg.CanRetry() {
-			// Calculate standard retry delay
-			retryDelay := CalculateRetryDelay(msg.Attempts)
-			retryTime := time.Now().Add(retryDelay)
-			msg.SetNextRetryAt(retryTime)
-			
-			log.Printf("Worker %d: Message %s will retry at %v (delay: %v)",
-				w.config.ID, msg.ID, retryTime.Format(time.RFC3339), retryDelay)
-			
-			msg.AddStateTransition(msg.GetState(), StateRetrying, fmt.Sprintf("Error: %v", err))
-			msg.SetState(StateRetrying)
-			
-			// Return error so manager knows to retry
-			// State is already set on the message
-		} else {
-			msg.SetState(StateFailed)
-			
-			// Return error so manager knows it failed
-			// State is already set on the message
-		}
-
-		return err
+		return w.handleProcessingError(msg, err)
 	}
 
 	// Success - save response and send
@@ -243,21 +303,8 @@ func (w *worker) Process(ctx context.Context, msg *Message) error {
 		return fmt.Errorf("failed to send response: %w", err)
 	}
 
-	// Update state through MessageQueue interface (for stats)
-	if w.config.MessageQueue != nil {
-		if err := w.config.MessageQueue.UpdateState(msg.ID, MessageStateCompleted, "Successfully processed"); err != nil {
-			log.Printf("Failed to update state for completed message %s: %v", msg.ID, err)
-		}
-	}
-
-	// Mark message as complete in queue
-	// Use QueueManager which actually tracks the messages
-	if w.config.QueueManager != nil {
-		if err := w.config.QueueManager.CompleteMessage(msg); err != nil {
-			log.Printf("Failed to complete message %s: %v", msg.ID, err)
-		}
-	}
-
+	// Update state
+	w.updateMessageState(msg)
 	return nil
 }
 
@@ -329,7 +376,7 @@ type WorkerPool struct {
 // NewWorkerPool creates a new worker pool.
 func NewWorkerPool(size int, llm claude.LLM, messenger signal.Messenger, queueMgr *Manager, rateLimiter RateLimiter) *WorkerPool {
 	workers := make([]Worker, size)
-	
+
 	// Create a shared typing indicator manager
 	typingMgr := signal.NewTypingIndicatorManager(messenger)
 

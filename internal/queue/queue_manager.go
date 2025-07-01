@@ -75,7 +75,7 @@ func (qm *Coordinator) Enqueue(msg signal.IncomingMessage) error {
 
 	// Create internal Message from IncomingMessage
 	internalMsg := NewMessage(msgID, conversationID, msg.From, msg.FromNumber, msg.Text)
-	
+
 	// Store the message for later retrieval
 	qm.messages.Store(msgID, internalMsg)
 
@@ -97,7 +97,7 @@ func (qm *Coordinator) Enqueue(msg signal.IncomingMessage) error {
 	// Update stats
 	atomic.AddInt64(&qm.stats.totalQueued, 1)
 	atomic.AddInt64(&qm.stats.totalMessages, 1)
-	
+
 	// Update comprehensive stats
 	qm.statsCollector.RecordEnqueue()
 	qm.statsCollector.RecordConversationActivity(conversationID)
@@ -159,7 +159,7 @@ func (qm *Coordinator) GetNext(workerID string) (*QueuedMessage, error) {
 	atomic.AddInt64(&qm.stats.totalQueued, -1)
 	atomic.AddInt64(&qm.stats.totalProcessing, 1)
 	qm.stats.processingTimes.Store(msg.ID, now)
-	
+
 	// Update comprehensive stats
 	qm.statsCollector.RecordStateTransition(StateQueued, StateProcessing)
 	if queuedMsg.QueuedAt.Before(now) {
@@ -205,7 +205,7 @@ func (qm *Coordinator) UpdateState(msgID string, state MessageState, reason stri
 		Timestamp: now,
 		Reason:    reason,
 	})
-	
+
 	// Record in comprehensive stats
 	qm.statsCollector.RecordStateTransition(messageStateToState(oldState), messageStateToState(state))
 
@@ -216,14 +216,14 @@ func (qm *Coordinator) UpdateState(msgID string, state MessageState, reason stri
 		qm.stats.completionTimes.Store(msgID, now)
 		atomic.AddInt64(&qm.stats.totalProcessing, -1)
 		atomic.AddInt64(&qm.stats.totalCompleted, 1)
-		
+
 		// Record processing time if we have start time
 		if startTime, ok := qm.stats.processingTimes.Load(msgID); ok {
 			if start, ok := startTime.(time.Time); ok {
 				qm.statsCollector.RecordProcessingTime(now.Sub(start))
 			}
 		}
-		
+
 		// Mark as completed in underlying manager
 		if err := qm.manager.CompleteMessage(msg); err != nil {
 			return fmt.Errorf("failed to complete message: %w", err)
@@ -231,7 +231,7 @@ func (qm *Coordinator) UpdateState(msgID string, state MessageState, reason stri
 	case MessageStateFailed:
 		atomic.AddInt64(&qm.stats.totalProcessing, -1)
 		atomic.AddInt64(&qm.stats.totalFailed, 1)
-		
+
 		// Record error if present
 		if msg.Error != nil {
 			var errType string
@@ -245,7 +245,7 @@ func (qm *Coordinator) UpdateState(msgID string, state MessageState, reason stri
 			}
 			qm.statsCollector.RecordError(errType)
 		}
-		
+
 		// Mark as completed in underlying manager (failed is terminal)
 		if err := qm.manager.CompleteMessage(msg); err != nil {
 			return fmt.Errorf("failed to mark message as failed: %w", err)
@@ -253,10 +253,10 @@ func (qm *Coordinator) UpdateState(msgID string, state MessageState, reason stri
 	case MessageStateRetrying:
 		queuedMsg.Attempts++
 		qm.statsCollector.RecordRetryAttempt(queuedMsg.Attempts)
-		
+
 		// Calculate retry delay based on the error type and attempt count
 		var retryDelay time.Duration
-		
+
 		// Check if the last error was a rate limit error
 		if msgValue, ok := qm.messages.Load(msgID); ok {
 			if internalMsg, ok := msgValue.(*Message); ok && internalMsg.Error != nil {
@@ -271,15 +271,15 @@ func (qm *Coordinator) UpdateState(msgID string, state MessageState, reason stri
 				}
 			}
 		}
-		
+
 		// If no delay was calculated, use default
 		if retryDelay == 0 {
 			retryDelay = CalculateRetryDelay(queuedMsg.Attempts)
 		}
-		
+
 		NextRetryTime := now.Add(retryDelay)
 		queuedMsg.NextRetryAt = &NextRetryTime
-		
+
 		// Set the NextRetryAt on the internal message so ConversationQueue respects it
 		msg.SetNextRetryAt(NextRetryTime)
 		msg.SetState(StateQueued)
@@ -300,7 +300,7 @@ func (qm *Coordinator) UpdateState(msgID string, state MessageState, reason stri
 func (qm *Coordinator) Stats() Stats {
 	// Get stats from the comprehensive collector
 	stats := qm.statsCollector.GetStats()
-	
+
 	// Calculate oldest message age from actual messages
 	var oldestMessageAge time.Duration
 	now := time.Now()
@@ -318,7 +318,7 @@ func (qm *Coordinator) Stats() Stats {
 		}
 		return true
 	})
-	
+
 	stats.OldestMessageAge = oldestMessageAge
 	return stats
 }
@@ -361,16 +361,16 @@ func messageStateToState(ms MessageState) State {
 // Uses longer delays than regular retries to respect provider limits.
 func calculateRateLimitRetryDelay(attempts int) time.Duration {
 	const (
-		baseDelay    = 30 * time.Second  // Start with 30 seconds for rate limits
-		maxDelay     = 10 * time.Minute  // Cap at 10 minutes
-		maxShift     = 10                // Prevent overflow
+		baseDelay = 30 * time.Second // Start with 30 seconds for rate limits
+		maxDelay  = 10 * time.Minute // Cap at 10 minutes
+		maxShift  = 10               // Prevent overflow
 	)
-	
+
 	// Handle edge cases
 	if attempts <= 0 {
 		return baseDelay
 	}
-	
+
 	// Use multiplication for exponential backoff
 	delay := baseDelay
 	for i := 0; i < attempts && i < maxShift; i++ {
@@ -379,14 +379,14 @@ func calculateRateLimitRetryDelay(attempts int) time.Duration {
 			return maxDelay
 		}
 	}
-	
+
 	// Add 10-20% jitter to prevent thundering herd
-	jitterRange := delay / 5  // 20% total range
+	jitterRange := delay / 5 // 20% total range
 	if jitterRange > 0 {
 		// Use modulo to get a value within jitter range
 		jitter := time.Duration(time.Now().UnixNano() % int64(jitterRange))
 		delay = delay - jitterRange/2 + jitter
 	}
-	
+
 	return delay
 }

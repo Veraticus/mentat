@@ -1,4 +1,4 @@
-.PHONY: build test lint test-race test-integration clean help
+.PHONY: build test lint fmt test-race test-integration clean help
 
 # Variables
 BINARY_NAME := mentat
@@ -50,6 +50,12 @@ test-race:
 test-integration:
 	@echo "Running integration tests..."
 	@go test -v -tags=integration ./tests/...
+
+## fmt: Format Go code with gofmt
+fmt:
+	@echo "Formatting Go code..."
+	@gofmt -w .
+	@echo "Formatting complete"
 
 ## lint: Run golangci-lint
 lint:

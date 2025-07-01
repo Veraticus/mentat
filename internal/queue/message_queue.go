@@ -46,10 +46,10 @@ func (q *simpleMessageQueue) Enqueue(msg signal.IncomingMessage) error {
 
 	// Create a new Message from the IncomingMessage
 	queuedMsg := NewMessage(msgID, conversationID, msg.From, msg.FromNumber, msg.Text)
-	
+
 	// Store the message
 	q.messages[msgID] = queuedMsg
-	
+
 	return nil
 }
 
@@ -146,7 +146,7 @@ func (q *simpleMessageQueue) Stats() Stats {
 	defer q.mu.RUnlock()
 
 	stats := Stats{}
-	
+
 	var oldestQueued *time.Time
 	totalWaitTime := time.Duration(0)
 	totalProcessTime := time.Duration(0)

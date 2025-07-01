@@ -16,12 +16,12 @@ import (
 
 // mockLLM implements the LLM interface for testing.
 type mockLLM struct {
-	err         error
-	response    string
-	queries     []string
-	delay       time.Duration
-	mu          sync.Mutex
-	queryFunc   func(ctx context.Context, prompt string, sessionID string) (*claude.LLMResponse, error)
+	err       error
+	response  string
+	queries   []string
+	delay     time.Duration
+	mu        sync.Mutex
+	queryFunc func(ctx context.Context, prompt string, sessionID string) (*claude.LLMResponse, error)
 }
 
 func (m *mockLLM) Query(ctx context.Context, prompt string, sessionID string) (*claude.LLMResponse, error) {
@@ -71,11 +71,11 @@ func (m *mockMessenger) Send(ctx context.Context, recipient string, message stri
 	m.mu.Lock()
 	sendFunc := m.sendFunc
 	m.mu.Unlock()
-	
+
 	if sendFunc != nil {
 		return sendFunc(ctx, recipient, message)
 	}
-	
+
 	m.mu.Lock()
 	m.sentMessages = append(m.sentMessages, sentMessage{recipient, message})
 	m.mu.Unlock()
@@ -340,15 +340,15 @@ func TestWorker_RateLimiting(t *testing.T) {
 
 	// Process should be rate limited
 	err = worker.Process(ctx, reqMsg)
-	
+
 	// Should fail with rate limit error
 	if err == nil || !strings.Contains(err.Error(), "rate limited") {
 		t.Errorf("Expected rate limit error, got: %v", err)
 	}
 
 	// Wait for token refill and try again
-	time.Sleep(100 * time.Millisecond)
-	
+	<-time.After(100 * time.Millisecond)
+
 	// Should succeed now
 	err = worker.Process(ctx, reqMsg)
 	if err != nil {
@@ -392,7 +392,7 @@ func TestWorkerPool_Start(t *testing.T) {
 	}
 
 	// Wait for processing
-	time.Sleep(200 * time.Millisecond)
+	<-time.After(200 * time.Millisecond)
 
 	// Shutdown
 	cancel()
@@ -494,7 +494,7 @@ func TestWorker_ProcessesMessagesInOrder(t *testing.T) {
 		orderMu.Lock()
 		processedOrder = append(processedOrder, prompt)
 		orderMu.Unlock()
-		
+
 		// Simulate delay
 		if llm.delay > 0 {
 			select {
@@ -503,7 +503,7 @@ func TestWorker_ProcessesMessagesInOrder(t *testing.T) {
 				return nil, ctx.Err()
 			}
 		}
-		
+
 		return &claude.LLMResponse{
 			Message:  llm.response,
 			Metadata: claude.ResponseMetadata{},
@@ -554,11 +554,11 @@ func TestWorker_ProcessesMessagesInOrder(t *testing.T) {
 			t.Fatalf("Failed to submit message %d: %v", i, err)
 		}
 		// Small delay to ensure order is preserved
-		time.Sleep(5 * time.Millisecond)
+		<-time.After(5 * time.Millisecond)
 	}
 
 	// Wait for processing
-	time.Sleep(200 * time.Millisecond)
+	<-time.After(200 * time.Millisecond)
 
 	// Stop worker
 	workerCancel()
@@ -566,7 +566,7 @@ func TestWorker_ProcessesMessagesInOrder(t *testing.T) {
 	// Verify messages were processed in order
 	orderMu.Lock()
 	defer orderMu.Unlock()
-	
+
 	if len(processedOrder) != len(messages) {
 		t.Fatalf("Expected %d messages processed, got %d", len(messages), len(processedOrder))
 	}
@@ -632,11 +632,11 @@ func TestWorkerPool_GracefulShutdown(t *testing.T) {
 	}
 
 	// Let some messages process
-	time.Sleep(50 * time.Millisecond)
+	<-time.After(50 * time.Millisecond)
 
 	// Initiate graceful shutdown
 	cancel()
-	
+
 	// Wait for workers to finish
 	pool.Wait()
 
@@ -655,12 +655,12 @@ func TestWorkerPool_GracefulShutdown(t *testing.T) {
 	processed := atomic.LoadInt32(&processedCount)
 
 	t.Logf("Processed %d messages successfully", processed)
-	
+
 	// We should have processed at least some messages
 	if processed == 0 {
 		t.Error("No messages were processed before shutdown")
 	}
-	
+
 	// In a graceful shutdown, workers stop accepting new work but finish current work
 	// So we expect some messages to be processed, and the rest to remain in queue
 	if processed > int32(messageCount) {
@@ -688,10 +688,10 @@ func TestWorker_MessageOrderWithinConversation(t *testing.T) {
 			convOrder[convID] = append(convOrder[convID], prompt)
 		}
 		orderMu.Unlock()
-		
+
 		// Simulate processing
-		time.Sleep(llm.delay)
-		
+		<-time.After(llm.delay)
+
 		return &claude.LLMResponse{
 			Message:  llm.response,
 			Metadata: claude.ResponseMetadata{},
@@ -722,7 +722,7 @@ func TestWorker_MessageOrderWithinConversation(t *testing.T) {
 	// Submit messages to multiple conversations
 	conversations := []string{"conv-1", "conv-2", "conv-3"}
 	messagesPerConv := 5
-	
+
 	for _, convID := range conversations {
 		for i := 0; i < messagesPerConv; i++ {
 			msg := NewMessage(
@@ -739,7 +739,7 @@ func TestWorker_MessageOrderWithinConversation(t *testing.T) {
 	}
 
 	// Wait for processing
-	time.Sleep(200 * time.Millisecond)
+	<-time.After(200 * time.Millisecond)
 
 	// Stop pool
 	poolCancel()
@@ -752,10 +752,10 @@ func TestWorker_MessageOrderWithinConversation(t *testing.T) {
 	for _, convID := range conversations {
 		messages := convOrder[convID]
 		if len(messages) != messagesPerConv {
-			t.Errorf("Conversation %s: expected %d messages, got %d", 
+			t.Errorf("Conversation %s: expected %d messages, got %d",
 				convID, messagesPerConv, len(messages))
 		}
-		
+
 		// Check order
 		for i := 0; i < len(messages); i++ {
 			expected := fmt.Sprintf("%s-Message-%d", convID, i)

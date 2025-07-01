@@ -24,8 +24,8 @@ var embeddedSystemPrompt string
 // Hardcoded configuration for MVP.
 const (
 	// Signal configuration.
-	signalSocketPath     = "/run/signal-cli/socket"
-	phoneNumberFilePath  = "/etc/signal-bot/phone-number"
+	signalSocketPath    = "/run/signal-cli/socket"
+	phoneNumberFilePath = "/etc/signal-bot/phone-number"
 
 	// Claude configuration.
 	claudeCommand = "/home/joshsymonds/.npm-global/bin/claude"
@@ -115,7 +115,7 @@ func (a *messageEnqueuerAdapter) Enqueue(msg signalpkg.IncomingMessage) error {
 		msg.FromNumber, // Phone number
 		msg.Text,
 	)
-	
+
 	return a.manager.Submit(queueMsg)
 }
 
@@ -131,7 +131,7 @@ func readPhoneNumber() (string, error) {
 		// This is useful for development/testing
 		if os.IsPermission(err) {
 			log.Printf("Permission denied reading %s, checking for local override", phoneNumberFilePath)
-			
+
 			// Try reading from current directory
 			localData, localErr := os.ReadFile("phone-number")
 			if localErr == nil {
@@ -141,7 +141,7 @@ func readPhoneNumber() (string, error) {
 					return phoneNumber, nil
 				}
 			}
-			
+
 			// Try environment variable as last resort
 			if envPhone := os.Getenv("SIGNAL_PHONE_NUMBER"); envPhone != "" {
 				log.Printf("Using phone number from environment variable")
@@ -150,12 +150,12 @@ func readPhoneNumber() (string, error) {
 		}
 		return "", err
 	}
-	
+
 	phoneNumber := strings.TrimSpace(string(data))
 	if phoneNumber == "" {
 		return "", os.ErrNotExist
 	}
-	
+
 	return phoneNumber, nil
 }
 
@@ -173,7 +173,7 @@ func initializeComponents(ctx context.Context) (*components, error) {
 		return nil, err
 	}
 	log.Printf("Using bot phone number: %s", botPhoneNumber)
-	
+
 	// 1. Initialize Signal transport and client
 	transport, err := signalpkg.NewUnixSocketTransport(signalSocketPath)
 	if err != nil {
@@ -211,15 +211,15 @@ func initializeComponents(ctx context.Context) (*components, error) {
 
 	// 6. Initialize worker pool
 	poolConfig := queue.PoolConfig{
-		InitialSize:        initialWorkers,
-		MinSize:            minWorkers,
-		MaxSize:            maxWorkers,
-		LLM:                claudeClient,
-		Messenger:          messenger,
-		QueueManager:       queueManager,
-		MessageQueue:       messageQueue,
-		RateLimiter:        rateLimiter,
-		PanicHandler:       nil, // Use default panic handler
+		InitialSize:  initialWorkers,
+		MinSize:      minWorkers,
+		MaxSize:      maxWorkers,
+		LLM:          claudeClient,
+		Messenger:    messenger,
+		QueueManager: queueManager,
+		MessageQueue: messageQueue,
+		RateLimiter:  rateLimiter,
+		PanicHandler: nil, // Use default panic handler
 	}
 
 	workerPool, err := queue.NewDynamicWorkerPool(poolConfig)
@@ -271,8 +271,7 @@ func startComponents(ctx context.Context, c *components) error {
 		}
 	}()
 
-	// Give components time to initialize
-	time.Sleep(1 * time.Second)
+	// Components are started asynchronously and will initialize in the background
 
 	return nil
 }

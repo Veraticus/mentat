@@ -14,7 +14,7 @@ func TestConversationQueueRespectsNextRetryAt(t *testing.T) {
 	msg := NewMessage("msg-1", "test-conv", "sender", "+1234567890", "test message")
 	msg.SetState(StateRetrying)
 	msg.IncrementAttempts()
-	
+
 	// Set retry time to 1 second in the future
 	futureTime := time.Now().Add(1 * time.Second)
 	msg.SetNextRetryAt(futureTime)
@@ -36,7 +36,7 @@ func TestConversationQueueRespectsNextRetryAt(t *testing.T) {
 	}
 
 	// Wait for the retry time to pass
-	time.Sleep(1100 * time.Millisecond)
+	<-time.After(1100 * time.Millisecond)
 
 	// Now it should be ready
 	if !queue.HasReadyMessages() {

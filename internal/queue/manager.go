@@ -16,25 +16,25 @@ import (
 //   - Conversations with more messages don't starve those with fewer
 //
 // The scheduling algorithm works as follows:
-//   1. Conversations are tracked in a slice maintaining their arrival order
-//   2. A currentIndex rotates through conversations in round-robin fashion
-//   3. Each conversation can have at most one message in processing state
-//   4. Within each conversation, messages are processed in FIFO order
-//   5. Empty conversations are automatically cleaned up
+//  1. Conversations are tracked in a slice maintaining their arrival order
+//  2. A currentIndex rotates through conversations in round-robin fashion
+//  3. Each conversation can have at most one message in processing state
+//  4. Within each conversation, messages are processed in FIFO order
+//  5. Empty conversations are automatically cleaned up
 type Manager struct {
 	ctx               context.Context
 	stateMachine      StateMachine
 	cancel            context.CancelFunc
-	queues            map[string]*ConversationQueue    // conversation ID -> queue
-	incomingCh        chan *Message                     // channel for new messages
-	requestCh         chan chan *Message                // channel for worker requests
-	conversationOrder []string                          // ordered list of conversation IDs for fair scheduling
-	waitingWorkers    []chan *Message                   // workers waiting for messages
-	wg                sync.WaitGroup                    // tracks active goroutines
-	currentIndex      int                               // current position in round-robin
-	mu                sync.RWMutex                      // protects shared state
-	shutdown          bool                              // indicates shutdown in progress
-	started           chan struct{}                     // signals that Start() has begun
+	queues            map[string]*ConversationQueue // conversation ID -> queue
+	incomingCh        chan *Message                 // channel for new messages
+	requestCh         chan chan *Message            // channel for worker requests
+	conversationOrder []string                      // ordered list of conversation IDs for fair scheduling
+	waitingWorkers    []chan *Message               // workers waiting for messages
+	wg                sync.WaitGroup                // tracks active goroutines
+	currentIndex      int                           // current position in round-robin
+	mu                sync.RWMutex                  // protects shared state
+	shutdown          bool                          // indicates shutdown in progress
+	started           chan struct{}                 // signals that Start() has begun
 }
 
 // NewManager creates a new queue manager.
@@ -59,7 +59,7 @@ func (m *Manager) Start() {
 	m.wg.Add(1)
 	defer m.wg.Done()
 	defer m.cleanup()
-	
+
 	// Signal that we've started
 	close(m.started)
 
@@ -178,36 +178,19 @@ func (m *Manager) CompleteMessage(msg *Message) error {
 
 	m.mu.Lock()
 	queue, exists := m.queues[msg.ConversationID]
+	if !exists {
+		m.mu.Unlock()
+		// Queue already cleaned up, which is fine
+		return nil
+	}
 	m.mu.Unlock()
 
-	if !exists {
-		return fmt.Errorf("no queue found for conversation %s", msg.ConversationID)
-	}
-
 	queue.Complete()
-	
-	// Check if we should clean up this queue now
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	
-	if queue.IsEmpty() && !queue.IsProcessing() {
-		// Remove from queues
-		delete(m.queues, msg.ConversationID)
-		// Remove from order
-		for i, id := range m.conversationOrder {
-			if id == msg.ConversationID {
-				m.conversationOrder = append(
-					m.conversationOrder[:i],
-					m.conversationOrder[i+1:]...,
-				)
-				if m.currentIndex > i {
-					m.currentIndex--
-				}
-				break
-			}
-		}
-	}
-	
+
+	// Don't clean up the queue here - let getNextMessage handle cleanup
+	// to avoid race conditions where the queue is deleted while still
+	// being referenced elsewhere
+
 	return nil
 }
 
@@ -227,13 +210,13 @@ func (m *Manager) RetryMessage(msg *Message) error {
 
 	// Mark the current processing as complete
 	queue.Complete()
-	
+
 	// Transition to queued state for re-processing
 	if err := m.stateMachine.Transition(msg, StateQueued); err != nil {
 		// If transition fails, force it to queued
 		msg.SetState(StateQueued)
 	}
-	
+
 	// Re-submit the message
 	return m.Submit(msg)
 }
@@ -259,7 +242,7 @@ func (m *Manager) Shutdown(timeout time.Duration) error {
 
 	// Create done channel before starting goroutine to avoid race
 	done := make(chan struct{})
-	
+
 	// Start goroutine to signal completion
 	go func() {
 		m.wg.Wait()
@@ -307,82 +290,126 @@ func (m *Manager) enqueue(msg *Message) error {
 //   - Uses double-checking pattern for queue cleanup to prevent race conditions
 func (m *Manager) getNextMessage() *Message {
 	// Take a snapshot of conversations to check
-	m.mu.Lock()
-	if len(m.conversationOrder) == 0 {
-		m.mu.Unlock()
+	snapshot, startIndex := m.getConversationSnapshot()
+	if len(snapshot) == 0 {
 		return nil
 	}
-	
-	// Create a snapshot of conversation order to avoid holding lock during iteration
-	snapshot := make([]string, len(m.conversationOrder))
-	copy(snapshot, m.conversationOrder)
-	startIndex := m.currentIndex
-	m.mu.Unlock()
 
 	// Try each conversation in round-robin order
 	for i := 0; i < len(snapshot); i++ {
 		// Calculate index with wraparound
 		idx := (startIndex + i) % len(snapshot)
 		convID := snapshot[idx]
-		
-		// Get queue reference
-		m.mu.Lock()
-		queue, exists := m.queues[convID]
-		if !exists {
-			// Queue was removed, clean it from order
-			m.removeConversationFromOrder(convID)
-			m.mu.Unlock()
-			continue
-		}
-		m.mu.Unlock()
-		
-		// Check if already processing (without lock)
-		if queue.IsProcessing() {
-			continue
-		}
-		
-		// Try to dequeue (queue has its own locking)
-		msg := queue.Dequeue()
-		if msg != nil {
-			// Update current index for next call
-			m.mu.Lock()
-			// Find the actual current position of this conversation
-			actualIdx := -1
-			for i, id := range m.conversationOrder {
-				if id == convID {
-					actualIdx = i
-					break
-				}
-			}
-			if actualIdx >= 0 {
-				// Move to next conversation using actual position
-				m.currentIndex = (actualIdx + 1) % len(m.conversationOrder)
-			}
-			m.mu.Unlock()
+
+		// Try to get a message from this conversation
+		if msg := m.tryGetMessageFromConversation(convID); msg != nil {
 			return msg
-		}
-		
-		// Check if queue should be cleaned up
-		if queue.IsEmpty() && !queue.IsProcessing() {
-			m.mu.Lock()
-			// Double-check queue is still empty after acquiring lock
-			if queue.IsEmpty() && !queue.IsProcessing() {
-				delete(m.queues, convID)
-				m.removeConversationFromOrder(convID)
-			}
-			m.mu.Unlock()
 		}
 	}
 
 	// Update index even if no message found
+	m.updateCurrentIndex(startIndex, len(snapshot))
+	return nil
+}
+
+// getConversationSnapshot creates a snapshot of conversation order
+func (m *Manager) getConversationSnapshot() ([]string, int) {
 	m.mu.Lock()
-	m.currentIndex = (startIndex + len(snapshot)) % len(m.conversationOrder)
-	if m.currentIndex >= len(m.conversationOrder) && len(m.conversationOrder) > 0 {
+	defer m.mu.Unlock()
+
+	if len(m.conversationOrder) == 0 {
+		return nil, 0
+	}
+
+	// Create a snapshot of conversation order to avoid holding lock during iteration
+	snapshot := make([]string, len(m.conversationOrder))
+	copy(snapshot, m.conversationOrder)
+	return snapshot, m.currentIndex
+}
+
+// tryGetMessageFromConversation attempts to get a message from a specific conversation
+func (m *Manager) tryGetMessageFromConversation(convID string) *Message {
+	// Get queue reference
+	queue := m.getQueueForConversation(convID)
+	if queue == nil {
+		return nil
+	}
+
+	// Check if already processing (without lock)
+	if queue.IsProcessing() {
+		return nil
+	}
+
+	// Try to dequeue (queue has its own locking)
+	msg := queue.Dequeue()
+	if msg != nil {
+		m.updateIndexAfterDequeue(convID)
+		return msg
+	}
+
+	// Check if queue should be cleaned up
+	m.cleanupEmptyQueue(convID, queue)
+	return nil
+}
+
+// getQueueForConversation gets the queue for a conversation, handling missing queues
+func (m *Manager) getQueueForConversation(convID string) *ConversationQueue {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	queue, exists := m.queues[convID]
+	if !exists {
+		// Queue was removed, clean it from order
+		m.removeConversationFromOrder(convID)
+		return nil
+	}
+	return queue
+}
+
+// updateIndexAfterDequeue updates the current index after successfully dequeuing
+func (m *Manager) updateIndexAfterDequeue(convID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Find the actual current position of this conversation
+	for i, id := range m.conversationOrder {
+		if id == convID {
+			// Move to next conversation
+			m.currentIndex = (i + 1) % len(m.conversationOrder)
+			return
+		}
+	}
+}
+
+// cleanupEmptyQueue removes empty queues that are not processing
+func (m *Manager) cleanupEmptyQueue(convID string, queue *ConversationQueue) {
+	if !queue.IsEmpty() || queue.IsProcessing() {
+		return
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Double-check queue is still empty after acquiring lock
+	if queue.IsEmpty() && !queue.IsProcessing() {
+		delete(m.queues, convID)
+		m.removeConversationFromOrder(convID)
+	}
+}
+
+// updateCurrentIndex updates the current index after a full round-robin cycle
+func (m *Manager) updateCurrentIndex(startIndex, snapshotLen int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if len(m.conversationOrder) > 0 {
+		m.currentIndex = (startIndex + snapshotLen) % len(m.conversationOrder)
+		if m.currentIndex >= len(m.conversationOrder) {
+			m.currentIndex = 0
+		}
+	} else {
 		m.currentIndex = 0
 	}
-	m.mu.Unlock()
-
-	return nil
 }
 
 // removeConversationFromOrder removes a conversation from the order slice.
@@ -480,7 +507,7 @@ func (m *Manager) getNextMessageLocked() *Message {
 			m.currentIndex++
 			return msg
 		}
-		
+
 		// No message available, move to next conversation
 		m.currentIndex++
 

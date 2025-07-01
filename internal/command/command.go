@@ -35,7 +35,7 @@ func RunCommandContext(ctx context.Context, name string, args ...string) (string
 	// Set working directory to /tmp to avoid permission issues
 	cmd.Dir = "/tmp"
 	output, err := cmd.CombinedOutput()
-	
+
 	if err != nil {
 		// Provide more context in error messages
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -45,7 +45,7 @@ func RunCommandContext(ctx context.Context, name string, args ...string) (string
 		return "", fmt.Errorf("command failed: %s %s: %w (output: %s)",
 			name, strings.Join(args, " "), err, string(output))
 	}
-	
+
 	return string(output), nil
 }
 
@@ -67,13 +67,13 @@ func RunCommandWithInputContext(ctx context.Context, input, name string, args ..
 
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Stdin = strings.NewReader(input)
-	
+
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	
+
 	err := cmd.Run()
-	
+
 	// Combine stdout and stderr for output
 	output := stdout.String()
 	if stderr.Len() > 0 {
@@ -82,7 +82,7 @@ func RunCommandWithInputContext(ctx context.Context, input, name string, args ..
 		}
 		output += "stderr: " + stderr.String()
 	}
-	
+
 	if err != nil {
 		// Provide more context in error messages
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -92,7 +92,7 @@ func RunCommandWithInputContext(ctx context.Context, input, name string, args ..
 		return output, fmt.Errorf("command failed: %s %s: %w (output: %s)",
 			name, strings.Join(args, " "), err, output)
 	}
-	
+
 	return output, nil
 }
 
@@ -142,7 +142,7 @@ func (cb *Builder) Run() (string, error) {
 		ctx, cancel = context.WithTimeout(ctx, cb.timeout)
 		defer cancel()
 	}
-	
+
 	if cb.input != "" {
 		return RunCommandWithInputContext(ctx, cb.input, cb.name, cb.args...)
 	}

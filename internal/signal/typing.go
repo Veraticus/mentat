@@ -12,10 +12,10 @@ import (
 type TypingIndicatorManager interface {
 	// Start begins sending typing indicators for a recipient.
 	Start(ctx context.Context, recipient string) error
-	
+
 	// Stop stops sending typing indicators for a recipient.
 	Stop(recipient string)
-	
+
 	// StopAll stops all active typing indicators.
 	StopAll()
 }
@@ -45,26 +45,26 @@ func (m *typingManager) Start(ctx context.Context, recipient string) error {
 	if recipient == "" {
 		return fmt.Errorf("recipient cannot be empty")
 	}
-	
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	// Check if already active
 	if _, exists := m.indicators[recipient]; exists {
 		return fmt.Errorf("typing indicator already active for recipient %s", recipient)
 	}
-	
+
 	// Create cancelable context
 	indicatorCtx, cancel := context.WithCancel(ctx)
-	
+
 	// Store indicator
 	m.indicators[recipient] = &typingIndicator{
 		cancel: cancel,
 	}
-	
+
 	// Start goroutine
 	go m.runIndicator(indicatorCtx, recipient)
-	
+
 	return nil
 }
 
@@ -72,7 +72,7 @@ func (m *typingManager) Start(ctx context.Context, recipient string) error {
 func (m *typingManager) Stop(recipient string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	if indicator, exists := m.indicators[recipient]; exists {
 		indicator.cancel()
 		delete(m.indicators, recipient)
@@ -83,7 +83,7 @@ func (m *typingManager) Stop(recipient string) {
 func (m *typingManager) StopAll() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	for recipient, indicator := range m.indicators {
 		indicator.cancel()
 		delete(m.indicators, recipient)
@@ -97,18 +97,18 @@ func (m *typingManager) runIndicator(ctx context.Context, recipient string) {
 		log.Printf("Failed to send initial typing indicator to %s: %v", recipient, err)
 		// Continue anyway - don't fail the whole operation
 	}
-	
+
 	// Create ticker for periodic updates
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ctx.Done():
 			// Context canceled, just return
 			// The Stop() method already handles cleanup
 			return
-			
+
 		case <-ticker.C:
 			// Send periodic typing indicator
 			if err := m.messenger.SendTypingIndicator(ctx, recipient); err != nil {

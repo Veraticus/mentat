@@ -15,60 +15,60 @@ type StatsCollector struct {
 	messagesCompleted  int64 // Successfully completed
 	messagesFailed     int64 // Permanently failed
 	messagesRetrying   int64 // Currently in retry state
-	
+
 	// State transition counters
 	stateTransitions map[StateTransitionKey]int64 // Count of each state transition type
 	transitionMu     sync.RWMutex                 // Protects stateTransitions map
-	
+
 	// Error tracking
-	errorCounts      map[string]int64 // Error type -> count
-	errorMu          sync.RWMutex     // Protects errorCounts
-	totalErrors      int64            // Total errors encountered
-	
+	errorCounts map[string]int64 // Error type -> count
+	errorMu     sync.RWMutex     // Protects errorCounts
+	totalErrors int64            // Total errors encountered
+
 	// Retry distribution
-	retryAttempts    [10]int64 // Distribution of retry attempts (0-9+)
-	totalRetries     int64     // Total retry attempts
-	
+	retryAttempts [10]int64 // Distribution of retry attempts (0-9+)
+	totalRetries  int64     // Total retry attempts
+
 	// Timing metrics
-	processingTimes  *TimingStats // Processing time statistics
-	queueTimes       *TimingStats // Time spent in queue
-	
+	processingTimes *TimingStats // Processing time statistics
+	queueTimes      *TimingStats // Time spent in queue
+
 	// Throughput tracking
-	throughput       *ThroughputTracker // Messages per second/minute tracking
-	
+	throughput *ThroughputTracker // Messages per second/minute tracking
+
 	// Worker metrics
-	activeWorkers    int32 // Currently active workers
-	healthyWorkers   int32 // Workers passing health checks
-	totalWorkers     int32 // Total worker count
-	
+	activeWorkers  int32 // Currently active workers
+	healthyWorkers int32 // Workers passing health checks
+	totalWorkers   int32 // Total worker count
+
 	// Conversation metrics
 	activeConversations sync.Map // conversationID -> last activity time
-	
+
 	// Start time for uptime calculation
 	startTime time.Time
 }
 
 // TimingStats tracks timing statistics with percentiles.
 type TimingStats struct {
-	mu          sync.RWMutex
-	samples     []time.Duration // Recent samples for percentile calculation
-	maxSamples  int
-	total       time.Duration
-	count       int64
-	min         time.Duration
-	max         time.Duration
+	mu         sync.RWMutex
+	samples    []time.Duration // Recent samples for percentile calculation
+	maxSamples int
+	total      time.Duration
+	count      int64
+	min        time.Duration
+	max        time.Duration
 }
 
 // ThroughputTracker tracks message throughput over time.
 type ThroughputTracker struct {
-	mu              sync.RWMutex
-	secondBuckets   [60]int64     // Last 60 seconds
-	minuteBuckets   [60]int64     // Last 60 minutes
-	currentSecond   int           // Current second index
-	currentMinute   int           // Current minute index
-	lastSecondTime  time.Time     // Last second update
-	lastMinuteTime  time.Time     // Last minute update
-	totalMessages   int64         // Total messages processed
+	mu             sync.RWMutex
+	secondBuckets  [60]int64 // Last 60 seconds
+	minuteBuckets  [60]int64 // Last 60 minutes
+	currentSecond  int       // Current second index
+	currentMinute  int       // Current minute index
+	lastSecondTime time.Time // Last second update
+	lastMinuteTime time.Time // Last minute update
+	totalMessages  int64     // Total messages processed
 }
 
 // StateTransitionKey represents a state change key for tracking in the map.
@@ -140,7 +140,7 @@ func (sc *StatsCollector) RecordStateTransition(from, to State) {
 			}
 		}
 	}
-	
+
 	switch to {
 	case StateProcessing:
 		atomic.AddInt64(&sc.messagesProcessing, 1)
@@ -151,7 +151,7 @@ func (sc *StatsCollector) RecordStateTransition(from, to State) {
 	case StateRetrying:
 		atomic.AddInt64(&sc.messagesRetrying, 1)
 	}
-	
+
 	// Record transition count
 	transition := StateTransitionKey{From: from, To: to}
 	sc.transitionMu.Lock()
@@ -172,7 +172,7 @@ func (sc *StatsCollector) RecordQueueTime(duration time.Duration) {
 // RecordError records an error occurrence.
 func (sc *StatsCollector) RecordError(errorType string) {
 	atomic.AddInt64(&sc.totalErrors, 1)
-	
+
 	sc.errorMu.Lock()
 	sc.errorCounts[errorType]++
 	sc.errorMu.Unlock()
@@ -181,7 +181,7 @@ func (sc *StatsCollector) RecordError(errorType string) {
 // RecordRetryAttempt records a retry attempt.
 func (sc *StatsCollector) RecordRetryAttempt(attemptNumber int) {
 	atomic.AddInt64(&sc.totalRetries, 1)
-	
+
 	// Cap at 9 for the array
 	if attemptNumber > 9 {
 		attemptNumber = 9
@@ -204,7 +204,7 @@ func (sc *StatsCollector) RecordConversationActivity(conversationID string) {
 // GetStats returns comprehensive queue statistics.
 func (sc *StatsCollector) GetStats() Stats {
 	now := time.Now()
-	
+
 	// Count active conversations (active in last 5 minutes)
 	activeConvCount := 0
 	sc.activeConversations.Range(func(_, value any) bool {
@@ -215,13 +215,13 @@ func (sc *StatsCollector) GetStats() Stats {
 		}
 		return true
 	})
-	
+
 	// Calculate queue depth (enqueued - completed - failed - processing)
-	queued := atomic.LoadInt64(&sc.messagesEnqueued) - 
-		atomic.LoadInt64(&sc.messagesCompleted) - 
+	queued := atomic.LoadInt64(&sc.messagesEnqueued) -
+		atomic.LoadInt64(&sc.messagesCompleted) -
 		atomic.LoadInt64(&sc.messagesFailed) -
 		atomic.LoadInt64(&sc.messagesProcessing)
-	
+
 	return Stats{
 		TotalQueued:        int(queued),
 		TotalProcessing:    int(atomic.LoadInt64(&sc.messagesProcessing)),
@@ -238,12 +238,12 @@ func (sc *StatsCollector) GetStats() Stats {
 
 // DetailedStats contains comprehensive statistics including percentiles and rates.
 type DetailedStats struct {
-	Stats                      // Embed basic stats
+	Stats             // Embed basic stats
 	MessagesPerSecond float64
 	MessagesPerMinute float64
 	ErrorRate         float64 // Errors per message
 	RetryRate         float64 // Retries per message
-	
+
 	// Timing percentiles
 	ProcessingTimeP50 time.Duration
 	ProcessingTimeP95 time.Duration
@@ -251,16 +251,16 @@ type DetailedStats struct {
 	QueueTimeP50      time.Duration
 	QueueTimeP95      time.Duration
 	QueueTimeP99      time.Duration
-	
+
 	// Error breakdown
 	ErrorCounts map[string]int64
-	
+
 	// Retry distribution
 	RetryDistribution [10]int64
-	
+
 	// State transition counts
 	StateTransitions map[string]int64 // String representation of transition
-	
+
 	// Uptime
 	Uptime time.Duration
 }
@@ -273,14 +273,14 @@ func (sc *StatsCollector) GetDetailedStats() DetailedStats {
 		MessagesPerMinute: sc.throughput.GetMessagesPerMinute(),
 		Uptime:            time.Since(sc.startTime),
 	}
-	
+
 	// Calculate error and retry rates
 	totalMessages := atomic.LoadInt64(&sc.messagesCompleted) + atomic.LoadInt64(&sc.messagesFailed)
 	if totalMessages > 0 {
 		stats.ErrorRate = float64(atomic.LoadInt64(&sc.totalErrors)) / float64(totalMessages)
 		stats.RetryRate = float64(atomic.LoadInt64(&sc.totalRetries)) / float64(totalMessages)
 	}
-	
+
 	// Get timing percentiles
 	stats.ProcessingTimeP50 = sc.processingTimes.Percentile(50)
 	stats.ProcessingTimeP95 = sc.processingTimes.Percentile(95)
@@ -288,7 +288,7 @@ func (sc *StatsCollector) GetDetailedStats() DetailedStats {
 	stats.QueueTimeP50 = sc.queueTimes.Percentile(50)
 	stats.QueueTimeP95 = sc.queueTimes.Percentile(95)
 	stats.QueueTimeP99 = sc.queueTimes.Percentile(99)
-	
+
 	// Copy error counts
 	sc.errorMu.RLock()
 	stats.ErrorCounts = make(map[string]int64)
@@ -296,12 +296,12 @@ func (sc *StatsCollector) GetDetailedStats() DetailedStats {
 		stats.ErrorCounts[k] = v
 	}
 	sc.errorMu.RUnlock()
-	
+
 	// Copy retry distribution
 	for i := 0; i < 10; i++ {
 		stats.RetryDistribution[i] = atomic.LoadInt64(&sc.retryAttempts[i])
 	}
-	
+
 	// Copy state transitions
 	sc.transitionMu.RLock()
 	stats.StateTransitions = make(map[string]int64)
@@ -310,7 +310,7 @@ func (sc *StatsCollector) GetDetailedStats() DetailedStats {
 		stats.StateTransitions[key] = count
 	}
 	sc.transitionMu.RUnlock()
-	
+
 	return stats
 }
 
@@ -318,17 +318,17 @@ func (sc *StatsCollector) GetDetailedStats() DetailedStats {
 func (ts *TimingStats) Record(duration time.Duration) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
-	
+
 	ts.total += duration
 	ts.count++
-	
+
 	if duration < ts.min {
 		ts.min = duration
 	}
 	if duration > ts.max {
 		ts.max = duration
 	}
-	
+
 	// Add to samples, removing oldest if at capacity
 	if len(ts.samples) >= ts.maxSamples {
 		ts.samples = ts.samples[1:]
@@ -340,7 +340,7 @@ func (ts *TimingStats) Record(duration time.Duration) {
 func (ts *TimingStats) Average() time.Duration {
 	ts.mu.RLock()
 	defer ts.mu.RUnlock()
-	
+
 	if ts.count == 0 {
 		return 0
 	}
@@ -351,17 +351,17 @@ func (ts *TimingStats) Average() time.Duration {
 func (ts *TimingStats) Percentile(p int) time.Duration {
 	ts.mu.RLock()
 	defer ts.mu.RUnlock()
-	
+
 	if len(ts.samples) == 0 {
 		return 0
 	}
-	
+
 	// Simple percentile calculation (not perfectly accurate but good enough)
 	index := (len(ts.samples) * p) / 100
 	if index >= len(ts.samples) {
 		index = len(ts.samples) - 1
 	}
-	
+
 	// Note: This is approximate since we're not sorting
 	// For production, consider using a proper percentile algorithm
 	return ts.samples[index]
@@ -371,10 +371,10 @@ func (ts *TimingStats) Percentile(p int) time.Duration {
 func (tt *ThroughputTracker) RecordMessage() {
 	tt.mu.Lock()
 	defer tt.mu.Unlock()
-	
+
 	now := time.Now()
 	atomic.AddInt64(&tt.totalMessages, 1)
-	
+
 	// Update second buckets
 	if now.Sub(tt.lastSecondTime) >= time.Second {
 		// Rotate buckets
@@ -389,7 +389,7 @@ func (tt *ThroughputTracker) RecordMessage() {
 		tt.lastSecondTime = now.Truncate(time.Second)
 	}
 	atomic.AddInt64(&tt.secondBuckets[tt.currentSecond], 1)
-	
+
 	// Update minute buckets
 	if now.Sub(tt.lastMinuteTime) >= time.Minute {
 		// Rotate buckets
@@ -415,11 +415,11 @@ func (tt *ThroughputTracker) RecordMessage() {
 func (tt *ThroughputTracker) GetMessagesPerSecond() float64 {
 	tt.mu.RLock()
 	defer tt.mu.RUnlock()
-	
+
 	var total int64
 	validSeconds := 0
 	now := time.Now()
-	
+
 	for i := 0; i < 60; i++ {
 		// Only count seconds that are recent
 		secondAge := now.Sub(tt.lastSecondTime) + time.Duration(((tt.currentSecond-i+60)%60))*time.Second
@@ -428,7 +428,7 @@ func (tt *ThroughputTracker) GetMessagesPerSecond() float64 {
 			validSeconds++
 		}
 	}
-	
+
 	if validSeconds == 0 {
 		return 0
 	}
@@ -439,11 +439,11 @@ func (tt *ThroughputTracker) GetMessagesPerSecond() float64 {
 func (tt *ThroughputTracker) GetMessagesPerMinute() float64 {
 	tt.mu.RLock()
 	defer tt.mu.RUnlock()
-	
+
 	var total int64
 	validMinutes := 0
 	now := time.Now()
-	
+
 	for i := 0; i < 60; i++ {
 		// Only count minutes that are recent
 		minuteAge := now.Sub(tt.lastMinuteTime) + time.Duration(((tt.currentMinute-i+60)%60))*time.Minute
@@ -452,7 +452,7 @@ func (tt *ThroughputTracker) GetMessagesPerMinute() float64 {
 			validMinutes++
 		}
 	}
-	
+
 	if validMinutes == 0 {
 		return 0
 	}

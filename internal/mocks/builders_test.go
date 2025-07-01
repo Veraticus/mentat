@@ -20,23 +20,9 @@ func TestMessageBuilder(t *testing.T) {
 		options  []MessageOption
 	}{
 		{
-			name:    "default message",
-			options: []MessageOption{},
-			validate: func(t *testing.T, msg *queue.Message) {
-				t.Helper()
-				if msg.ID != "test-msg-123" {
-					t.Errorf("expected ID test-msg-123, got %s", msg.ID)
-				}
-				if msg.State != queue.StateQueued {
-					t.Errorf("expected state Queued, got %s", msg.State)
-				}
-				if msg.Attempts != 0 {
-					t.Errorf("expected 0 attempts, got %d", msg.Attempts)
-				}
-				if msg.MaxAttempts != 3 {
-					t.Errorf("expected 3 max attempts, got %d", msg.MaxAttempts)
-				}
-			},
+			name:     "default message",
+			options:  []MessageOption{},
+			validate: validateDefaultMessage,
 		},
 		{
 			name: "custom message",
@@ -47,24 +33,7 @@ func TestMessageBuilder(t *testing.T) {
 				WithSender("+15559999999"),
 				WithAttempts(2),
 			},
-			validate: func(t *testing.T, msg *queue.Message) {
-				t.Helper()
-				if msg.ID != "custom-123" {
-					t.Errorf("expected ID custom-123, got %s", msg.ID)
-				}
-				if msg.Text != "Custom content" {
-					t.Errorf("expected text 'Custom content', got %s", msg.Text)
-				}
-				if msg.State != queue.StateProcessing {
-					t.Errorf("expected state Processing, got %s", msg.State)
-				}
-				if msg.Sender != "+15559999999" {
-					t.Errorf("expected sender +15559999999, got %s", msg.Sender)
-				}
-				if msg.Attempts != 2 {
-					t.Errorf("expected 2 attempts, got %d", msg.Attempts)
-				}
-			},
+			validate: validateCustomMessage,
 		},
 		{
 			name: "message with error",
@@ -72,15 +41,7 @@ func TestMessageBuilder(t *testing.T) {
 				WithState(queue.StateFailed),
 				WithError(fmt.Errorf("Connection timeout")),
 			},
-			validate: func(t *testing.T, msg *queue.Message) {
-				t.Helper()
-				if msg.State != queue.StateFailed {
-					t.Errorf("expected state Failed, got %s", msg.State)
-				}
-				if msg.Error == nil || msg.Error.Error() != "Connection timeout" {
-					t.Errorf("expected error 'Connection timeout', got %v", msg.Error)
-				}
-			},
+			validate: validateMessageWithError,
 		},
 		{
 			name: "message with response",
@@ -88,18 +49,7 @@ func TestMessageBuilder(t *testing.T) {
 				WithState(queue.StateCompleted),
 				WithResponse("Task completed successfully"),
 			},
-			validate: func(t *testing.T, msg *queue.Message) {
-				t.Helper()
-				if msg.State != queue.StateCompleted {
-					t.Errorf("expected state Completed, got %s", msg.State)
-				}
-				if msg.Response != "Task completed successfully" {
-					t.Errorf("expected response 'Task completed successfully', got %s", msg.Response)
-				}
-				if msg.ProcessedAt == nil {
-					t.Error("expected ProcessedAt to be set")
-				}
-			},
+			validate: validateMessageWithResponse,
 		},
 	}
 
@@ -111,6 +61,68 @@ func TestMessageBuilder(t *testing.T) {
 	}
 }
 
+// validateDefaultMessage validates a default message.
+func validateDefaultMessage(t *testing.T, msg *queue.Message) {
+	t.Helper()
+	if msg.ID != "test-msg-123" {
+		t.Errorf("expected ID test-msg-123, got %s", msg.ID)
+	}
+	if msg.State != queue.StateQueued {
+		t.Errorf("expected state Queued, got %s", msg.State)
+	}
+	if msg.Attempts != 0 {
+		t.Errorf("expected 0 attempts, got %d", msg.Attempts)
+	}
+	if msg.MaxAttempts != 3 {
+		t.Errorf("expected 3 max attempts, got %d", msg.MaxAttempts)
+	}
+}
+
+// validateCustomMessage validates a custom message.
+func validateCustomMessage(t *testing.T, msg *queue.Message) {
+	t.Helper()
+	if msg.ID != "custom-123" {
+		t.Errorf("expected ID custom-123, got %s", msg.ID)
+	}
+	if msg.Text != "Custom content" {
+		t.Errorf("expected text 'Custom content', got %s", msg.Text)
+	}
+	if msg.State != queue.StateProcessing {
+		t.Errorf("expected state Processing, got %s", msg.State)
+	}
+	if msg.Sender != "+15559999999" {
+		t.Errorf("expected sender +15559999999, got %s", msg.Sender)
+	}
+	if msg.Attempts != 2 {
+		t.Errorf("expected 2 attempts, got %d", msg.Attempts)
+	}
+}
+
+// validateMessageWithError validates a message with error.
+func validateMessageWithError(t *testing.T, msg *queue.Message) {
+	t.Helper()
+	if msg.State != queue.StateFailed {
+		t.Errorf("expected state Failed, got %s", msg.State)
+	}
+	if msg.Error == nil || msg.Error.Error() != "Connection timeout" {
+		t.Errorf("expected error 'Connection timeout', got %v", msg.Error)
+	}
+}
+
+// validateMessageWithResponse validates a message with response.
+func validateMessageWithResponse(t *testing.T, msg *queue.Message) {
+	t.Helper()
+	if msg.State != queue.StateCompleted {
+		t.Errorf("expected state Completed, got %s", msg.State)
+	}
+	if msg.Response != "Task completed successfully" {
+		t.Errorf("expected response 'Task completed successfully', got %s", msg.Response)
+	}
+	if msg.ProcessedAt == nil {
+		t.Error("expected ProcessedAt to be set")
+	}
+}
+
 func TestQueuedMessageBuilder(t *testing.T) {
 	tests := []struct {
 		validate func(t *testing.T, msg *queue.QueuedMessage)
@@ -118,20 +130,9 @@ func TestQueuedMessageBuilder(t *testing.T) {
 		options  []QueuedMessageOption
 	}{
 		{
-			name:    "default queued message",
-			options: []QueuedMessageOption{},
-			validate: func(t *testing.T, msg *queue.QueuedMessage) {
-				t.Helper()
-				if msg.ID != "queued-msg-123" {
-					t.Errorf("expected ID queued-msg-123, got %s", msg.ID)
-				}
-				if msg.State != queue.MessageStateQueued {
-					t.Errorf("expected state Queued, got %v", msg.State)
-				}
-				if msg.Priority != queue.PriorityNormal {
-					t.Errorf("expected priority Normal, got %v", msg.Priority)
-				}
-			},
+			name:     "default queued message",
+			options:  []QueuedMessageOption{},
+			validate: validateDefaultQueuedMessage,
 		},
 		{
 			name: "custom queued message",
@@ -142,24 +143,7 @@ func TestQueuedMessageBuilder(t *testing.T) {
 				WithQueuedPriority(queue.PriorityHigh),
 				WithQueuedAttempts(2),
 			},
-			validate: func(t *testing.T, msg *queue.QueuedMessage) {
-				t.Helper()
-				if msg.ID != "custom-queued-123" {
-					t.Errorf("expected ID custom-queued-123, got %s", msg.ID)
-				}
-				if msg.Text != "Custom queued text" {
-					t.Errorf("expected text 'Custom queued text', got %s", msg.Text)
-				}
-				if msg.State != queue.MessageStateProcessing {
-					t.Errorf("expected state Processing, got %v", msg.State)
-				}
-				if msg.Priority != queue.PriorityHigh {
-					t.Errorf("expected priority High, got %v", msg.Priority)
-				}
-				if msg.Attempts != 2 {
-					t.Errorf("expected 2 attempts, got %d", msg.Attempts)
-				}
-			},
+			validate: validateCustomQueuedMessage,
 		},
 		{
 			name: "queued message with error",
@@ -167,15 +151,7 @@ func TestQueuedMessageBuilder(t *testing.T) {
 				WithQueuedState(queue.MessageStateFailed),
 				WithQueuedError(fmt.Errorf("queue processing failed")),
 			},
-			validate: func(t *testing.T, msg *queue.QueuedMessage) {
-				t.Helper()
-				if msg.State != queue.MessageStateFailed {
-					t.Errorf("expected state Failed, got %v", msg.State)
-				}
-				if msg.LastError == nil || msg.LastError.Error() != "queue processing failed" {
-					t.Errorf("expected error 'queue processing failed', got %v", msg.LastError)
-				}
-			},
+			validate: validateQueuedMessageWithError,
 		},
 	}
 
@@ -184,6 +160,51 @@ func TestQueuedMessageBuilder(t *testing.T) {
 			msg := NewQueuedMessageBuilder().Build(tt.options...)
 			tt.validate(t, msg)
 		})
+	}
+}
+
+// validateDefaultQueuedMessage validates a default queued message.
+func validateDefaultQueuedMessage(t *testing.T, msg *queue.QueuedMessage) {
+	t.Helper()
+	if msg.ID != "queued-msg-123" {
+		t.Errorf("expected ID queued-msg-123, got %s", msg.ID)
+	}
+	if msg.State != queue.MessageStateQueued {
+		t.Errorf("expected state Queued, got %v", msg.State)
+	}
+	if msg.Priority != queue.PriorityNormal {
+		t.Errorf("expected priority Normal, got %v", msg.Priority)
+	}
+}
+
+// validateCustomQueuedMessage validates a custom queued message.
+func validateCustomQueuedMessage(t *testing.T, msg *queue.QueuedMessage) {
+	t.Helper()
+	if msg.ID != "custom-queued-123" {
+		t.Errorf("expected ID custom-queued-123, got %s", msg.ID)
+	}
+	if msg.Text != "Custom queued text" {
+		t.Errorf("expected text 'Custom queued text', got %s", msg.Text)
+	}
+	if msg.State != queue.MessageStateProcessing {
+		t.Errorf("expected state Processing, got %v", msg.State)
+	}
+	if msg.Priority != queue.PriorityHigh {
+		t.Errorf("expected priority High, got %v", msg.Priority)
+	}
+	if msg.Attempts != 2 {
+		t.Errorf("expected 2 attempts, got %d", msg.Attempts)
+	}
+}
+
+// validateQueuedMessageWithError validates a queued message with error.
+func validateQueuedMessageWithError(t *testing.T, msg *queue.QueuedMessage) {
+	t.Helper()
+	if msg.State != queue.MessageStateFailed {
+		t.Errorf("expected state Failed, got %v", msg.State)
+	}
+	if msg.LastError == nil || msg.LastError.Error() != "queue processing failed" {
+		t.Errorf("expected error 'queue processing failed', got %v", msg.LastError)
 	}
 }
 
@@ -352,30 +373,16 @@ func TestValidationResultBuilder(t *testing.T) {
 
 func TestSignalMessageBuilder(t *testing.T) {
 	now := time.Now()
-	
+
 	tests := []struct {
 		validate func(t *testing.T, msg *signal.Message)
 		name     string
 		options  []SignalMessageOption
 	}{
 		{
-			name:    "default signal message",
-			options: []SignalMessageOption{},
-			validate: func(t *testing.T, msg *signal.Message) {
-				t.Helper()
-				if msg.ID != "signal-msg-123" {
-					t.Errorf("expected ID signal-msg-123, got %s", msg.ID)
-				}
-				if msg.Sender != "+15551234567" {
-					t.Errorf("expected sender +15551234567, got %s", msg.Sender)
-				}
-				if msg.Recipient != "mentat" {
-					t.Errorf("expected recipient mentat, got %s", msg.Recipient)
-				}
-				if msg.Text != "Hello from Signal" {
-					t.Errorf("unexpected text: %s", msg.Text)
-				}
-			},
+			name:     "default signal message",
+			options:  []SignalMessageOption{},
+			validate: validateDefaultSignalMessage,
 		},
 		{
 			name: "custom signal message",
@@ -387,27 +394,7 @@ func TestSignalMessageBuilder(t *testing.T) {
 				WithSignalTimestamp(now),
 				WithDeliveryStatus(true, false),
 			},
-			validate: func(t *testing.T, msg *signal.Message) {
-				t.Helper()
-				if msg.ID != "custom-signal-456" {
-					t.Errorf("expected ID custom-signal-456, got %s", msg.ID)
-				}
-				if msg.Sender != "+15559876543" {
-					t.Errorf("expected sender +15559876543, got %s", msg.Sender)
-				}
-				if msg.Text != "Custom message" {
-					t.Errorf("expected text 'Custom message', got %s", msg.Text)
-				}
-				if !msg.Timestamp.Equal(now) {
-					t.Errorf("expected timestamp %v, got %v", now, msg.Timestamp)
-				}
-				if !msg.IsDelivered {
-					t.Error("expected IsDelivered to be true")
-				}
-				if msg.IsRead {
-					t.Error("expected IsRead to be false")
-				}
-			},
+			validate: createCustomSignalValidator(now),
 		},
 	}
 
@@ -419,112 +406,195 @@ func TestSignalMessageBuilder(t *testing.T) {
 	}
 }
 
+// validateDefaultSignalMessage validates a default signal message.
+func validateDefaultSignalMessage(t *testing.T, msg *signal.Message) {
+	t.Helper()
+	if msg.ID != "signal-msg-123" {
+		t.Errorf("expected ID signal-msg-123, got %s", msg.ID)
+	}
+	if msg.Sender != "+15551234567" {
+		t.Errorf("expected sender +15551234567, got %s", msg.Sender)
+	}
+	if msg.Recipient != "mentat" {
+		t.Errorf("expected recipient mentat, got %s", msg.Recipient)
+	}
+	if msg.Text != "Hello from Signal" {
+		t.Errorf("unexpected text: %s", msg.Text)
+	}
+}
+
+// createCustomSignalValidator creates a validator for custom signal messages.
+func createCustomSignalValidator(expectedTime time.Time) func(t *testing.T, msg *signal.Message) {
+	return func(t *testing.T, msg *signal.Message) {
+		t.Helper()
+		validateCustomSignalProperties(t, msg)
+		validateCustomSignalTimestamp(t, msg, expectedTime)
+		validateCustomSignalDeliveryStatus(t, msg)
+	}
+}
+
+// validateCustomSignalProperties validates custom signal message properties.
+func validateCustomSignalProperties(t *testing.T, msg *signal.Message) {
+	t.Helper()
+	if msg.ID != "custom-signal-456" {
+		t.Errorf("expected ID custom-signal-456, got %s", msg.ID)
+	}
+	if msg.Sender != "+15559876543" {
+		t.Errorf("expected sender +15559876543, got %s", msg.Sender)
+	}
+	if msg.Text != "Custom message" {
+		t.Errorf("expected text 'Custom message', got %s", msg.Text)
+	}
+}
+
+// validateCustomSignalTimestamp validates the timestamp.
+func validateCustomSignalTimestamp(t *testing.T, msg *signal.Message, expectedTime time.Time) {
+	t.Helper()
+	if !msg.Timestamp.Equal(expectedTime) {
+		t.Errorf("expected timestamp %v, got %v", expectedTime, msg.Timestamp)
+	}
+}
+
+// validateCustomSignalDeliveryStatus validates delivery status.
+func validateCustomSignalDeliveryStatus(t *testing.T, msg *signal.Message) {
+	t.Helper()
+	if !msg.IsDelivered {
+		t.Error("expected IsDelivered to be true")
+	}
+	if msg.IsRead {
+		t.Error("expected IsRead to be false")
+	}
+}
+
 func TestScenarioBuilder(t *testing.T) {
-	t.Run("simple conversation scenario", func(t *testing.T) {
-		scenario := CreateSimpleConversation("What's the weather?", "It's sunny and 72°F today.")
-		
-		if scenario.Name != "Simple Conversation" {
-			t.Errorf("unexpected scenario name: %s", scenario.Name)
-		}
-		if len(scenario.Messages) != 1 {
-			t.Errorf("expected 1 message, got %d", len(scenario.Messages))
-		}
-		if len(scenario.Expectations) != 1 {
-			t.Errorf("expected 1 expectation, got %d", len(scenario.Expectations))
-		}
-		
-		exp := scenario.Expectations[0]
-		if exp.FinalState != queue.StateCompleted {
-			t.Errorf("expected final state Completed, got %s", exp.FinalState)
-		}
-		if exp.ResponseContains != "It's sunny and 72°F today." {
-			t.Errorf("unexpected response expectation: %s", exp.ResponseContains)
-		}
-	})
+	t.Run("simple conversation scenario", testSimpleConversationScenario)
+	t.Run("failure scenario", testFailureScenario)
+	t.Run("retry scenario", testRetryScenario)
+	t.Run("complex multi-message scenario", testComplexMultiMessageScenario)
+	t.Run("custom scenario builder", testCustomScenarioBuilder)
+}
 
-	t.Run("failure scenario", func(t *testing.T) {
-		scenario := CreateFailureScenario()
-		
-		if len(scenario.Messages) != 1 {
-			t.Errorf("expected 1 message, got %d", len(scenario.Messages))
-		}
-		
-		exp := scenario.Expectations[0]
-		if !exp.ShouldFail {
-			t.Error("expected ShouldFail to be true")
-		}
-		if exp.FinalState != queue.StateFailed {
-			t.Errorf("expected final state Failed, got %s", exp.FinalState)
-		}
-	})
+// testSimpleConversationScenario tests a simple conversation scenario.
+func testSimpleConversationScenario(t *testing.T) {
+	scenario := CreateSimpleConversation("What's the weather?", "It's sunny and 72°F today.")
 
-	t.Run("retry scenario", func(t *testing.T) {
-		scenario := CreateRetryScenario()
-		
-		if len(scenario.Messages) != 1 {
-			t.Errorf("expected 1 message, got %d", len(scenario.Messages))
-		}
-		// Should have 2 responses (initial + retry)
-		if len(scenario.Responses) != 2 {
-			t.Errorf("expected 2 responses, got %d", len(scenario.Responses))
-		}
-		// Should have 2 validations
-		if len(scenario.Validations) != 2 {
-			t.Errorf("expected 2 validations, got %d", len(scenario.Validations))
-		}
-		
-		exp := scenario.Expectations[0]
-		if exp.ResponseContains != "2pm meeting with John" {
-			t.Errorf("unexpected response expectation: %s", exp.ResponseContains)
-		}
-	})
+	verifyScenarioBasics(t, scenario, "Simple Conversation", 1, 1)
 
-	t.Run("complex multi-message scenario", func(t *testing.T) {
-		scenario := CreateComplexScenario()
-		
-		if len(scenario.Messages) != 2 {
-			t.Errorf("expected 2 messages, got %d", len(scenario.Messages))
-		}
-		if len(scenario.Expectations) != 2 {
-			t.Errorf("expected 2 expectations, got %d", len(scenario.Expectations))
-		}
-		
-		// Verify messages are in same conversation
-		if scenario.Messages[0].ConversationID != scenario.Messages[1].ConversationID {
-			t.Error("messages should be in same conversation")
-		}
-		
-		// Verify both responses exist
-		resp1 := scenario.Responses["complex-1"]
-		resp2 := scenario.Responses["complex-2"]
-		if resp1 == nil || resp2 == nil {
-			t.Error("responses should exist for both messages")
-		}
-	})
+	exp := scenario.Expectations[0]
+	if exp.FinalState != queue.StateCompleted {
+		t.Errorf("expected final state Completed, got %s", exp.FinalState)
+	}
+	if exp.ResponseContains != "It's sunny and 72°F today." {
+		t.Errorf("unexpected response expectation: %s", exp.ResponseContains)
+	}
+}
 
-	t.Run("custom scenario builder", func(t *testing.T) {
-		msg1 := NewMessageBuilder().Build(WithID("custom-1"))
-		msg2 := NewMessageBuilder().Build(WithID("custom-2"))
-		resp := NewLLMResponseBuilder().Build()
-		validation := NewValidationResultBuilder().Build()
-		
-		scenario := NewScenarioBuilder("Custom Test").Build(
-			WithMessages(msg1, msg2),
-			WithLLMResponse("custom-1", resp),
-			WithValidation("custom-1", validation),
-			WithExpectation(Expectation{
-				MessageID:  "custom-1",
-				FinalState: queue.StateCompleted,
-			}),
-		)
-		
-		if scenario.Name != "Custom Test" {
-			t.Errorf("unexpected scenario name: %s", scenario.Name)
-		}
-		if len(scenario.Messages) != 2 {
-			t.Errorf("expected 2 messages, got %d", len(scenario.Messages))
-		}
-	})
+// testFailureScenario tests a failure scenario.
+func testFailureScenario(t *testing.T) {
+	scenario := CreateFailureScenario()
+
+	if len(scenario.Messages) != 1 {
+		t.Errorf("expected 1 message, got %d", len(scenario.Messages))
+	}
+
+	exp := scenario.Expectations[0]
+	if !exp.ShouldFail {
+		t.Error("expected ShouldFail to be true")
+	}
+	if exp.FinalState != queue.StateFailed {
+		t.Errorf("expected final state Failed, got %s", exp.FinalState)
+	}
+}
+
+// testRetryScenario tests a retry scenario.
+func testRetryScenario(t *testing.T) {
+	scenario := CreateRetryScenario()
+
+	verifyRetryScenarioStructure(t, scenario)
+
+	exp := scenario.Expectations[0]
+	if exp.ResponseContains != "2pm meeting with John" {
+		t.Errorf("unexpected response expectation: %s", exp.ResponseContains)
+	}
+}
+
+// testComplexMultiMessageScenario tests a complex multi-message scenario.
+func testComplexMultiMessageScenario(t *testing.T) {
+	scenario := CreateComplexScenario()
+
+	verifyScenarioBasics(t, scenario, "", 2, 2)
+	verifyComplexScenarioMessages(t, scenario)
+}
+
+// testCustomScenarioBuilder tests a custom scenario builder.
+func testCustomScenarioBuilder(t *testing.T) {
+	msg1 := NewMessageBuilder().Build(WithID("custom-1"))
+	msg2 := NewMessageBuilder().Build(WithID("custom-2"))
+	resp := NewLLMResponseBuilder().Build()
+	validation := NewValidationResultBuilder().Build()
+
+	scenario := NewScenarioBuilder("Custom Test").Build(
+		WithMessages(msg1, msg2),
+		WithLLMResponse("custom-1", resp),
+		WithValidation("custom-1", validation),
+		WithExpectation(Expectation{
+			MessageID:  "custom-1",
+			FinalState: queue.StateCompleted,
+		}),
+	)
+
+	if scenario.Name != "Custom Test" {
+		t.Errorf("unexpected scenario name: %s", scenario.Name)
+	}
+	if len(scenario.Messages) != 2 {
+		t.Errorf("expected 2 messages, got %d", len(scenario.Messages))
+	}
+}
+
+// verifyScenarioBasics verifies basic scenario properties.
+func verifyScenarioBasics(t *testing.T, scenario *Scenario, expectedName string, expectedMessages, expectedExpectations int) {
+	t.Helper()
+	if expectedName != "" && scenario.Name != expectedName {
+		t.Errorf("unexpected scenario name: %s", scenario.Name)
+	}
+	if len(scenario.Messages) != expectedMessages {
+		t.Errorf("expected %d message(s), got %d", expectedMessages, len(scenario.Messages))
+	}
+	if len(scenario.Expectations) != expectedExpectations {
+		t.Errorf("expected %d expectation(s), got %d", expectedExpectations, len(scenario.Expectations))
+	}
+}
+
+// verifyRetryScenarioStructure verifies retry scenario structure.
+func verifyRetryScenarioStructure(t *testing.T, scenario *Scenario) {
+	t.Helper()
+	if len(scenario.Messages) != 1 {
+		t.Errorf("expected 1 message, got %d", len(scenario.Messages))
+	}
+	// Should have 2 responses (initial + retry)
+	if len(scenario.Responses) != 2 {
+		t.Errorf("expected 2 responses, got %d", len(scenario.Responses))
+	}
+	// Should have 2 validations
+	if len(scenario.Validations) != 2 {
+		t.Errorf("expected 2 validations, got %d", len(scenario.Validations))
+	}
+}
+
+// verifyComplexScenarioMessages verifies complex scenario messages.
+func verifyComplexScenarioMessages(t *testing.T, scenario *Scenario) {
+	t.Helper()
+	// Verify messages are in same conversation
+	if scenario.Messages[0].ConversationID != scenario.Messages[1].ConversationID {
+		t.Error("messages should be in same conversation")
+	}
+
+	// Verify both responses exist
+	resp1 := scenario.Responses["complex-1"]
+	resp2 := scenario.Responses["complex-2"]
+	if resp1 == nil || resp2 == nil {
+		t.Error("responses should exist for both messages")
+	}
 }
 
 func TestConversationMessageBuilder(t *testing.T) {
@@ -597,23 +667,9 @@ func TestStoredMessageBuilder(t *testing.T) {
 		options  []StoredMessageOption
 	}{
 		{
-			name:    "default stored message",
-			options: []StoredMessageOption{},
-			validate: func(t *testing.T, msg *storage.StoredMessage) {
-				t.Helper()
-				if msg.ID != "stored-msg-123" {
-					t.Errorf("expected ID stored-msg-123, got %s", msg.ID)
-				}
-				if msg.ConversationID != "+15551234567" {
-					t.Errorf("expected conversation ID +15551234567, got %s", msg.ConversationID)
-				}
-				if msg.Direction != storage.INBOUND {
-					t.Errorf("expected direction INBOUND, got %s", msg.Direction)
-				}
-				if msg.ProcessingState != "completed" {
-					t.Errorf("expected processing state completed, got %s", msg.ProcessingState)
-				}
-			},
+			name:     "default stored message",
+			options:  []StoredMessageOption{},
+			validate: validateDefaultStoredMessage,
 		},
 		{
 			name: "custom stored message",
@@ -625,27 +681,7 @@ func TestStoredMessageBuilder(t *testing.T) {
 				WithStoredFrom("mentat"),
 				WithStoredTo("+15559876543"),
 			},
-			validate: func(t *testing.T, msg *storage.StoredMessage) {
-				t.Helper()
-				if msg.ID != "custom-stored-42" {
-					t.Errorf("expected ID custom-stored-42, got %s", msg.ID)
-				}
-				if msg.Content != "Custom stored content" {
-					t.Errorf("unexpected content: %s", msg.Content)
-				}
-				if msg.Direction != storage.OUTBOUND {
-					t.Errorf("expected direction OUTBOUND, got %s", msg.Direction)
-				}
-				if msg.ProcessingState != "failed" {
-					t.Errorf("expected processing state failed, got %s", msg.ProcessingState)
-				}
-				if msg.From != "mentat" {
-					t.Errorf("expected from mentat, got %s", msg.From)
-				}
-				if msg.To != "+15559876543" {
-					t.Errorf("expected to +15559876543, got %s", msg.To)
-				}
-			},
+			validate: validateCustomStoredMessage,
 		},
 	}
 
@@ -657,11 +693,51 @@ func TestStoredMessageBuilder(t *testing.T) {
 	}
 }
 
+// validateDefaultStoredMessage validates a default stored message.
+func validateDefaultStoredMessage(t *testing.T, msg *storage.StoredMessage) {
+	t.Helper()
+	if msg.ID != "stored-msg-123" {
+		t.Errorf("expected ID stored-msg-123, got %s", msg.ID)
+	}
+	if msg.ConversationID != "+15551234567" {
+		t.Errorf("expected conversation ID +15551234567, got %s", msg.ConversationID)
+	}
+	if msg.Direction != storage.INBOUND {
+		t.Errorf("expected direction INBOUND, got %s", msg.Direction)
+	}
+	if msg.ProcessingState != "completed" {
+		t.Errorf("expected processing state completed, got %s", msg.ProcessingState)
+	}
+}
+
+// validateCustomStoredMessage validates a custom stored message.
+func validateCustomStoredMessage(t *testing.T, msg *storage.StoredMessage) {
+	t.Helper()
+	if msg.ID != "custom-stored-42" {
+		t.Errorf("expected ID custom-stored-42, got %s", msg.ID)
+	}
+	if msg.Content != "Custom stored content" {
+		t.Errorf("unexpected content: %s", msg.Content)
+	}
+	if msg.Direction != storage.OUTBOUND {
+		t.Errorf("expected direction OUTBOUND, got %s", msg.Direction)
+	}
+	if msg.ProcessingState != "failed" {
+		t.Errorf("expected processing state failed, got %s", msg.ProcessingState)
+	}
+	if msg.From != "mentat" {
+		t.Errorf("expected from mentat, got %s", msg.From)
+	}
+	if msg.To != "+15559876543" {
+		t.Errorf("expected to +15559876543, got %s", msg.To)
+	}
+}
+
 func TestBuildersConcurrency(t *testing.T) {
 	// Test that builders are safe for concurrent use
 	t.Run("concurrent message building", func(t *testing.T) {
 		done := make(chan bool, 10)
-		
+
 		for i := 0; i < 10; i++ {
 			go func(id int) {
 				msg := NewMessageBuilder().Build(
@@ -674,7 +750,7 @@ func TestBuildersConcurrency(t *testing.T) {
 				done <- true
 			}(i)
 		}
-		
+
 		for i := 0; i < 10; i++ {
 			<-done
 		}
@@ -687,11 +763,11 @@ func TestBuildersProduceUniqueInstances(t *testing.T) {
 		builder := NewMessageBuilder()
 		msg1 := builder.Build()
 		msg2 := builder.Build()
-		
+
 		if msg1 == msg2 {
 			t.Error("builder should create new instances")
 		}
-		
+
 		// Modify one shouldn't affect the other
 		msg1.Text = "Modified"
 		if msg2.Text == "Modified" {
@@ -711,18 +787,18 @@ func TestToolParameterBuilding(t *testing.T) {
 				claude.NewStringParam("bob"),
 			}),
 		}
-		
+
 		resp := NewLLMResponseBuilder().Build(
 			WithToolCalls(claude.ToolCall{
 				Tool:       "schedule_meeting",
 				Parameters: params,
 			}),
 		)
-		
+
 		if len(resp.ToolCalls) != 1 {
 			t.Fatalf("expected 1 tool call, got %d", len(resp.ToolCalls))
 		}
-		
+
 		call := resp.ToolCalls[0]
 		if dateParam, ok := call.Parameters["date"]; !ok {
 			t.Error("expected date parameter")
@@ -730,14 +806,14 @@ func TestToolParameterBuilding(t *testing.T) {
 			t.Errorf("unexpected date: %v", dateParam.StringValue)
 		}
 	})
-	
+
 	t.Run("array parameter", func(t *testing.T) {
 		arrayParam := claude.NewArrayParam([]claude.ToolParameter{
 			claude.NewStringParam("item1"),
 			claude.NewStringParam("item2"),
 			claude.NewStringParam("item3"),
 		})
-		
+
 		resp := NewLLMResponseBuilder().Build(
 			WithToolCalls(claude.ToolCall{
 				Tool: "process_items",
@@ -746,7 +822,7 @@ func TestToolParameterBuilding(t *testing.T) {
 				},
 			}),
 		)
-		
+
 		call := resp.ToolCalls[0]
 		if itemsParam, ok := call.Parameters["items"]; !ok {
 			t.Fatal("expected items parameter")
@@ -765,33 +841,55 @@ func TestScenarioHelpers(t *testing.T) {
 			CreateRetryScenario(),
 			CreateComplexScenario(),
 		}
-		
+
 		for i, scenario := range scenarios {
-			if scenario.Name == "" {
-				t.Errorf("scenario %d has empty name", i)
-			}
-			if len(scenario.Messages) == 0 {
-				t.Errorf("scenario %d has no messages", i)
-			}
-			if len(scenario.Expectations) == 0 {
-				t.Errorf("scenario %d has no expectations", i)
-			}
-			
-			// Verify all message IDs in expectations exist
-			for _, exp := range scenario.Expectations {
-				found := false
-				for _, msg := range scenario.Messages {
-					if msg.ID == exp.MessageID {
-						found = true
-						break
-					}
-				}
-				if !found {
-					t.Errorf("scenario %d: expectation references non-existent message %s", i, exp.MessageID)
-				}
-			}
+			validateScenario(t, i, scenario)
 		}
 	})
+}
+
+// validateScenario validates a single scenario.
+func validateScenario(t *testing.T, index int, scenario *Scenario) {
+	t.Helper()
+
+	validateScenarioBasicProperties(t, index, scenario)
+	validateScenarioExpectations(t, index, scenario)
+}
+
+// validateScenarioBasicProperties validates basic properties of a scenario.
+func validateScenarioBasicProperties(t *testing.T, index int, scenario *Scenario) {
+	t.Helper()
+
+	if scenario.Name == "" {
+		t.Errorf("scenario %d has empty name", index)
+	}
+	if len(scenario.Messages) == 0 {
+		t.Errorf("scenario %d has no messages", index)
+	}
+	if len(scenario.Expectations) == 0 {
+		t.Errorf("scenario %d has no expectations", index)
+	}
+}
+
+// validateScenarioExpectations validates that all expectations reference existing messages.
+func validateScenarioExpectations(t *testing.T, index int, scenario *Scenario) {
+	t.Helper()
+
+	for _, exp := range scenario.Expectations {
+		if !messageExistsInScenario(scenario, exp.MessageID) {
+			t.Errorf("scenario %d: expectation references non-existent message %s", index, exp.MessageID)
+		}
+	}
+}
+
+// messageExistsInScenario checks if a message ID exists in the scenario.
+func messageExistsInScenario(scenario *Scenario, messageID string) bool {
+	for _, msg := range scenario.Messages {
+		if msg.ID == messageID {
+			return true
+		}
+	}
+	return false
 }
 
 func TestBuilderChaining(t *testing.T) {
@@ -806,7 +904,7 @@ func TestBuilderChaining(t *testing.T) {
 			WithMaxAttempts(5),
 			WithError(fmt.Errorf("Test error")),
 		)
-		
+
 		// Verify all options were applied
 		if msg.ID != "chain-1" {
 			t.Error("ID option not applied")
@@ -840,7 +938,7 @@ func TestZeroValues(t *testing.T) {
 			WithAttempts(0),
 			WithError(nil),
 		)
-		
+
 		if msg.Text != "" {
 			t.Error("empty text should be allowed")
 		}

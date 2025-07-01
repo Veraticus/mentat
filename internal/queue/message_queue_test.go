@@ -87,13 +87,13 @@ func TestMessageQueue_UpdateState(t *testing.T) {
 		msg.SetError(fmt.Errorf("test error"))
 	}
 	sq.mu.Unlock()
-	
+
 	// Update to retrying (valid transition from processing with error)
 	err = q.UpdateState(queuedMsg.ID, MessageStateFailed, "failed")
 	if err != nil {
 		t.Fatalf("Failed to update state: %v", err)
 	}
-	
+
 	// Should be in retrying state since it has attempts left
 	sq.mu.RLock()
 	if msg, exists := sq.messages[queuedMsg.ID]; exists {
@@ -117,8 +117,21 @@ func TestMessageQueue_UpdateState(t *testing.T) {
 func TestMessageQueue_Stats(t *testing.T) {
 	q := NewMessageQueue()
 
+	// Setup test data
+	msgIDs := setupTestMessages(t, q)
+
+	// Simulate message failures
+	simulateMessageFailures(t, q, msgIDs)
+
+	// Verify statistics
+	verifyQueueStats(t, q)
+}
+
+// setupTestMessages enqueues test messages and processes some of them
+func setupTestMessages(t *testing.T, q MessageQueue) []string {
+	t.Helper()
+
 	// Enqueue multiple messages
-	var msgIDs []string
 	for i := 0; i < 5; i++ {
 		msg := signal.IncomingMessage{
 			From:       fmt.Sprintf("User %d", i%2),
@@ -133,6 +146,7 @@ func TestMessageQueue_Stats(t *testing.T) {
 	}
 
 	// Process some messages and store their IDs
+	var msgIDs []string
 	for i := 0; i < 2; i++ {
 		qMsg, err := q.GetNext(fmt.Sprintf("worker-%d", i))
 		if err != nil {
@@ -143,45 +157,70 @@ func TestMessageQueue_Stats(t *testing.T) {
 		}
 	}
 
+	return msgIDs
+}
+
+// simulateMessageFailures simulates permanent and temporary failures
+func simulateMessageFailures(t *testing.T, q MessageQueue, msgIDs []string) {
+	t.Helper()
+
 	// Fail one permanently (set max attempts and error to prevent retry)
 	if len(msgIDs) > 0 {
-		// Access the internal message queue to set max attempts and error
-		// In a real scenario, this would be handled by the worker
-		sq, ok := q.(*simpleMessageQueue)
-		if !ok {
-			t.Fatal("Failed to cast to simpleMessageQueue")
-		}
-		sq.mu.Lock()
-		if msg, exists := sq.messages[msgIDs[0]]; exists {
-			msg.Attempts = msg.MaxAttempts
-			msg.SetError(fmt.Errorf("permanent failure"))
-		}
-		sq.mu.Unlock()
-		
-		err := q.UpdateState(msgIDs[0], MessageStateFailed, "permanently failed")
-		if err != nil {
-			t.Fatalf("Failed to update state to failed: %v", err)
-		}
+		simulatePermanentFailure(t, q, msgIDs[0])
 	}
 
-	// Fail one (it will go to retrying state since it has attempts left)
+	// Fail one temporarily (it will go to retrying state)
 	if len(msgIDs) > 1 {
-		// Set error before failing
-		sq, ok := q.(*simpleMessageQueue)
-		if !ok {
-			t.Fatal("Failed to cast to simpleMessageQueue")
-		}
-		sq.mu.Lock()
-		if msg, exists := sq.messages[msgIDs[1]]; exists {
-			msg.SetError(fmt.Errorf("temporary failure"))
-		}
-		sq.mu.Unlock()
-		
-		err := q.UpdateState(msgIDs[1], MessageStateFailed, "error")
-		if err != nil {
-			t.Fatalf("Failed to update state: %v", err)
-		}
+		simulateTemporaryFailure(t, q, msgIDs[1])
 	}
+}
+
+// simulatePermanentFailure simulates a permanent failure
+func simulatePermanentFailure(t *testing.T, q MessageQueue, msgID string) {
+	t.Helper()
+
+	sq, ok := q.(*simpleMessageQueue)
+	if !ok {
+		t.Fatal("Failed to cast to simpleMessageQueue")
+	}
+
+	sq.mu.Lock()
+	if msg, exists := sq.messages[msgID]; exists {
+		msg.Attempts = msg.MaxAttempts
+		msg.SetError(fmt.Errorf("permanent failure"))
+	}
+	sq.mu.Unlock()
+
+	err := q.UpdateState(msgID, MessageStateFailed, "permanently failed")
+	if err != nil {
+		t.Fatalf("Failed to update state to failed: %v", err)
+	}
+}
+
+// simulateTemporaryFailure simulates a temporary failure
+func simulateTemporaryFailure(t *testing.T, q MessageQueue, msgID string) {
+	t.Helper()
+
+	sq, ok := q.(*simpleMessageQueue)
+	if !ok {
+		t.Fatal("Failed to cast to simpleMessageQueue")
+	}
+
+	sq.mu.Lock()
+	if msg, exists := sq.messages[msgID]; exists {
+		msg.SetError(fmt.Errorf("temporary failure"))
+	}
+	sq.mu.Unlock()
+
+	err := q.UpdateState(msgID, MessageStateFailed, "error")
+	if err != nil {
+		t.Fatalf("Failed to update state: %v", err)
+	}
+}
+
+// verifyQueueStats verifies the queue statistics
+func verifyQueueStats(t *testing.T, q MessageQueue) {
+	t.Helper()
 
 	stats := q.Stats()
 
@@ -228,7 +267,7 @@ func TestMessageQueue_FIFO(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to enqueue message: %v", err)
 		}
-		time.Sleep(10 * time.Millisecond) // Ensure different timestamps
+		// Timestamps from loop iteration are sufficient
 	}
 
 	// Get messages and verify FIFO order

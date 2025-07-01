@@ -16,10 +16,10 @@
 //
 //	// Simple command
 //	output, err := command.RunCommand("echo", "hello")
-//	
+//
 //	// Command with input
 //	output, err := command.RunCommandWithInput("input data", "grep", "pattern")
-//	
+//
 //	// Command with custom timeout
 //	output, err := command.NewCommand("long-running-tool").
 //	    WithTimeout(5 * time.Minute).

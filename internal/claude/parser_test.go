@@ -7,10 +7,10 @@ import (
 
 func TestParseResponse(t *testing.T) {
 	tests := []struct {
-		name       string
-		input      string
-		wantMsg    string
-		wantErr    bool
+		name        string
+		input       string
+		wantMsg     string
+		wantErr     bool
 		errContains string
 	}{
 		{
@@ -44,8 +44,8 @@ func TestParseResponse(t *testing.T) {
 			errContains: "missing message/result field",
 		},
 		{
-			name: "plain text single line",
-			input: "This is a plain text response from Claude.",
+			name:    "plain text single line",
+			input:   "This is a plain text response from Claude.",
 			wantMsg: "This is a plain text response from Claude.",
 			wantErr: false,
 		},
@@ -85,8 +85,8 @@ func TestParseResponse(t *testing.T) {
 			errContains: "empty or unparseable response",
 		},
 		{
-			name: "malformed JSON falls back to plain text",
-			input: `{"message": "Incomplete JSON`,
+			name:    "malformed JSON falls back to plain text",
+			input:   `{"message": "Incomplete JSON`,
 			wantMsg: `{"message": "Incomplete JSON`,
 			wantErr: false,
 		},
@@ -120,7 +120,7 @@ func TestParseResponse(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resp, err := parseResponse(tt.input)
-			
+
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected error but got none")
@@ -130,11 +130,11 @@ func TestParseResponse(t *testing.T) {
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			
+
 			if resp.Message != tt.wantMsg {
 				t.Errorf("message = %q, want %q", resp.Message, tt.wantMsg)
 			}
@@ -207,7 +207,7 @@ func TestExtractErrorMessage(t *testing.T) {
 
 func TestParseResponse_ComplexScenarios(t *testing.T) {
 	tests := []struct {
-		name string
+		name  string
 		input string
 		check func(t *testing.T, resp *jsonResponse, err error)
 	}{
@@ -229,7 +229,7 @@ func TestParseResponse_ComplexScenarios(t *testing.T) {
 			},
 		},
 		{
-			name: "JSON with Unicode characters",
+			name:  "JSON with Unicode characters",
 			input: `{"message": "Hello 👋 こんにちは 🌍", "metadata": {"model": "claude-3"}}`,
 			check: func(t *testing.T, resp *jsonResponse, err error) {
 				t.Helper()

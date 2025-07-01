@@ -1,17 +1,15 @@
-# golangci-lint configuration for mentat
-# Focused on high-quality Go code without being overly pedantic
+# Global golangci-lint configuration
+# Enforces high-quality Go code standards aligned with CLAUDE.md principles
 
 version: "2"
 
 linters:
-  # Start with standard linters, then add our selection
-  default: none
-  
+  disable-all: true
   enable:
     # Essential - Must Have
     - errcheck      # Ensures all errors are handled
     - govet         # Go's official analyzer
-    - staticcheck   # High-quality static analysis
+    - staticcheck   # High-quality static analysis (includes gosimple)
     - ineffassign   # Detects ineffectual assignments
     - unused        # Finds unused code
     
@@ -22,6 +20,13 @@ linters:
     - misspell      # Catches typos
     - unconvert     # Removes unnecessary type conversions
     - prealloc      # Suggests preallocating slices
+    - goconst       # Finds repeated strings that should be constants
+    - dupl          # Detects code duplication
+    - wastedassign  # Finds wasted assignments
+    - unparam       # Finds unused function parameters
+    - errname       # Ensures error variables are named correctly
+    
+    # Resource Management
     - bodyclose     # Ensures HTTP response bodies are closed
     - noctx         # Ensures HTTP requests use context
     - sqlclosecheck # Ensures SQL rows are closed
@@ -31,9 +36,13 @@ linters:
     - makezero      # Finds slice declarations not zeroed after make
     
     # Interface & Type Safety
-    - iface         # Ensures interfaces follow Go guidelines
     - forcetypeassert # Prevents unchecked type assertions
     - asasalint     # Checks for pass []any as any in variadic func
+    - ireturn       # Prevents returning interfaces when concrete types work
+    
+    # Context Handling
+    - containedctx  # Prevents context.Context in struct fields
+    - contextcheck  # Ensures proper context propagation
     
     # Security
     - gosec         # Security-focused linter
@@ -47,99 +56,232 @@ linters:
     - nilnil        # Prevents returning nil, nil
     - usestdlibvars # Use stdlib constants instead of magic strings
     - forbidigo     # Forbid specific patterns (like interface{})
+    - gocognit      # Cognitive complexity
+    - gocyclo       # Cyclomatic complexity
+    - godox         # TODO/FIXME detection
+    - exhaustive    # Ensures switch statements on enums are exhaustive
+    
+    # Error Handling
+    - wrapcheck     # Ensures errors from external packages are wrapped
 
-  settings:
-    gocritic:
-      # Use default stable checks, plus specific ones we want
-      disable-all: false
-      enabled-checks:
-        # Add checks that catch common issues
-        - emptyStringTest    # Detects len(s) == 0 (use s == "")
-        - sloppyReassign     # Detects suspicious reassignments
-        - weakCond           # Detects non-exhaustive conditions
-        - appendCombine      # Suggests combining append calls
-        - commentedOutCode   # Finds commented-out code
-        - deferInLoop        # Detects problematic defer in loops
-        - evalOrder          # Detects undefined evaluation order
-        - nilValReturn       # Detects return statements that return nil
-        - truncateCmp        # Detects problematic int comparisons
-        - unnecessaryDefer   # Detects unnecessary defer calls
+linters-settings:
+  gocritic:
+    enabled-checks:
+      # Catch common issues
+      - emptyStringTest    # Detects len(s) == 0 (use s == "")
+      - sloppyReassign     # Detects suspicious reassignments
+      - weakCond           # Detects non-exhaustive conditions
+      - appendCombine      # Suggests combining append calls
+      - commentedOutCode   # Finds commented-out code
+      - deferInLoop        # Detects problematic defer in loops
+      - evalOrder          # Detects undefined evaluation order
+      - nilValReturn       # Detects return statements that return nil
+      - truncateCmp        # Detects problematic int comparisons
+      - unnecessaryDefer   # Detects unnecessary defer calls
+      
+  revive:
+    severity: error
+    enable-all-rules: false
+    rules:
+      # Essential rules for code quality
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: dot-imports
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+      - name: if-return
+      - name: increment-decrement
+      - name: var-naming
+      - name: var-declaration
+      - name: package-comments
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-return
+      - name: indent-error-flow
+      - name: errorf
+      - name: empty-block
+      - name: superfluous-else
+      - name: unused-parameter
+      - name: unreachable-code
+      - name: redefines-builtin-id
+      - name: waitgroup-by-value
+      - name: use-any         # Prefer 'any' over 'interface{}'
+      - name: useless-break
+      - name: unnecessary-stmt
+      
+  gosec:
+    severity: medium
+    confidence: medium
+    
+  nakedret:
+    max-func-lines: 30  # Only enforce in longer functions
+    
+  misspell:
+    locale: US
+    
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment  # Memory optimization, not correctness
+    
+  forbidigo:
+    forbid:
+      # Print statements
+      - p: '^(fmt\.Print(|f|ln)|print|println)$'
+        msg: "Use structured logging instead of print statements"
+      
+      # CLAUDE.md forbidden patterns
+      - p: 'interface\{\}'
+        msg: "NO interface{} - use concrete types or specific interfaces (CLAUDE.md rule)"
+      - p: '\bany\{\}'
+        msg: "NO any{} - use concrete types (CLAUDE.md rule)"
+      - p: '\bpanic\('
+        msg: "NO panic() - return errors instead (CLAUDE.md rule)"
+      - p: 'time\.Sleep'
+        msg: "NO time.Sleep() - use channels for synchronization (CLAUDE.md rule)"
+      
+      # Versioning antipatterns
+      - p: '(V2|v2|New|Old|Deprecated|Legacy|Compat)\b'
+        msg: "NO versioned function names - replace old implementations (CLAUDE.md rule)"
+      
+      # TODOs in code
+      - p: '// ?(TODO|FIXME|HACK|XXX)'
+        msg: "NO TODOs in final code - finish the implementation (CLAUDE.md rule)"
         
-    revive:
-      severity: error
-      enable-all-rules: false
-      rules:
-        # Essential rules for code quality
-        - name: blank-imports
-        - name: context-as-argument
-        - name: context-keys-type
-        - name: dot-imports
-        - name: error-return
-        - name: error-strings
-        - name: error-naming
-        - name: exported
-        - name: if-return
-        - name: increment-decrement
-        - name: var-naming
-          arguments:
-            - ["ID", "URL", "HTTP", "API"]  # Common initialisms
-            - []  # No deny list
-        - name: var-declaration
-        - name: package-comments
-        - name: range
-        - name: receiver-naming
-        - name: time-naming
-        - name: unexported-return
-        - name: indent-error-flow
-        - name: errorf
-        - name: empty-block
-        - name: superfluous-else
-        - name: unused-parameter
-        - name: unreachable-code
-        - name: redefines-builtin-id
-        - name: waitgroup-by-value
-        - name: use-any         # Prefer 'any' over 'interface{}'
-        - name: useless-break
-        - name: unnecessary-stmt
-        
-    gosec:
-      # We need exec.Command for clipboard operations (xclip, pbcopy, etc.)
-      excludes:
-        - G204  # Audit use of command execution
+  gocognit:
+    # Cognitive complexity threshold (20 allows for Go's error handling)
+    min-complexity: 20
+    
+  gocyclo:
+    # Cyclomatic complexity threshold (15 is strict but fair)
+    min-complexity: 15
+    
+  godox:
+    # Keywords to flag
+    keywords:
+      - TODO
+      - FIXME
+      - XXX
+      - HACK
+      - BUG
+      - OPTIMIZE
       
-      severity: medium
-      confidence: medium
+  goconst:
+    # Minimum length of string constant
+    min-len: 3
+    # Minimum occurrences to trigger
+    min-occurrences: 3
+    # Ignore test files
+    ignore-tests: true
+    
+  dupl:
+    # Minimum token sequence length
+    threshold: 150
+    
+  exhaustive:
+    # Check switch statements on named types
+    check:
+      - switch
+      - map
+    # Ignore enum members matching regex
+    ignore-enum-members: "Example.+"
+    # Consider default case as exhaustive
+    default-signifies-exhaustive: false
+    
+  ireturn:
+    # List of interfaces to allow
+    allow:
+      - error
+      - stdlib
+      - io.Reader
+      - io.Writer
+      - io.Closer
+      - io.ReadWriter
+      - io.ReadCloser
+      - io.WriteCloser
+      - io.ReadWriteCloser
+      - http.ResponseWriter
+      - http.Handler
       
-    iface:
-      enable:
-        - identical  # No identical interfaces
-        # - unused   # Disabled: We have interface-only packages by design
-        # - opaque   # Disabled: We intentionally return interfaces for decoration patterns
-        
-    nakedret:
-      max-func-lines: 30  # Only enforce in longer functions
+  wrapcheck:
+    # Packages to check errors from
+    ignoreSigs:
+      - .Errorf(
+      - errors.New(
+      - errors.Unwrap(
+      - errors.Join(
+      - .Wrap(
+      - .Wrapf(
+      - .WithMessage(
+      - .WithMessagef(
+      - .WithStack(
+    # Check errors from all packages by default
+    ignorePackageGlobs:
+      - testing
       
-    misspell:
-      locale: US
-      
-    govet:
-      enable-all: true
-      disable:
-        - fieldalignment  # Memory optimization, not correctness
-      
-    forbidigo:
-      # Override default patterns
-      forbid:
-        # First, let's keep some useful defaults but modify them
-        - pattern: '^(fmt\.Print(|f|ln)|print|println)$'
-          msg: "Use Logger interface instead of print statements"
-        # Now add our custom patterns
-        - pattern: 'interface\{\}'
-          msg: "Don't use interface{}, use a specific type or 'any'"
-        - pattern: '\bpanic\('
-          msg: "Don't use panic, return an error instead"
-        - pattern: 'exec\.Command\('
-          msg: "Use RunCommand() or RunCommandWithInput() from command.go instead of exec.Command directly"
-      # Try matching literal source code
-      analyze-types: false
+  errname:
+    # Allow error variables with names like 'errFoo'
+    skip-single: true
 
+issues:
+  # Exclude some patterns in test files
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck     # Error checking might be relaxed in tests
+        - gocyclo      # Test functions can be more complex
+        - gocognit     # Test complexity is less critical
+        - dupl         # Test code often has similar patterns
+        - goconst      # Test strings don't need to be constants
+        - wrapcheck    # Test error handling can be simpler
+        - containedctx # Tests might store context for test lifecycle
+        
+    # Allow time.Sleep in test files only
+    - path: _test\.go
+      text: "time.Sleep"
+      linters:
+        - forbidigo
+        
+    # Allow panic in main.go for CLI apps
+    - path: main\.go
+      text: "panic"
+      linters:
+        - forbidigo
+        
+    # Allow returning interfaces in mock implementations
+    - path: mock_.*\.go
+      linters:
+        - ireturn
+        
+    # Allow simpler error handling in generated code
+    - path: _generated\.go
+      linters:
+        - wrapcheck
+        - goconst
+
+  # Don't skip generated files - we want to ensure quality everywhere
+  exclude-generated: false
+  
+  # Maximum issues to report (0 = unlimited)
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  
+  # Show all issues, not just new ones
+  new: false
+
+run:
+  # Timeout for analysis
+  timeout: 5m
+  
+  # Number of CPUs to use (0 = auto)
+  concurrency: 0
+  
+  # Include test files
+  tests: true
+  
+  # Skip vendor, third_party, testdata
+  skip-dirs-use-default: true

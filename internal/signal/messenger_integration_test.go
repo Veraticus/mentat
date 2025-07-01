@@ -7,44 +7,21 @@ import (
 	"time"
 )
 
-// TestMessengerIntegrationMessageFlow verifies messages flow through subscription channel.
-func TestMessengerIntegrationMessageFlow(t *testing.T) {
-	// Create a mock client with a channel we control
-	clientCh := make(chan *Envelope, 10)
-	client := &MockClient{
-		SubscribeFunc: func(_ context.Context) (<-chan *Envelope, error) {
-			return clientCh, nil
-		},
-		SendReceiptFunc: func(_ context.Context, _ string, _ int64, _ string) error {
-			return nil
-		},
-	}
+type messageFlowTest struct {
+	envelope        *Envelope
+	expectedMessage *IncomingMessage
+	shouldReceive   bool
+}
 
-	selfPhone := "+1234567890"
-	m := NewMessenger(client, selfPhone)
-
-	// Set up subscription
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	msgCh, err := m.Subscribe(ctx)
-	if err != nil {
-		t.Fatalf("Subscribe failed: %v", err)
-	}
-
-	// Test data
-	testMessages := []struct {
-		envelope        *Envelope
-		expectedMessage *IncomingMessage
-		shouldReceive   bool
-	}{
+func createTestMessages(selfPhone string) []messageFlowTest {
+	return []messageFlowTest{
 		{
 			// Regular message from another user
 			envelope: &Envelope{
-				Source:       "+0987654321",
-				SourceName:   "Alice",
-				Timestamp:    time.Now().UnixMilli(),
-				DataMessage:  &DataMessage{Message: "Hello, Bob!"},
+				Source:      "+0987654321",
+				SourceName:  "Alice",
+				Timestamp:   time.Now().UnixMilli(),
+				DataMessage: &DataMessage{Message: "Hello, Bob!"},
 			},
 			expectedMessage: &IncomingMessage{
 				From: "Alice",
@@ -119,49 +96,48 @@ func TestMessengerIntegrationMessageFlow(t *testing.T) {
 			shouldReceive: true,
 		},
 	}
+}
 
-	// Send messages and verify reception
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		
-		for _, test := range testMessages {
-			// Send the envelope
-			clientCh <- test.envelope
+func verifyMessage(t *testing.T, msgCh <-chan IncomingMessage, test messageFlowTest) {
+	t.Helper()
 
-			if test.shouldReceive {
-				// Should receive message
-				select {
-				case msg := <-msgCh:
-					if msg.From != test.expectedMessage.From {
-						t.Errorf("Expected From=%q, got %q", test.expectedMessage.From, msg.From)
-					}
-					if msg.Text != test.expectedMessage.Text {
-						t.Errorf("Expected Text=%q, got %q", test.expectedMessage.Text, msg.Text)
-					}
-				case <-time.After(100 * time.Millisecond):
-					t.Errorf("Timeout waiting for message: %+v", test.expectedMessage)
-				}
-			} else {
-				// Should NOT receive message
-				select {
-				case msg := <-msgCh:
-					t.Errorf("Unexpected message received: %+v", msg)
-				case <-time.After(50 * time.Millisecond):
-					// Expected - no message
-				}
-			}
+	if test.shouldReceive {
+		verifyExpectedMessage(t, msgCh, test.expectedMessage)
+	} else {
+		verifyNoMessage(t, msgCh)
+	}
+}
+
+func verifyExpectedMessage(t *testing.T, msgCh <-chan IncomingMessage, expected *IncomingMessage) {
+	t.Helper()
+
+	select {
+	case msg := <-msgCh:
+		if msg.From != expected.From {
+			t.Errorf("Expected From=%q, got %q", expected.From, msg.From)
 		}
-		
-		// Close the client channel
-		close(clientCh)
-	}()
+		if msg.Text != expected.Text {
+			t.Errorf("Expected Text=%q, got %q", expected.Text, msg.Text)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Errorf("Timeout waiting for message: %+v", expected)
+	}
+}
 
-	// Wait for test completion
-	wg.Wait()
+func verifyNoMessage(t *testing.T, msgCh <-chan IncomingMessage) {
+	t.Helper()
 
-	// Verify subscription channel closes when client channel closes
+	select {
+	case msg := <-msgCh:
+		t.Errorf("Unexpected message received: %+v", msg)
+	case <-time.After(50 * time.Millisecond):
+		// Expected - no message
+	}
+}
+
+func verifyChannelClosed(t *testing.T, msgCh <-chan IncomingMessage) {
+	t.Helper()
+
 	select {
 	case _, ok := <-msgCh:
 		if ok {
@@ -170,6 +146,55 @@ func TestMessengerIntegrationMessageFlow(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Error("Timeout waiting for channel to close")
 	}
+}
+
+// TestMessengerIntegrationMessageFlow verifies messages flow through subscription channel.
+func TestMessengerIntegrationMessageFlow(t *testing.T) {
+	// Create a mock client with a channel we control
+	clientCh := make(chan *Envelope, 10)
+	client := &MockClient{
+		SubscribeFunc: func(_ context.Context) (<-chan *Envelope, error) {
+			return clientCh, nil
+		},
+		SendReceiptFunc: func(_ context.Context, _ string, _ int64, _ string) error {
+			return nil
+		},
+	}
+
+	selfPhone := "+1234567890"
+	m := NewMessenger(client, selfPhone)
+
+	// Set up subscription
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	msgCh, err := m.Subscribe(ctx)
+	if err != nil {
+		t.Fatalf("Subscribe failed: %v", err)
+	}
+
+	// Test data
+	testMessages := createTestMessages(selfPhone)
+
+	// Send messages and verify reception
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		for _, test := range testMessages {
+			clientCh <- test.envelope
+			verifyMessage(t, msgCh, test)
+		}
+
+		close(clientCh)
+	}()
+
+	// Wait for test completion
+	wg.Wait()
+
+	// Verify subscription channel closes when client channel closes
+	verifyChannelClosed(t, msgCh)
 }
 
 // TestMessengerIntegrationConcurrentMessages tests handling of concurrent messages.
@@ -214,7 +239,7 @@ func TestMessengerIntegrationConcurrentMessages(t *testing.T) {
 	// Receive all messages
 	received := 0
 	receiveTimeout := time.After(5 * time.Second)
-	
+
 	for received < messageCount {
 		select {
 		case msg := <-msgCh:
@@ -236,7 +261,7 @@ func TestMessengerIntegrationContextCancellation(t *testing.T) {
 	clientCh := make(chan *Envelope)
 	var clientCtx context.Context
 	ctxCaptured := make(chan struct{})
-	
+
 	client := &MockClient{
 		SubscribeFunc: func(ctx context.Context) (<-chan *Envelope, error) {
 			clientCtx = ctx
@@ -303,13 +328,13 @@ func TestMessengerIntegrationContextCancellation(t *testing.T) {
 func TestMessengerIntegrationSubscriptionReplacement(t *testing.T) {
 	var mu sync.Mutex
 	var contexts []context.Context
-	
+
 	client := &MockClient{
 		SubscribeFunc: func(ctx context.Context) (<-chan *Envelope, error) {
 			mu.Lock()
 			contexts = append(contexts, ctx)
 			mu.Unlock()
-			
+
 			ch := make(chan *Envelope)
 			go func() {
 				<-ctx.Done()
@@ -360,9 +385,9 @@ func TestMessengerIntegrationSubscriptionReplacement(t *testing.T) {
 		}
 	}
 
-	// Give a small delay to ensure all contexts are processed
-	time.Sleep(100 * time.Millisecond)
-	
+	// Allow contexts to be processed
+	<-time.After(100 * time.Millisecond)
+
 	// Verify all contexts except the last are canceled
 	mu.Lock()
 	ctxs := contexts

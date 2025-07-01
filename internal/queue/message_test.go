@@ -15,7 +15,7 @@ func TestNewQueuedMessage(t *testing.T) {
 		Text:      "Hello, world!",
 		Timestamp: time.Now(),
 	}
-	
+
 	tests := []struct {
 		name     string
 		priority Priority
@@ -42,11 +42,11 @@ func TestNewQueuedMessage(t *testing.T) {
 			},
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			qm := NewQueuedMessage(msg, tt.priority)
-			
+
 			// Verify basic fields
 			// ID is generated from timestamp and sender
 			expectedIDPrefix := fmt.Sprintf("%d-%s", msg.Timestamp.UnixNano(), msg.From)
@@ -64,12 +64,12 @@ func TestNewQueuedMessage(t *testing.T) {
 			if qm.Text != msg.Text {
 				t.Errorf("expected Text %s, got %s", msg.Text, qm.Text)
 			}
-			
+
 			// Verify initial state
 			if qm.State != MessageStateQueued {
 				t.Errorf("expected initial state %v, got %v", MessageStateQueued, qm.State)
 			}
-			
+
 			// Verify state history
 			if len(qm.StateHistory) != 1 {
 				t.Fatalf("expected 1 state history entry, got %d", len(qm.StateHistory))
@@ -80,7 +80,7 @@ func TestNewQueuedMessage(t *testing.T) {
 			if qm.StateHistory[0].Reason != "message created" {
 				t.Errorf("expected reason 'message created', got %s", qm.StateHistory[0].Reason)
 			}
-			
+
 			// Verify defaults
 			if qm.Attempts != 0 {
 				t.Errorf("expected 0 attempts, got %d", qm.Attempts)
@@ -91,7 +91,7 @@ func TestNewQueuedMessage(t *testing.T) {
 			if len(qm.ErrorHistory) != 0 {
 				t.Errorf("expected empty error history, got %d entries", len(qm.ErrorHistory))
 			}
-			
+
 			// Run custom validation
 			tt.validate(t, qm)
 		})
@@ -100,14 +100,14 @@ func TestNewQueuedMessage(t *testing.T) {
 
 func TestQueuedMessage_WithState(t *testing.T) {
 	msg := createTestMessage()
-	
+
 	tests := []struct {
-		name          string
-		fromState     MessageState
-		toState       MessageState
-		reason        string
-		expectError   bool
-		validateFunc  func(t *testing.T, oldMsg, newMsg *QueuedMessage)
+		name         string
+		fromState    MessageState
+		toState      MessageState
+		reason       string
+		expectError  bool
+		validateFunc func(t *testing.T, oldMsg, newMsg *QueuedMessage)
 	}{
 		{
 			name:        "valid transition: queued to processing",
@@ -121,12 +121,12 @@ func TestQueuedMessage_WithState(t *testing.T) {
 				if oldMsg.State != MessageStateQueued {
 					t.Errorf("old message state changed")
 				}
-				
+
 				// New message should have new state
 				if newMsg.State != MessageStateProcessing {
 					t.Errorf("expected state %v, got %v", MessageStateProcessing, newMsg.State)
 				}
-				
+
 				// ProcessedAt should be set
 				if newMsg.ProcessedAt == nil {
 					t.Errorf("ProcessedAt not set")
@@ -181,7 +181,7 @@ func TestQueuedMessage_WithState(t *testing.T) {
 			expectError: true,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Set up initial state
@@ -197,10 +197,10 @@ func TestQueuedMessage_WithState(t *testing.T) {
 					}
 				}
 			}
-			
+
 			// Perform the transition
 			newMsg, err := oldMsg.WithState(tt.toState, tt.reason)
-			
+
 			// Check error expectation
 			if tt.expectError && err == nil {
 				t.Errorf("expected error but got none")
@@ -208,11 +208,11 @@ func TestQueuedMessage_WithState(t *testing.T) {
 			if !tt.expectError && err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
-			
+
 			if err != nil {
 				return
 			}
-			
+
 			// Verify state history was updated
 			history := newMsg.GetStateHistory()
 			lastTransition := history[len(history)-1]
@@ -225,7 +225,7 @@ func TestQueuedMessage_WithState(t *testing.T) {
 			if lastTransition.Reason != tt.reason {
 				t.Errorf("expected reason %s, got %s", tt.reason, lastTransition.Reason)
 			}
-			
+
 			// Run custom validation
 			if tt.validateFunc != nil {
 				tt.validateFunc(t, oldMsg, newMsg)
@@ -237,10 +237,10 @@ func TestQueuedMessage_WithState(t *testing.T) {
 func TestQueuedMessage_WithError(t *testing.T) {
 	msg := createTestMessage()
 	testError := errors.New("test error")
-	
+
 	// Add error
 	newMsg := msg.WithError(testError, MessageStateProcessing)
-	
+
 	// Original should be unchanged
 	if msg.LastError != nil {
 		t.Errorf("original message error was modified")
@@ -248,12 +248,12 @@ func TestQueuedMessage_WithError(t *testing.T) {
 	if len(msg.ErrorHistory) != 0 {
 		t.Errorf("original message error history was modified")
 	}
-	
+
 	// New message should have error
 	if newMsg.LastError != testError {
 		t.Errorf("expected LastError to be %v, got %v", testError, newMsg.LastError)
 	}
-	
+
 	// Check error history
 	errorHistory := newMsg.GetErrorHistory()
 	if len(errorHistory) != 1 {
@@ -272,17 +272,17 @@ func TestQueuedMessage_WithError(t *testing.T) {
 
 func TestQueuedMessage_IncrementAttempts(t *testing.T) {
 	msg := createTestMessage()
-	
+
 	// Increment attempts
 	msg1 := msg.IncrementAttempts()
 	msg2 := msg1.IncrementAttempts()
 	msg3 := msg2.IncrementAttempts()
-	
+
 	// Verify immutability
 	if msg.Attempts != 0 {
 		t.Errorf("original message attempts was modified")
 	}
-	
+
 	// Verify increments
 	if msg1.Attempts != 1 {
 		t.Errorf("expected 1 attempt, got %d", msg1.Attempts)
@@ -308,13 +308,13 @@ func TestQueuedMessage_HasRetriesRemaining(t *testing.T) {
 		{"at max attempts", 3, 3, false},
 		{"over max attempts", 4, 3, false},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			msg := createTestMessage()
 			msg.Attempts = tt.attempts
 			msg.MaxAttempts = tt.maxAttempts
-			
+
 			if got := msg.HasRetriesRemaining(); got != tt.expected {
 				t.Errorf("expected %v, got %v", tt.expected, got)
 			}
@@ -324,19 +324,19 @@ func TestQueuedMessage_HasRetriesRemaining(t *testing.T) {
 
 func TestQueuedMessage_IsReadyForRetry(t *testing.T) {
 	msg := createTestMessage()
-	
+
 	// No retry time set - should be ready
 	if !msg.IsReadyForRetry() {
 		t.Errorf("expected message to be ready for retry when NextRetryAt is nil")
 	}
-	
+
 	// Future retry time - not ready
 	future := time.Now().Add(time.Hour)
 	msg.NextRetryAt = &future
 	if msg.IsReadyForRetry() {
 		t.Errorf("expected message not to be ready for retry when NextRetryAt is in future")
 	}
-	
+
 	// Past retry time - ready
 	past := time.Now().Add(-time.Hour)
 	msg.NextRetryAt = &past
@@ -347,12 +347,12 @@ func TestQueuedMessage_IsReadyForRetry(t *testing.T) {
 
 func TestQueuedMessage_GetProcessingDuration(t *testing.T) {
 	msg := createTestMessage()
-	
+
 	// Not processed yet
 	if duration := msg.GetProcessingDuration(); duration != 0 {
 		t.Errorf("expected 0 duration for unprocessed message, got %v", duration)
 	}
-	
+
 	// Processing started
 	processedAt := time.Now().Add(-5 * time.Second)
 	msg.ProcessedAt = &processedAt
@@ -360,7 +360,7 @@ func TestQueuedMessage_GetProcessingDuration(t *testing.T) {
 	if duration < 5*time.Second || duration > 6*time.Second {
 		t.Errorf("expected duration around 5s, got %v", duration)
 	}
-	
+
 	// Processing completed
 	completedAt := processedAt.Add(3 * time.Second)
 	msg.CompletedAt = &completedAt
@@ -373,13 +373,13 @@ func TestQueuedMessage_GetProcessingDuration(t *testing.T) {
 func TestQueuedMessage_GetQueueDuration(t *testing.T) {
 	msg := createTestMessage()
 	msg.QueuedAt = time.Now().Add(-10 * time.Second)
-	
+
 	// Still in queue
 	duration := msg.GetQueueDuration()
 	if duration < 10*time.Second || duration > 11*time.Second {
 		t.Errorf("expected duration around 10s, got %v", duration)
 	}
-	
+
 	// Processed after 5 seconds
 	processedAt := msg.QueuedAt.Add(5 * time.Second)
 	msg.ProcessedAt = &processedAt
@@ -391,7 +391,7 @@ func TestQueuedMessage_GetQueueDuration(t *testing.T) {
 
 func TestQueuedMessage_GetLastTransition(t *testing.T) {
 	msg := createTestMessage()
-	
+
 	// Initial state
 	last := msg.GetLastTransition()
 	if last == nil {
@@ -400,7 +400,7 @@ func TestQueuedMessage_GetLastTransition(t *testing.T) {
 	if last.To != MessageStateQueued {
 		t.Errorf("expected last transition to %v, got %v", MessageStateQueued, last.To)
 	}
-	
+
 	// After state change
 	newMsg, _ := msg.WithState(MessageStateProcessing, "test")
 	last = newMsg.GetLastTransition()
@@ -412,17 +412,17 @@ func TestQueuedMessage_GetLastTransition(t *testing.T) {
 
 func TestCalculateRetryDelay(t *testing.T) {
 	tests := []struct {
-		name        string
-		attempts    int
-		minDelay    time.Duration
-		maxDelay    time.Duration
+		name     string
+		attempts int
+		minDelay time.Duration
+		maxDelay time.Duration
 	}{
 		{"first retry", 0, 900 * time.Millisecond, 1100 * time.Millisecond},
 		{"second retry", 1, 1800 * time.Millisecond, 2200 * time.Millisecond},
 		{"third retry", 2, 3600 * time.Millisecond, 4400 * time.Millisecond},
-		{"max delay", 10, 4*time.Minute + 30*time.Second, 5*time.Minute},
+		{"max delay", 10, 4*time.Minute + 30*time.Second, 5 * time.Minute},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			delay := CalculateRetryDelay(tt.attempts)
@@ -446,7 +446,7 @@ func TestMessageStateString(t *testing.T) {
 		{MessageStateRetrying, "retrying"},
 		{MessageState(99), "unknown(99)"},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.expected, func(t *testing.T) {
 			if got := MessageStateString(tt.state); got != tt.expected {
@@ -473,13 +473,13 @@ func createTestMessage() *QueuedMessage {
 func getTransitionPath(from, to MessageState) []MessageState {
 	// Simplified for testing - in real implementation this would use the state machine
 	paths := map[string][]MessageState{
-		"queued-processing":  {MessageStateProcessing},
-		"queued-validating":  {MessageStateProcessing, MessageStateValidating},
-		"queued-completed":   {MessageStateProcessing, MessageStateCompleted},
-		"queued-retrying":    {MessageStateProcessing, MessageStateRetrying},
-		"queued-failed":      {MessageStateFailed},
+		"queued-processing": {MessageStateProcessing},
+		"queued-validating": {MessageStateProcessing, MessageStateValidating},
+		"queued-completed":  {MessageStateProcessing, MessageStateCompleted},
+		"queued-retrying":   {MessageStateProcessing, MessageStateRetrying},
+		"queued-failed":     {MessageStateFailed},
 	}
-	
+
 	key := MessageStateString(from) + "-" + MessageStateString(to)
 	return paths[key]
 }

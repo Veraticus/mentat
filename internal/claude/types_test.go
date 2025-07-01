@@ -7,7 +7,7 @@ import (
 
 func TestConfigZeroValue(t *testing.T) {
 	var cfg Config
-	
+
 	// Zero value should be identifiable as uninitialized
 	if cfg.MCPConfigPath != "" {
 		t.Error("Expected empty MCPConfigPath for zero value")
@@ -28,7 +28,7 @@ func TestConfigZeroValue(t *testing.T) {
 
 func TestLLMResponseZeroValue(t *testing.T) {
 	var resp LLMResponse
-	
+
 	// Zero value should be identifiable as uninitialized
 	if resp.ToolCalls != nil {
 		t.Error("Expected nil ToolCalls for zero value")
@@ -49,7 +49,7 @@ func TestLLMResponseZeroValue(t *testing.T) {
 
 func TestToolCallZeroValue(t *testing.T) {
 	var tc ToolCall
-	
+
 	// Zero value should be identifiable as uninitialized
 	if tc.Tool != "" {
 		t.Error("Expected empty Tool for zero value")
@@ -64,7 +64,7 @@ func TestToolCallZeroValue(t *testing.T) {
 
 func TestToolParameterZeroValue(t *testing.T) {
 	var tp ToolParameter
-	
+
 	// Zero value should default to ToolParamString type with empty string
 	if tp.Type != ToolParamString {
 		t.Error("Expected ToolParamString as default Type")
@@ -90,120 +90,106 @@ func TestToolParameterZeroValue(t *testing.T) {
 }
 
 func TestToolParameterConstructors(t *testing.T) {
-	tests := []struct {
-		validate func(t *testing.T, tp ToolParameter)
-		create   func() ToolParameter
-		name     string
-	}{
-		{
-			name: "NewStringParam",
-			create: func() ToolParameter {
-				return NewStringParam("test")
-			},
-			validate: func(t *testing.T, tp ToolParameter) {
-				t.Helper()
-				if tp.Type != ToolParamString {
-					t.Error("Expected ToolParamString type")
-				}
-				if tp.StringValue != "test" {
-					t.Error("Expected StringValue to be 'test'")
-				}
-			},
-		},
-		{
-			name: "NewIntParam",
-			create: func() ToolParameter {
-				return NewIntParam(42)
-			},
-			validate: func(t *testing.T, tp ToolParameter) {
-				t.Helper()
-				if tp.Type != ToolParamInt {
-					t.Error("Expected ToolParamInt type")
-				}
-				if tp.IntValue != 42 {
-					t.Error("Expected IntValue to be 42")
-				}
-			},
-		},
-		{
-			name: "NewBoolParam",
-			create: func() ToolParameter {
-				return NewBoolParam(true)
-			},
-			validate: func(t *testing.T, tp ToolParameter) {
-				t.Helper()
-				if tp.Type != ToolParamBool {
-					t.Error("Expected ToolParamBool type")
-				}
-				if !tp.BoolValue {
-					t.Error("Expected BoolValue to be true")
-				}
-			},
-		},
-		{
-			name: "NewFloatParam",
-			create: func() ToolParameter {
-				return NewFloatParam(3.14)
-			},
-			validate: func(t *testing.T, tp ToolParameter) {
-				t.Helper()
-				if tp.Type != ToolParamFloat {
-					t.Error("Expected ToolParamFloat type")
-				}
-				if tp.FloatValue != 3.14 {
-					t.Error("Expected FloatValue to be 3.14")
-				}
-			},
-		},
-		{
-			name: "NewArrayParam",
-			create: func() ToolParameter {
-				return NewArrayParam([]ToolParameter{
-					NewStringParam("item1"),
-					NewIntParam(2),
-				})
-			},
-			validate: func(t *testing.T, tp ToolParameter) {
-				t.Helper()
-				if tp.Type != ToolParamArray {
-					t.Error("Expected ToolParamArray type")
-				}
-				if len(tp.ArrayValue) != 2 {
-					t.Error("Expected ArrayValue to have 2 items")
-				}
-			},
-		},
-		{
-			name: "NewObjectParam",
-			create: func() ToolParameter {
-				return NewObjectParam(map[string]ToolParameter{
-					"key1": NewStringParam("value1"),
-					"key2": NewIntParam(2),
-				})
-			},
-			validate: func(t *testing.T, tp ToolParameter) {
-				t.Helper()
-				if tp.Type != ToolParamObject {
-					t.Error("Expected ToolParamObject type")
-				}
-				if len(tp.ObjectValue) != 2 {
-					t.Error("Expected ObjectValue to have 2 items")
-				}
-			},
-		},
-	}
-	
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tp := tt.create()
-			tt.validate(t, tp)
+	t.Run("NewStringParam", func(t *testing.T) {
+		tp := NewStringParam("test")
+		validateStringParam(t, tp, "test")
+	})
+
+	t.Run("NewIntParam", func(t *testing.T) {
+		tp := NewIntParam(42)
+		validateIntParam(t, tp, 42)
+	})
+
+	t.Run("NewBoolParam", func(t *testing.T) {
+		tp := NewBoolParam(true)
+		validateBoolParam(t, tp, true)
+	})
+
+	t.Run("NewFloatParam", func(t *testing.T) {
+		tp := NewFloatParam(3.14)
+		validateFloatParam(t, tp, 3.14)
+	})
+
+	t.Run("NewArrayParam", func(t *testing.T) {
+		tp := NewArrayParam([]ToolParameter{
+			NewStringParam("item1"),
+			NewIntParam(2),
 		})
+		validateArrayParam(t, tp, 2)
+	})
+
+	t.Run("NewObjectParam", func(t *testing.T) {
+		tp := NewObjectParam(map[string]ToolParameter{
+			"key1": NewStringParam("value1"),
+			"key2": NewIntParam(2),
+		})
+		validateObjectParam(t, tp, 2)
+	})
+}
+
+func validateStringParam(t *testing.T, tp ToolParameter, expected string) {
+	t.Helper()
+	if tp.Type != ToolParamString {
+		t.Error("Expected ToolParamString type")
+	}
+	if tp.StringValue != expected {
+		t.Errorf("Expected StringValue to be '%s'", expected)
+	}
+}
+
+func validateIntParam(t *testing.T, tp ToolParameter, expected int) {
+	t.Helper()
+	if tp.Type != ToolParamInt {
+		t.Error("Expected ToolParamInt type")
+	}
+	if tp.IntValue != expected {
+		t.Errorf("Expected IntValue to be %d", expected)
+	}
+}
+
+func validateBoolParam(t *testing.T, tp ToolParameter, expected bool) {
+	t.Helper()
+	if tp.Type != ToolParamBool {
+		t.Error("Expected ToolParamBool type")
+	}
+	if tp.BoolValue != expected {
+		t.Errorf("Expected BoolValue to be %v", expected)
+	}
+}
+
+func validateFloatParam(t *testing.T, tp ToolParameter, expected float64) {
+	t.Helper()
+	if tp.Type != ToolParamFloat {
+		t.Error("Expected ToolParamFloat type")
+	}
+	if tp.FloatValue != expected {
+		t.Errorf("Expected FloatValue to be %f", expected)
+	}
+}
+
+func validateArrayParam(t *testing.T, tp ToolParameter, expectedLen int) {
+	t.Helper()
+	if tp.Type != ToolParamArray {
+		t.Error("Expected ToolParamArray type")
+	}
+	if len(tp.ArrayValue) != expectedLen {
+		t.Errorf("Expected ArrayValue to have %d items", expectedLen)
+	}
+}
+
+func validateObjectParam(t *testing.T, tp ToolParameter, expectedLen int) {
+	t.Helper()
+	if tp.Type != ToolParamObject {
+		t.Error("Expected ToolParamObject type")
+	}
+	if len(tp.ObjectValue) != expectedLen {
+		t.Errorf("Expected ObjectValue to have %d items", expectedLen)
 	}
 }
 
 func TestResponseMetadataZeroValue(t *testing.T) {
 	var meta ResponseMetadata
-	
+
 	// Zero value should be identifiable as uninitialized
 	if meta.ModelVersion != "" {
 		t.Error("Expected empty ModelVersion for zero value")
@@ -234,7 +220,7 @@ func TestLLMResponseCreation(t *testing.T) {
 			TokensUsed:   42,
 		},
 	}
-	
+
 	if resp.Message != "Test response" {
 		t.Error("Message not set correctly")
 	}

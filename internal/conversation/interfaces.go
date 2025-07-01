@@ -7,13 +7,13 @@ import "time"
 type SessionManager interface {
 	// GetOrCreateSession returns the session ID for a user identifier
 	GetOrCreateSession(identifier string) string
-	
+
 	// GetSessionHistory returns the message history for a session
 	GetSessionHistory(sessionID string) []Message
-	
+
 	// ExpireSessions removes sessions that haven't been active since the given time
 	ExpireSessions(before time.Time) int
-	
+
 	// GetLastSessionID returns the most recent session ID for an identifier
 	GetLastSessionID(identifier string) string
 }

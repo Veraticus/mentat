@@ -17,7 +17,7 @@ func Example_integrationWithClaude() {
 		return
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
-	
+
 	// Generate and write MCP config to a file
 	mcpConfig := config.GenerateMCPConfig()
 	mcpConfigPath := filepath.Join(tmpDir, "mcp-config.json")
@@ -25,12 +25,12 @@ func Example_integrationWithClaude() {
 		fmt.Println("Error writing MCP config:", err)
 		return
 	}
-	
+
 	// In actual usage, this path would be passed to Claude CLI:
 	// claude --mcp-config-path mcpConfigPath ...
-	
+
 	fmt.Printf("Claude can now access %d MCP servers\n", len(mcpConfig.MCPServers))
-	
+
 	// Output:
 	// Claude can now access 6 MCP servers
 }
@@ -39,7 +39,7 @@ func Example_integrationWithClaude() {
 func Example_dynamicMCPConfig() {
 	// Start with the default config
 	mcpConfig := config.GenerateMCPConfig()
-	
+
 	// Add a custom server
 	mcpConfig.MCPServers["custom-tool"] = config.ServerConfig{
 		Transport: config.TransportConfig{
@@ -47,18 +47,18 @@ func Example_dynamicMCPConfig() {
 			Path: "/usr/local/bin/custom-mcp-server",
 		},
 	}
-	
+
 	// Remove a server we don't need
 	delete(mcpConfig.MCPServers, "expensify")
-	
+
 	// Validate the modified config
 	if err := config.ValidateMCPConfig(mcpConfig); err != nil {
 		fmt.Printf("Invalid config: %v\n", err)
 		return
 	}
-	
+
 	fmt.Printf("Modified config has %d servers\n", len(mcpConfig.MCPServers))
-	
+
 	// Output:
 	// Modified config has 6 servers
 }

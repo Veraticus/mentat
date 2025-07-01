@@ -141,7 +141,7 @@ func (v *stateValidator) validateTransition(msg *Message, from, to State) error 
 			return nil
 		}
 	}
-	
+
 	// No specific rule means transition is allowed if structurally valid
 	return nil
 }
@@ -155,7 +155,7 @@ func (v *stateValidator) explainInvalidTransition(from, to State) string {
 	if from == StateFailed {
 		return fmt.Sprintf("transition from %s is not allowed: message has permanently failed and cannot be reprocessed", from)
 	}
-	
+
 	// Explain based on target state requirements
 	switch to {
 	case StateQueued:

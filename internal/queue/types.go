@@ -75,8 +75,8 @@ type Message struct {
 	Error          error
 	ProcessedAt    *time.Time
 	NextRetryAt    *time.Time // When the message should be retried (if in retry state)
-	Sender         string      // Display name of sender
-	SenderNumber   string      // Phone number of sender
+	Sender         string     // Display name of sender
+	SenderNumber   string     // Phone number of sender
 	ID             string
 	ConversationID string
 	Text           string
@@ -159,14 +159,14 @@ func (m *Message) CanRetry() bool {
 func (m *Message) AddStateTransition(from, to State, reason string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	transition := StateTransition{
 		From:      stateToMessageState(from),
 		To:        stateToMessageState(to),
 		Timestamp: time.Now(),
 		Reason:    reason,
 	}
-	
+
 	m.StateHistory = append(m.StateHistory, transition)
 }
 
@@ -174,7 +174,7 @@ func (m *Message) AddStateTransition(from, to State, reason string) {
 func (m *Message) GetStateHistory() []StateTransition {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	// Return a copy to prevent external modifications
 	history := make([]StateTransition, len(m.StateHistory))
 	copy(history, m.StateHistory)
@@ -186,11 +186,11 @@ func (m *Message) GetStateHistory() []StateTransition {
 func (m *Message) AtomicTransition(expectedState, newState State) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	if m.State != expectedState {
 		return false
 	}
-	
+
 	m.State = newState
 	m.UpdatedAt = time.Now()
 	return true
@@ -264,25 +264,25 @@ type QueuedMessage struct {
 	From           string
 	Text           string
 	Priority       Priority
-	
+
 	// State tracking
-	State          MessageState
-	StateHistory   []StateTransition
-	
+	State        MessageState
+	StateHistory []StateTransition
+
 	// Timing information
-	QueuedAt       time.Time
-	ProcessedAt    *time.Time
-	CompletedAt    *time.Time
-	
+	QueuedAt    time.Time
+	ProcessedAt *time.Time
+	CompletedAt *time.Time
+
 	// Error tracking
-	LastError      error
-	ErrorHistory   []ErrorRecord
-	
+	LastError    error
+	ErrorHistory []ErrorRecord
+
 	// Attempt tracking
-	Attempts       int
-	MaxAttempts    int
-	NextRetryAt    *time.Time
-	
+	Attempts    int
+	MaxAttempts int
+	NextRetryAt *time.Time
+
 	// Internal fields (not exposed)
 	mu sync.RWMutex
 }

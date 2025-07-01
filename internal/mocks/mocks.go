@@ -39,6 +39,9 @@ type MockLLM struct {
 	responses map[string]*claude.LLMResponse
 	calls     []LLMCall
 	mu        sync.Mutex
+
+	// QueryFunc allows tests to provide custom query behavior
+	QueryFunc func(ctx context.Context, prompt, sessionID string) (*claude.LLMResponse, error)
 }
 
 // LLMCall records a call to the LLM.
@@ -57,7 +60,7 @@ func NewMockLLM() *MockLLM {
 }
 
 // Query implements the LLM interface.
-func (m *MockLLM) Query(_ context.Context, prompt string, sessionID string) (*claude.LLMResponse, error) {
+func (m *MockLLM) Query(ctx context.Context, prompt string, sessionID string) (*claude.LLMResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -66,6 +69,11 @@ func (m *MockLLM) Query(_ context.Context, prompt string, sessionID string) (*cl
 		SessionID: sessionID,
 		Timestamp: time.Now(),
 	})
+
+	// If QueryFunc is provided, use it
+	if m.QueryFunc != nil {
+		return m.QueryFunc(ctx, prompt, sessionID)
+	}
 
 	if m.err != nil {
 		return nil, m.err
@@ -81,7 +89,7 @@ func (m *MockLLM) Query(_ context.Context, prompt string, sessionID string) (*cl
 	if resp, ok := m.responses[sessionID]; ok {
 		return resp, nil
 	}
-	
+
 	// Check for empty sessionID (default response)
 	if resp, ok := m.responses[""]; ok {
 		return resp, nil

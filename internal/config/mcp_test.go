@@ -97,7 +97,7 @@ func TestWriteMCPConfig(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "test-mcp-config.json")
 
 	config := GenerateMCPConfig()
-	
+
 	// Test writing config
 	err := WriteMCPConfig(config, configPath)
 	if err != nil {
@@ -133,7 +133,7 @@ func TestWriteMCPConfigCreatesDirectory(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "nested", "dir", "mcp-config.json")
 
 	config := GenerateMCPConfig()
-	
+
 	err := WriteMCPConfig(config, configPath)
 	if err != nil {
 		t.Fatalf("failed to write config with nested dirs: %v", err)
@@ -189,12 +189,12 @@ func TestLoadMCPConfigInvalidJSON(t *testing.T) {
 	// Create a temporary file with invalid JSON
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "invalid.json")
-	
+
 	// Write invalid JSON
 	if err := os.WriteFile(configPath, []byte("{invalid json}"), 0600); err != nil {
 		t.Fatalf("failed to write test file: %v", err)
 	}
-	
+
 	_, err := LoadMCPConfig(configPath)
 	if err == nil {
 		t.Error("expected error when loading invalid JSON")
@@ -215,10 +215,10 @@ func TestWriteMCPConfigInvalidConfig(t *testing.T) {
 			},
 		},
 	}
-	
+
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "invalid-config.json")
-	
+
 	err := WriteMCPConfig(invalidConfig, configPath)
 	if err == nil {
 		t.Error("expected error when writing invalid config")

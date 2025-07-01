@@ -132,8 +132,8 @@ func TestCalculateRateLimitRetryDelay(t *testing.T) {
 		{
 			name:        "first attempt",
 			attempts:    1,
-			minExpected: 30 * time.Second,  // base delay
-			maxExpected: 90 * time.Second,  // 2x base with jitter
+			minExpected: 30 * time.Second, // base delay
+			maxExpected: 90 * time.Second, // 2x base with jitter
 		},
 		{
 			name:        "second attempt",
@@ -158,7 +158,7 @@ func TestCalculateRateLimitRetryDelay(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			delay := calculateRateLimitRetryDelay(tt.attempts)
-			
+
 			if delay < tt.minExpected {
 				t.Errorf("Delay %v is less than minimum expected %v", delay, tt.minExpected)
 			}
@@ -172,10 +172,10 @@ func TestCalculateRateLimitRetryDelay(t *testing.T) {
 // TestRateLimitIntegration tests the full rate limit handling flow.
 func TestRateLimitIntegration(t *testing.T) {
 	ctx := context.Background()
-	
+
 	// Track retry attempts using atomic operations for thread safety
 	var retryCount int64
-	
+
 	// Create a mock LLM that fails with rate limit on first attempt
 	mockLLM := &rateLimitTestLLM{
 		queryFunc: func(_ context.Context, _, _ string) (*claude.LLMResponse, error) {
@@ -183,7 +183,7 @@ func TestRateLimitIntegration(t *testing.T) {
 			return nil, fmt.Errorf("HTTP 429: Too Many Requests")
 		},
 	}
-	
+
 	// Create coordinator and worker pool
 	coordinator := NewCoordinator(ctx)
 	defer func() {
@@ -191,25 +191,25 @@ func TestRateLimitIntegration(t *testing.T) {
 			t.Logf("Failed to stop coordinator: %v", err)
 		}
 	}()
-	
+
 	mockMessenger := &rateLimitTestMessenger{
 		sendFunc: func(_ context.Context, _, _ string) error {
 			return nil
 		},
 	}
-	
+
 	rateLimiter := NewRateLimiter(10, 1, time.Second)
 	pool := NewWorkerPool(1, mockLLM, mockMessenger, coordinator.manager, rateLimiter)
-	
+
 	// Start worker pool
 	poolCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	
+
 	err := pool.Start(poolCtx)
 	if err != nil {
 		t.Fatalf("Failed to start worker pool: %v", err)
 	}
-	
+
 	// Submit a message
 	msg := signal.IncomingMessage{
 		From:       "user123",
@@ -221,22 +221,22 @@ func TestRateLimitIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to enqueue message: %v", err)
 	}
-	
+
 	// Wait for initial processing attempt
-	time.Sleep(200 * time.Millisecond)
-	
+	<-time.After(200 * time.Millisecond)
+
 	// Verify the message was rate limited and scheduled for retry
 	count := atomic.LoadInt64(&retryCount)
 	if count != 1 {
 		t.Errorf("Expected 1 attempt, got %d", count)
 	}
-	
+
 	// Check that message is queued for retry with appropriate delay
 	stats := coordinator.Stats()
 	if stats.TotalQueued != 1 {
 		t.Errorf("Expected 1 queued message (for retry), got %d", stats.TotalQueued)
 	}
-	
+
 	// Find the internal message and verify it has NextRetryAt set
 	var foundMsg *Message
 	coordinator.messages.Range(func(_, value any) bool {
@@ -246,22 +246,22 @@ func TestRateLimitIntegration(t *testing.T) {
 		}
 		return true
 	})
-	
+
 	if foundMsg == nil {
 		t.Fatal("Could not find message")
 	}
-	
+
 	nextRetryAt := foundMsg.GetNextRetryAt()
 	if nextRetryAt == nil {
 		t.Fatal("NextRetryAt not set on retrying message")
 	}
-	
+
 	// Verify retry delay is appropriate for rate limit (should be at least 30 seconds)
 	delay := time.Until(*nextRetryAt)
 	if delay < 25*time.Second { // Allow some margin
 		t.Errorf("Retry delay too short for rate limit: %v", delay)
 	}
-	
-	t.Logf("Message scheduled for retry at %v (delay: %v)", 
+
+	t.Logf("Message scheduled for retry at %v (delay: %v)",
 		nextRetryAt.Format(time.RFC3339), delay)
 }

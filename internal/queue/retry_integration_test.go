@@ -14,19 +14,19 @@ func TestRetryIntegration(t *testing.T) {
 
 	// Create components
 	manager := NewManager(ctx)
-	
+
 	// Mock LLM that fails first two times, then succeeds
 	attemptCount := int32(0)
 	mockLLM := &mockLLM{
 		err: NewRateLimitError("rate limited", 0, nil),
 	}
-	
+
 	// Set up the mock to succeed on third attempt
 	mockLLM.response = "Success!"
-	
+
 	mockMessenger := &mockMessenger{}
 	rateLimiter := NewRateLimiter(10, 1, time.Minute)
-	
+
 	// Start manager
 	go manager.Start()
 	defer func() {
@@ -49,7 +49,7 @@ func TestRetryIntegration(t *testing.T) {
 	}
 
 	// Wait a bit for processing
-	time.Sleep(100 * time.Millisecond)
+	<-time.After(100 * time.Millisecond)
 
 	// Message should have failed and be in retry state
 	stats := manager.Stats()
@@ -65,7 +65,7 @@ func TestRetryIntegration(t *testing.T) {
 
 	// Wait for retry delay (should be at least 30 seconds for rate limit)
 	// In real scenario, we'd wait the full time, but for testing we'll check the state
-	
+
 	// Verify message has NextRetryAt set
 	var foundMsg *Message
 	manager.mu.RLock()
@@ -97,23 +97,23 @@ func TestRetryIntegration(t *testing.T) {
 		t.Errorf("Retry delay too short for rate limit: %v", delay)
 	}
 
-	t.Logf("Message scheduled for retry at %v (delay: %v)", 
+	t.Logf("Message scheduled for retry at %v (delay: %v)",
 		nextRetry.Format(time.RFC3339), delay)
 }
 
 // TestRetryDelayCalculation verifies the retry delay calculation.
 func TestRetryDelayCalculation(t *testing.T) {
 	tests := []struct {
-		name          string
-		attempts      int
-		minDelay      time.Duration
-		maxDelay      time.Duration
-		isRateLimit   bool
+		name        string
+		attempts    int
+		minDelay    time.Duration
+		maxDelay    time.Duration
+		isRateLimit bool
 	}{
 		{
 			name:        "first retry standard",
 			attempts:    1,
-			minDelay:    1800 * time.Millisecond,  // 2s - 10% jitter (1s * 2^1)
+			minDelay:    1800 * time.Millisecond, // 2s - 10% jitter (1s * 2^1)
 			maxDelay:    2200 * time.Millisecond, // 2s + 10% jitter
 			isRateLimit: false,
 		},

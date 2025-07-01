@@ -370,7 +370,6 @@ func TestMockWorker(t *testing.T) {
 	}()
 
 	<-started
-	time.Sleep(10 * time.Millisecond)
 	cancel()
 
 	// Test stop
@@ -407,7 +406,7 @@ func TestMockStateMachine(t *testing.T) {
 	}
 }
 
-func TestMockStorage(t *testing.T) {
+func TestMockStorageMessages(t *testing.T) {
 	mock := NewMockStorage()
 
 	// Test save and get message
@@ -444,13 +443,17 @@ func TestMockStorage(t *testing.T) {
 	if len(history) != 1 {
 		t.Errorf("expected 1 message in history, got %d", len(history))
 	}
+}
+
+func TestMockStorageQueue(t *testing.T) {
+	mock := NewMockStorage()
 
 	// Test queue item
 	queueItem := &queue.QueuedMessage{
 		ID:    "queue1",
 		State: queue.MessageStateQueued,
 	}
-	err = mock.SaveQueueItem(queueItem)
+	err := mock.SaveQueueItem(queueItem)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -463,13 +466,17 @@ func TestMockStorage(t *testing.T) {
 	if len(pending) != 1 {
 		t.Errorf("expected 1 pending item, got %d", len(pending))
 	}
+}
+
+func TestMockStorageSessions(t *testing.T) {
+	mock := NewMockStorage()
 
 	// Test session
 	session := &storage.Session{
 		ID:     "session1",
 		UserID: "user1",
 	}
-	err = mock.SaveSession(session)
+	err := mock.SaveSession(session)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -482,8 +489,22 @@ func TestMockStorage(t *testing.T) {
 		t.Errorf("unexpected session: %+v", activeSession)
 	}
 
-	// Test other methods don't error
-	err = mock.SaveLLMCall(&storage.LLMCall{MessageID: "msg1"})
+	err = mock.UpdateSessionActivity("session1", time.Now())
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	_, err = mock.ExpireSessions(time.Now())
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestMockStorageOtherMethods(t *testing.T) {
+	mock := NewMockStorage()
+
+	// Test LLM methods
+	err := mock.SaveLLMCall(&storage.LLMCall{MessageID: "msg1"})
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -498,16 +519,7 @@ func TestMockStorage(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 
-	err = mock.UpdateSessionActivity("session1", time.Now())
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-
-	_, err = mock.ExpireSessions(time.Now())
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-
+	// Test rate limit
 	err = mock.SaveRateLimitState("user1", &storage.RateLimitState{})
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
@@ -518,6 +530,7 @@ func TestMockStorage(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 
+	// Test circuit breaker
 	err = mock.SaveCircuitBreakerState("service1", &storage.CircuitBreakerState{})
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
@@ -528,6 +541,7 @@ func TestMockStorage(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 
+	// Test metrics
 	err = mock.RecordMetric(&storage.SystemMetric{})
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)

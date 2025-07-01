@@ -57,10 +57,13 @@ type mockQueue struct {
 	mu           sync.Mutex
 	messages     []IncomingMessage
 	enqueueError error
+	enqueued     chan struct{} // Signal when message is enqueued
 }
 
 func newMockQueue() *mockQueue {
-	return &mockQueue{}
+	return &mockQueue{
+		enqueued: make(chan struct{}, 100),
+	}
 }
 
 func (q *mockQueue) Enqueue(msg IncomingMessage) error {
@@ -70,6 +73,10 @@ func (q *mockQueue) Enqueue(msg IncomingMessage) error {
 		return q.enqueueError
 	}
 	q.messages = append(q.messages, msg)
+	select {
+	case q.enqueued <- struct{}{}:
+	default:
+	}
 	return nil
 }
 
@@ -148,26 +155,66 @@ func TestHandlerWithLogger(t *testing.T) {
 	}
 }
 
+// handlerTestSetup creates a handler with test dependencies.
+type handlerTestSetup struct {
+	messenger *mockMessenger
+	queue     *mockQueue
+	handler   *Handler
+}
+
+func newHandlerTestSetup(t *testing.T) *handlerTestSetup {
+	t.Helper()
+	messenger := newMockMessenger()
+	q := newMockQueue()
+	handler, err := NewHandler(messenger, q)
+	if err != nil {
+		t.Fatalf("failed to create handler: %v", err)
+	}
+	return &handlerTestSetup{
+		messenger: messenger,
+		queue:     q,
+		handler:   handler,
+	}
+}
+
+func startHandlerAsync(ctx context.Context, handler *Handler) <-chan error {
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- handler.Start(ctx)
+	}()
+	return errCh
+}
+
+func waitForMessages(t *testing.T, q *mockQueue, count int) {
+	t.Helper()
+	for i := 0; i < count; i++ {
+		select {
+		case <-q.enqueued:
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for message to be enqueued")
+		}
+	}
+}
+
+func waitForHandlerStop(t *testing.T, errCh <-chan error) {
+	t.Helper()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Errorf("handler returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Error("handler did not stop within timeout")
+	}
+}
+
 func TestHandlerStart(t *testing.T) {
 	t.Run("successful message processing", func(t *testing.T) {
-		messenger := newMockMessenger()
-		q := newMockQueue()
-		handler, err := NewHandler(messenger, q)
-		if err != nil {
-			t.Fatalf("failed to create handler: %v", err)
-		}
-
+		setup := newHandlerTestSetup(t)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		// Start handler in background
-		errCh := make(chan error, 1)
-		go func() {
-			errCh <- handler.Start(ctx)
-		}()
-
-		// Give handler time to start
-		time.Sleep(50 * time.Millisecond)
+		errCh := startHandlerAsync(ctx, setup.handler)
 
 		// Send test messages
 		messages := []IncomingMessage{
@@ -176,44 +223,26 @@ func TestHandlerStart(t *testing.T) {
 		}
 
 		for _, msg := range messages {
-			messenger.messages <- msg
+			setup.messenger.messages <- msg
 		}
 
-		// Give handler time to process
-		time.Sleep(50 * time.Millisecond)
+		// Wait and verify
+		waitForMessages(t, setup.queue, len(messages))
 
-		// Verify messages were enqueued
-		enqueuedMsgs := q.getMessages()
+		enqueuedMsgs := setup.queue.getMessages()
 		if len(enqueuedMsgs) != len(messages) {
 			t.Errorf("expected %d messages, got %d", len(messages), len(enqueuedMsgs))
 		}
 
-		// Stop handler
 		cancel()
-
-		// Wait for handler to stop
-		select {
-		case err := <-errCh:
-			if err != nil {
-				t.Errorf("handler returned error: %v", err)
-			}
-		case <-time.After(time.Second):
-			t.Error("handler did not stop within timeout")
-		}
+		waitForHandlerStop(t, errCh)
 	})
 
 	t.Run("subscribe error", func(t *testing.T) {
-		messenger := newMockMessenger()
-		messenger.subscribeError = errors.New("subscribe failed")
-		q := newMockQueue()
+		setup := newHandlerTestSetup(t)
+		setup.messenger.subscribeError = errors.New("subscribe failed")
 
-		handler, err := NewHandler(messenger, q)
-		if err != nil {
-			t.Fatalf("failed to create handler: %v", err)
-		}
-
-		ctx := context.Background()
-		err = handler.Start(ctx)
+		err := setup.handler.Start(context.Background())
 		if err == nil {
 			t.Fatal("expected error but got nil")
 		}
@@ -223,24 +252,20 @@ func TestHandlerStart(t *testing.T) {
 	})
 
 	t.Run("already running", func(t *testing.T) {
-		messenger := newMockMessenger()
-		q := newMockQueue()
-		handler, err := NewHandler(messenger, q)
-		if err != nil {
-			t.Fatalf("failed to create handler: %v", err)
-		}
-
+		setup := newHandlerTestSetup(t)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
 		// Start handler
+		started := make(chan struct{})
 		go func() {
-			_ = handler.Start(ctx)
+			close(started)
+			_ = setup.handler.Start(ctx)
 		}()
-		time.Sleep(50 * time.Millisecond)
+		<-started
 
 		// Try to start again
-		err = handler.Start(ctx)
+		err := setup.handler.Start(ctx)
 		if err == nil {
 			t.Fatal("expected error but got nil")
 		}
@@ -264,14 +289,21 @@ func TestHandlerEnqueueError(t *testing.T) {
 	defer cancel()
 
 	// Start handler
+	started := make(chan struct{})
 	go func() {
+		close(started)
 		_ = handler.Start(ctx)
 	}()
-	time.Sleep(50 * time.Millisecond)
+	<-started
 
 	// Send message that will succeed
 	messenger.messages <- IncomingMessage{From: "+1111111111", Text: "Success"}
-	time.Sleep(50 * time.Millisecond)
+	// Wait for enqueue
+	select {
+	case <-q.enqueued:
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for first message")
+	}
 
 	// Set queue to fail
 	q.mu.Lock()
@@ -280,7 +312,8 @@ func TestHandlerEnqueueError(t *testing.T) {
 
 	// Send message that will fail to enqueue
 	messenger.messages <- IncomingMessage{From: "+2222222222", Text: "Fail"}
-	time.Sleep(50 * time.Millisecond)
+	// Give time for failed enqueue attempt
+	<-time.After(10 * time.Millisecond)
 
 	// Clear error
 	q.mu.Lock()
@@ -289,7 +322,12 @@ func TestHandlerEnqueueError(t *testing.T) {
 
 	// Send another message that should succeed
 	messenger.messages <- IncomingMessage{From: "+3333333333", Text: "Success again"}
-	time.Sleep(50 * time.Millisecond)
+	// Wait for enqueue
+	select {
+	case <-q.enqueued:
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for third message")
+	}
 
 	// Verify only successful messages were enqueued
 	enqueuedMsgs := q.getMessages()
@@ -313,17 +351,19 @@ func TestHandlerChannelClosed(t *testing.T) {
 
 	// Start handler
 	errCh := make(chan error, 1)
+	started := make(chan struct{})
 	go func() {
+		close(started)
 		errCh <- handler.Start(ctx)
 	}()
-	time.Sleep(50 * time.Millisecond)
+	<-started
 
 	// Close the channel
 	close(messenger.messages)
-	
-	// Give it a moment to detect channel closure
-	time.Sleep(50 * time.Millisecond)
-	
+
+	// Let the handler process the closed channel
+	<-time.After(10 * time.Millisecond)
+
 	// Cancel context to trigger shutdown
 	cancel()
 
@@ -355,10 +395,12 @@ func TestHandlerIsRunning(t *testing.T) {
 	defer cancel()
 
 	// Start handler
+	started := make(chan struct{})
 	go func() {
+		close(started)
 		_ = handler.Start(ctx)
 	}()
-	time.Sleep(50 * time.Millisecond)
+	<-started
 
 	// Should be running
 	if !handler.IsRunning() {
@@ -367,7 +409,13 @@ func TestHandlerIsRunning(t *testing.T) {
 
 	// Stop handler
 	cancel()
-	time.Sleep(100 * time.Millisecond)
+	// Wait for handler to actually stop
+	for i := 0; i < 10; i++ {
+		if !handler.IsRunning() {
+			break
+		}
+		<-time.After(10 * time.Millisecond)
+	}
 
 	// Should not be running
 	if handler.IsRunning() {
@@ -424,10 +472,12 @@ func BenchmarkHandlerMessageProcessing(b *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	started := make(chan struct{})
 	go func() {
+		close(started)
 		_ = handler.Start(ctx)
 	}()
-	time.Sleep(50 * time.Millisecond)
+	<-started
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -438,8 +488,14 @@ func BenchmarkHandlerMessageProcessing(b *testing.B) {
 		}
 	}
 
-	// Give time to process all messages
-	time.Sleep(50 * time.Millisecond)
+	// Wait for all messages to be processed
+	for i := 0; i < b.N; i++ {
+		select {
+		case <-q.enqueued:
+		case <-time.After(time.Second):
+			b.Fatal("timeout waiting for message")
+		}
+	}
 	b.StopTimer()
 
 	cancel()

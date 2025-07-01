@@ -34,7 +34,7 @@ func ExampleBuilder() {
 	output, err := command.NewCommand("ls", "-la").
 		WithTimeout(5 * time.Second).
 		Run()
-	
+
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
@@ -46,7 +46,7 @@ func ExampleRunCommandContext() {
 	// Execute with a custom context
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	
+
 	output, err := command.RunCommandContext(ctx, "sleep", "1")
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)

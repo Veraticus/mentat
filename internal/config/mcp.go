@@ -22,7 +22,7 @@ type ServerConfig struct {
 
 // TransportConfig represents the transport configuration for an MCP server.
 type TransportConfig struct {
-	Type string `json:"type"` // "http" or "stdio"
+	Type string `json:"type"`           // "http" or "stdio"
 	URL  string `json:"url,omitempty"`  // Required for HTTP transport
 	Path string `json:"path,omitempty"` // Required for stdio transport
 }
@@ -142,7 +142,7 @@ func ValidateMCPConfig(config MCPConfig) error {
 				return fmt.Errorf("server %s: stdio transport requires path", name)
 			}
 		default:
-			return fmt.Errorf("server %s: invalid transport type '%s' (must be 'http' or 'stdio')", 
+			return fmt.Errorf("server %s: invalid transport type '%s' (must be 'http' or 'stdio')",
 				name, server.Transport.Type)
 		}
 	}

@@ -9,7 +9,7 @@ import (
 
 func TestStateValidator_ValidateTransition(t *testing.T) {
 	validator := newStateValidator()
-	
+
 	tests := []struct {
 		name    string
 		setup   func(*Message)
@@ -48,7 +48,7 @@ func TestStateValidator_ValidateTransition(t *testing.T) {
 			wantErr: true,
 			errMsg:  "cannot process empty message",
 		},
-		
+
 		// Processing -> Validating validations
 		{
 			name: "processing to validating with response",
@@ -69,7 +69,7 @@ func TestStateValidator_ValidateTransition(t *testing.T) {
 			wantErr: true,
 			errMsg:  "cannot validate without response",
 		},
-		
+
 		// Processing -> Failed validations
 		{
 			name: "processing to failed with error",
@@ -102,7 +102,7 @@ func TestStateValidator_ValidateTransition(t *testing.T) {
 			wantErr: true,
 			errMsg:  "cannot fail without error when retries remain",
 		},
-		
+
 		// Processing -> Retrying validations
 		{
 			name: "processing to retrying with attempts remaining",
@@ -125,7 +125,7 @@ func TestStateValidator_ValidateTransition(t *testing.T) {
 			wantErr: true,
 			errMsg:  "cannot retry: maximum attempts (3) exceeded",
 		},
-		
+
 		// Validating -> Completed validations
 		{
 			name: "validating to completed with response and timestamp",
@@ -159,7 +159,7 @@ func TestStateValidator_ValidateTransition(t *testing.T) {
 			wantErr: true,
 			errMsg:  "cannot complete without processing timestamp",
 		},
-		
+
 		// Retrying -> Processing validations
 		{
 			name: "retrying to processing with attempts remaining",
@@ -183,22 +183,22 @@ func TestStateValidator_ValidateTransition(t *testing.T) {
 			errMsg:  "cannot retry: already attempted 3 times (max: 3)",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
 			msg.SetState(tt.from)
-			
+
 			if tt.setup != nil {
 				tt.setup(msg)
 			}
-			
+
 			err := validator.validateTransition(msg, tt.from, tt.to)
-			
+
 			if (err != nil) != tt.wantErr {
 				t.Errorf("validateTransition() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			
+
 			if err != nil && tt.errMsg != "" && !strings.Contains(err.Error(), tt.errMsg) {
 				t.Errorf("validateTransition() error = %v, want error containing %v", err, tt.errMsg)
 			}
@@ -208,7 +208,7 @@ func TestStateValidator_ValidateTransition(t *testing.T) {
 
 func TestStateValidator_ExplainInvalidTransition(t *testing.T) {
 	validator := newStateValidator()
-	
+
 	tests := []struct {
 		name         string
 		from         State
@@ -228,7 +228,7 @@ func TestStateValidator_ExplainInvalidTransition(t *testing.T) {
 			to:           StateProcessing,
 			wantContains: "permanently failed and cannot be reprocessed",
 		},
-		
+
 		// Invalid target state explanations
 		{
 			name:         "to queued",
@@ -267,13 +267,13 @@ func TestStateValidator_ExplainInvalidTransition(t *testing.T) {
 			wantContains: "only failed processing or validation can be retried",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			explanation := validator.explainInvalidTransition(tt.from, tt.to)
-			
+
 			if !strings.Contains(explanation, tt.wantContains) {
-				t.Errorf("explainInvalidTransition(%s, %s) = %v, want containing %v", 
+				t.Errorf("explainInvalidTransition(%s, %s) = %v, want containing %v",
 					tt.from, tt.to, explanation, tt.wantContains)
 			}
 		})
@@ -282,160 +282,140 @@ func TestStateValidator_ExplainInvalidTransition(t *testing.T) {
 
 func TestStateMachine_EnhancedValidation(t *testing.T) {
 	sm := NewStateMachine()
-	
+
 	t.Run("invalid transition with detailed error", func(t *testing.T) {
 		msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
 		msg.SetState(StateCompleted)
-		
+
 		err := sm.Transition(msg, StateProcessing)
 		if err == nil {
 			t.Fatal("Expected error for invalid transition")
 		}
-		
+
 		// Should contain detailed explanation
 		if !strings.Contains(err.Error(), "message processing is already complete") {
 			t.Errorf("Expected detailed error explanation, got: %v", err)
 		}
 	})
-	
+
 	t.Run("business rule validation failure", func(t *testing.T) {
 		msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
 		msg.SetState(StateProcessing)
 		// No response set
-		
+
 		err := sm.Transition(msg, StateValidating)
 		if err == nil {
 			t.Fatal("Expected error for missing response")
 		}
-		
+
 		if !strings.Contains(err.Error(), "cannot validate without response") {
 			t.Errorf("Expected business rule error, got: %v", err)
 		}
 	})
-	
+
 	t.Run("successful transition with business rules", func(t *testing.T) {
 		msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
 		msg.SetState(StateProcessing)
 		msg.SetResponse("test response")
-		
+
 		err := sm.Transition(msg, StateValidating)
 		if err != nil {
 			t.Errorf("Expected successful transition, got error: %v", err)
 		}
-		
+
 		if msg.GetState() != StateValidating {
 			t.Errorf("Expected state %s, got %s", StateValidating, msg.GetState())
 		}
 	})
-	
+
 	t.Run("retry validation with max attempts", func(t *testing.T) {
 		msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
 		msg.SetState(StateProcessing)
 		msg.Attempts = 3
 		msg.MaxAttempts = 3
-		
+
 		// Should not allow retry
 		err := sm.Transition(msg, StateRetrying)
 		if err == nil {
 			t.Fatal("Expected error when max attempts reached")
 		}
-		
+
 		if !strings.Contains(err.Error(), "maximum attempts (3) exceeded") {
 			t.Errorf("Expected max attempts error, got: %v", err)
 		}
 	})
 }
 
+func executeTransition(t *testing.T, sm StateMachine, msg *Message, targetState State) {
+	t.Helper()
+	err := sm.Transition(msg, targetState)
+	if err != nil {
+		t.Fatalf("Failed to transition to %s: %v", targetState, err)
+	}
+}
+
+func verifyState(t *testing.T, msg *Message, expectedState State) {
+	t.Helper()
+	if msg.GetState() != expectedState {
+		t.Errorf("Expected state %s, got %s", expectedState, msg.GetState())
+	}
+}
+
+func verifyTransitionError(t *testing.T, sm StateMachine, msg *Message, targetState State, expectedError string) {
+	t.Helper()
+	err := sm.Transition(msg, targetState)
+	if err == nil {
+		t.Fatal("Expected error but got nil")
+	}
+	if !strings.Contains(err.Error(), expectedError) {
+		t.Errorf("Expected error containing %q, got: %v", expectedError, err)
+	}
+}
+
 func TestStateMachine_CompleteWorkflow(t *testing.T) {
 	sm := NewStateMachine()
-	
+
 	t.Run("successful message flow", func(t *testing.T) {
 		msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
-		
-		// Queued -> Processing
-		err := sm.Transition(msg, StateProcessing)
-		if err != nil {
-			t.Fatalf("Failed to transition to processing: %v", err)
-		}
-		
-		// Set response for validation
+
+		// Execute successful flow
+		executeTransition(t, sm, msg, StateProcessing)
 		msg.SetResponse("AI response")
-		
-		// Processing -> Validating
-		err = sm.Transition(msg, StateValidating)
-		if err != nil {
-			t.Fatalf("Failed to transition to validating: %v", err)
-		}
-		
-		// Validating -> Completed
-		err = sm.Transition(msg, StateCompleted)
-		if err != nil {
-			t.Fatalf("Failed to transition to completed: %v", err)
-		}
-		
-		// Verify state history has proper reasons
+		executeTransition(t, sm, msg, StateValidating)
+		executeTransition(t, sm, msg, StateCompleted)
+
+		// Verify history
 		history := msg.GetStateHistory()
 		if len(history) != 3 {
 			t.Fatalf("Expected 3 history entries, got %d", len(history))
 		}
-		
-		// Verify cannot transition from completed
-		err = sm.Transition(msg, StateProcessing)
-		if err == nil {
-			t.Fatal("Expected error transitioning from completed state")
-		}
-		
-		if !strings.Contains(err.Error(), "message processing is already complete") {
-			t.Errorf("Expected terminal state error, got: %v", err)
-		}
+
+		// Verify terminal state
+		verifyTransitionError(t, sm, msg, StateProcessing, "message processing is already complete")
 	})
-	
+
 	t.Run("retry workflow", func(t *testing.T) {
 		msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
 		msg.MaxAttempts = 2
-		msg.Attempts = 0 // Start with 0 attempts
-		
-		// Queued -> Processing
-		err := sm.Transition(msg, StateProcessing)
-		if err != nil {
-			t.Fatalf("Failed to transition to processing: %v", err)
-		}
-		
-		// Simulate failure - this is attempt 1
+		msg.Attempts = 0
+
+		// First attempt
+		executeTransition(t, sm, msg, StateProcessing)
 		msg.SetError(fmt.Errorf("processing failed"))
-		msg.IncrementAttempts() // Now attempts = 1
-		
-		// Processing -> Failed (should go to Retrying since we have attempts left)
-		err = sm.Transition(msg, StateFailed)
-		if err != nil {
-			t.Fatalf("Failed to transition: %v", err)
-		}
-		
-		// Should be in retrying state
-		if msg.GetState() != StateRetrying {
-			t.Errorf("Expected state %s, got %s", StateRetrying, msg.GetState())
-		}
-		
-		// Retrying -> Processing
-		err = sm.Transition(msg, StateProcessing)
-		if err != nil {
-			t.Fatalf("Failed to retry: %v", err)
-		}
-		
-		// Attempts should have incremented (from transition logic)
+		msg.IncrementAttempts()
+
+		// Should go to retrying
+		executeTransition(t, sm, msg, StateFailed)
+		verifyState(t, msg, StateRetrying)
+
+		// Retry
+		executeTransition(t, sm, msg, StateProcessing)
 		if msg.Attempts != 2 {
 			t.Errorf("Expected 2 attempts, got %d", msg.Attempts)
 		}
-		
-		// Fail again - now we're at max attempts, should go to failed permanently
-		err = sm.Transition(msg, StateFailed)
-		if err != nil {
-			t.Fatalf("Failed to transition to failed: %v", err)
-		}
-		
-		// Should be permanently failed (no more retries)
-		if msg.GetState() != StateFailed {
-			t.Errorf("Expected state %s, got %s", StateFailed, msg.GetState())
-		}
+
+		// Final failure
+		executeTransition(t, sm, msg, StateFailed)
+		verifyState(t, msg, StateFailed)
 	})
 }

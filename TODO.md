@@ -239,7 +239,7 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Acceptance: Tests are deterministic
   - Go idiom: Use subtests for scenarios
 
-- [ ] Write basic queue integration tests - Phase 31
+- [X] Write basic queue integration tests - Phase 31
   - Test: Queue handles load correctly
   - Scenarios: Overflow, rate limiting, ordering
   - Acceptance: All queue guarantees verified
@@ -248,21 +248,21 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
 ## Intelligence Layer
 
 ### Agent Handler Structure
-- [ ] Implement full AgentHandler with dependency injection - Phase 35
+- [X] Implement full AgentHandler with dependency injection - Phase 35
   - Test: Constructor validates required dependencies
   - Location: `internal/agent/handler.go`
   - Features: Option pattern, nil checking
   - Acceptance: Clear errors for missing deps
   - Go idiom: Functional options for construction
 
-- [ ] Add advanced Process method features - Phase 36
+- [X] Add advanced Process method features - Phase 36
   - Test: Happy path processes successfully
   - Features: Session management, error handling
   - Acceptance: Returns clear errors
   - Go idiom: Handle errors explicitly
 
 ### Multi-Agent Validation Framework
-- [ ] Define ValidationStrategy interface implementations - Phase 37
+- [X] Define ValidationStrategy interface implementations - Phase 37
   - Test: Each strategy has different behavior
   - Location: `internal/agent/validator.go`
   - Strategies: MultiAgent, Simple, Noop

@@ -1,3 +1,4 @@
+//go:build integration
 // +build integration
 
 package integration
@@ -10,9 +11,9 @@ import (
 	"time"
 
 	"github.com/Veraticus/mentat/internal/claude"
+	"github.com/Veraticus/mentat/internal/mocks"
 	"github.com/Veraticus/mentat/internal/queue"
 	"github.com/Veraticus/mentat/internal/signal"
-	"github.com/Veraticus/mentat/internal/mocks"
 )
 
 // TestHarness provides a comprehensive integration test environment for Mentat.
@@ -20,45 +21,45 @@ import (
 // to enable deterministic testing of full conversation flows.
 type TestHarness struct {
 	// Context and synchronization
-	ctx        context.Context
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
-	t          *testing.T
-	
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+	t      *testing.T
+
 	// External dependencies (mocked)
 	mockLLM       *mocks.MockLLM
 	mockMessenger *MockMessengerWithIncoming
-	
+
 	// Real components
 	queueManager  *queue.Manager
 	workerPool    *queue.DynamicWorkerPool
 	signalHandler *signal.Handler
-	
+
 	// Message tracking
 	messageTracker *MessageTracker
 	messagesSent   chan signal.Message
-	
+
 	// Monitoring
 	queueMonitor    *QueueMonitor
 	resourceMonitor *ResourceMonitor
-	
+
 	// Test control
 	stateChanges chan StateChange
 	errors       chan error
-	
+
 	// Configuration
 	config HarnessConfig
 }
 
 // HarnessConfig controls test harness behavior
 type HarnessConfig struct {
-	BotPhoneNumber   string
-	WorkerCount      int
-	QueueDepth       int
-	RateLimitTokens  int
-	RateLimitRefill  time.Duration
-	DefaultTimeout   time.Duration
-	EnableLogging    bool
+	BotPhoneNumber  string
+	WorkerCount     int
+	QueueDepth      int
+	RateLimitTokens int
+	RateLimitRefill time.Duration
+	DefaultTimeout  time.Duration
+	EnableLogging   bool
 }
 
 // DefaultConfig returns a standard test configuration
@@ -77,7 +78,7 @@ func DefaultConfig() HarnessConfig {
 // NewTestHarness creates a new integration test harness
 func NewTestHarness(t *testing.T, config HarnessConfig) *TestHarness {
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	return &TestHarness{
 		ctx:             ctx,
 		cancel:          cancel,
@@ -97,10 +98,10 @@ func (h *TestHarness) Setup() error {
 	// Create mocks
 	h.mockLLM = mocks.NewMockLLM()
 	h.mockMessenger = NewMockMessengerWithIncoming()
-	
+
 	// Hook mock callbacks for test observation
 	h.setupMockCallbacks()
-	
+
 	// Create queue components
 	limiter := queue.NewRateLimiter(
 		h.config.RateLimitTokens,
@@ -108,14 +109,14 @@ func (h *TestHarness) Setup() error {
 		h.config.RateLimitRefill,
 	)
 	h.queueManager = queue.NewManager(h.ctx)
-	
+
 	// Create queue adapter with tracking
 	queueAdapter := &trackingQueueAdapter{
-		manager: h.queueManager,
-		tracker: h.messageTracker,
+		manager:        h.queueManager,
+		tracker:        h.messageTracker,
 		activeMessages: make(map[string]*queue.Message),
 	}
-	
+
 	// Create worker pool with real workers
 	workerConfig := queue.PoolConfig{
 		InitialSize:  h.config.WorkerCount,
@@ -127,43 +128,43 @@ func (h *TestHarness) Setup() error {
 		MessageQueue: queueAdapter,
 		RateLimiter:  limiter,
 	}
-	
+
 	var err error
 	h.workerPool, err = queue.NewDynamicWorkerPool(workerConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create worker pool: %w", err)
 	}
-	
+
 	// Create message enqueuer adapter with tracking
 	enqueuer := &trackingMessageEnqueuer{
 		queue:   h.queueManager,
 		tracker: h.messageTracker,
 	}
-	
+
 	// Create signal handler
 	h.signalHandler, err = signal.NewHandler(h.mockMessenger, enqueuer)
 	if err != nil {
 		return fmt.Errorf("failed to create signal handler: %w", err)
 	}
-	
+
 	// Start queue monitoring
 	h.queueMonitor.Start(h.ctx, 100*time.Millisecond, h.queueManager.Stats)
-	
+
 	// Start resource monitoring
 	go h.monitorResources()
-	
+
 	// Start all components
 	h.startComponents()
-	
+
 	// Record initial resource state
 	h.resourceMonitor.Sample()
-	
+
 	// Record setup completion
 	h.recordStateChange("harness", "setup_complete", map[string]any{
 		"worker_count": h.config.WorkerCount,
 		"queue_depth":  h.config.QueueDepth,
 	})
-	
+
 	return nil
 }
 
@@ -171,39 +172,39 @@ func (h *TestHarness) Setup() error {
 func (h *TestHarness) Teardown() {
 	// Stop monitoring first
 	h.queueMonitor.Stop()
-	
+
 	// Stop worker pool first (before cancelling context)
 	if h.workerPool != nil {
 		h.workerPool.Stop()
 	}
-	
+
 	// Shutdown queue manager
 	if h.queueManager != nil {
 		h.queueManager.Shutdown(2 * time.Second)
 	}
-	
+
 	// Cancel context to signal shutdown
 	h.cancel()
-	
+
 	// Wait for all goroutines with timeout
 	done := make(chan bool)
 	go func() {
 		h.wg.Wait()
 		close(done)
 	}()
-	
+
 	select {
 	case <-done:
 		// Clean shutdown
 	case <-time.After(h.config.DefaultTimeout):
 		h.t.Error("Teardown timeout - some goroutines did not exit")
 	}
-	
+
 	// Check for resource leaks
 	if err := h.resourceMonitor.CheckLeaks(); err != nil {
 		h.t.Errorf("Resource leak detected: %v", err)
 	}
-	
+
 	// Report any queue alerts
 	alerts := h.queueMonitor.GetAlerts()
 	if len(alerts) > 0 {
@@ -212,7 +213,7 @@ func (h *TestHarness) Teardown() {
 			h.t.Logf("  - %s: %s", alert.Type, alert.Description)
 		}
 	}
-	
+
 	// Close test channels
 	close(h.messagesSent)
 	close(h.stateChanges)
@@ -223,20 +224,20 @@ func (h *TestHarness) Teardown() {
 func (h *TestHarness) SendMessage(phoneNumber, text string) error {
 	timestamp := time.Now()
 	msgID := fmt.Sprintf("msg-%d", timestamp.UnixNano())
-	
+
 	msg := signal.IncomingMessage{
 		Timestamp:  timestamp,
 		From:       "Test User",
 		FromNumber: phoneNumber,
 		Text:       text,
 	}
-	
+
 	h.recordStateChange("test", "message_sent", map[string]any{
 		"from": phoneNumber,
 		"text": text,
 		"id":   msgID,
 	})
-	
+
 	return h.mockMessenger.SimulateIncomingMessage(msg)
 }
 
@@ -252,7 +253,7 @@ func (h *TestHarness) SetLLMResponse(response string, err error) {
 		// Set default response for any session (empty string matches all)
 		h.mockLLM.SetSessionResponse("", resp)
 	}
-	
+
 	h.recordStateChange("test", "llm_response_configured", map[string]any{
 		"response": response,
 		"error":    err != nil,
@@ -272,7 +273,7 @@ func (h *TestHarness) WaitForMessage(timeout time.Duration) (signal.Message, err
 // WaitForLLMCall waits for an LLM call or times out
 func (h *TestHarness) WaitForLLMCall(timeout time.Duration) (LLMCall, error) {
 	deadline := time.Now().Add(timeout)
-	
+
 	for time.Now().Before(deadline) {
 		calls := h.mockLLM.GetCalls()
 		if len(calls) > 0 {
@@ -285,14 +286,14 @@ func (h *TestHarness) WaitForLLMCall(timeout time.Duration) (LLMCall, error) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	
+
 	return LLMCall{}, fmt.Errorf("timeout waiting for LLM call")
 }
 
 // WaitForMessageCompletion waits for a specific message to complete
 func (h *TestHarness) WaitForMessageCompletion(msgID string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
-	
+
 	for time.Now().Before(deadline) {
 		msg, ok := h.messageTracker.GetMessage(msgID)
 		if ok && msg.CurrentState == queue.MessageStateCompleted {
@@ -300,13 +301,13 @@ func (h *TestHarness) WaitForMessageCompletion(msgID string, timeout time.Durati
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	
+
 	// Return detailed error with state history
 	if msg, ok := h.messageTracker.GetMessage(msgID); ok {
 		return fmt.Errorf("message %s did not complete in time, current state: %v, history: %+v",
 			msgID, msg.CurrentState, msg.StateHistory)
 	}
-	
+
 	return fmt.Errorf("message %s not found", msgID)
 }
 
@@ -314,15 +315,15 @@ func (h *TestHarness) WaitForMessageCompletion(msgID string, timeout time.Durati
 func (h *TestHarness) VerifyQueueState() QueueState {
 	stats := h.messageTracker.GetStats()
 	managerStats := h.queueManager.Stats()
-	
+
 	return QueueState{
-		TotalMessages:      stats.Total,
-		PendingMessages:    stats.ByState[queue.MessageStateQueued],
-		ProcessingMessages: stats.ByState[queue.MessageStateProcessing],
-		CompletedMessages:  stats.Completed,
-		FailedMessages:     stats.Failed,
-		Conversations:      make(map[string]ConversationState),
-		QueuedInManager:    managerStats["queued_messages"],
+		TotalMessages:       stats.Total,
+		PendingMessages:     stats.ByState[queue.MessageStateQueued],
+		ProcessingMessages:  stats.ByState[queue.MessageStateProcessing],
+		CompletedMessages:   stats.Completed,
+		FailedMessages:      stats.Failed,
+		Conversations:       make(map[string]ConversationState),
+		QueuedInManager:     managerStats["queued_messages"],
 		ProcessingInManager: managerStats["processing_messages"],
 	}
 }
@@ -338,10 +339,10 @@ func (h *TestHarness) GetQueueMetrics() QueueMetrics {
 	if len(samples) == 0 {
 		return QueueMetrics{}
 	}
-	
+
 	var totalDepth, maxDepth int
 	var totalProcessing int
-	
+
 	for _, s := range samples {
 		totalDepth += s.QueueDepth
 		if s.QueueDepth > maxDepth {
@@ -349,7 +350,7 @@ func (h *TestHarness) GetQueueMetrics() QueueMetrics {
 		}
 		totalProcessing += s.Processing
 	}
-	
+
 	return QueueMetrics{
 		AverageDepth:      float64(totalDepth) / float64(len(samples)),
 		MaxDepth:          maxDepth,
@@ -361,7 +362,7 @@ func (h *TestHarness) GetQueueMetrics() QueueMetrics {
 // GetStateChanges returns all recorded state changes
 func (h *TestHarness) GetStateChanges() []StateChange {
 	var changes []StateChange
-	
+
 	// Drain channel
 	for {
 		select {
@@ -376,7 +377,7 @@ func (h *TestHarness) GetStateChanges() []StateChange {
 // GetErrors returns all recorded errors
 func (h *TestHarness) GetErrors() []error {
 	var errors []error
-	
+
 	// Drain channel
 	for {
 		select {
@@ -395,7 +396,7 @@ func (h *TestHarness) setupMockCallbacks() {
 		ticker := time.NewTicker(50 * time.Millisecond)
 		defer ticker.Stop()
 		lastCount := 0
-		
+
 		for {
 			select {
 			case <-h.ctx.Done():
@@ -428,7 +429,7 @@ func (h *TestHarness) startComponents() {
 		defer h.wg.Done()
 		h.queueManager.Start()
 	}()
-	
+
 	// Start worker pool
 	h.wg.Add(1)
 	go func() {
@@ -440,7 +441,7 @@ func (h *TestHarness) startComponents() {
 			}
 		}
 	}()
-	
+
 	// Start signal handler
 	h.wg.Add(1)
 	go func() {
@@ -452,14 +453,14 @@ func (h *TestHarness) startComponents() {
 			}
 		}
 	}()
-	
+
 	// Start message completion tracking
 	h.wg.Add(1)
 	go func() {
 		defer h.wg.Done()
 		h.trackMessageCompletions()
 	}()
-	
+
 	// Give components time to initialize
 	time.Sleep(100 * time.Millisecond)
 }
@@ -475,7 +476,7 @@ func (h *TestHarness) trackMessageCompletions() {
 func (h *TestHarness) monitorResources() {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-h.ctx.Done():
@@ -494,7 +495,7 @@ func (h *TestHarness) recordStateChange(component, changeType string, details ma
 		Details:   details,
 		Timestamp: time.Now(),
 	}
-	
+
 	select {
 	case h.stateChanges <- change:
 	default:
@@ -567,19 +568,19 @@ func (m *MockMessengerWithIncoming) SimulateIncomingMessage(msg signal.IncomingM
 
 // trackingQueueAdapter provides comprehensive queue tracking
 type trackingQueueAdapter struct {
-	manager *queue.Manager
-	tracker *MessageTracker
-	mu      sync.Mutex
+	manager        *queue.Manager
+	tracker        *MessageTracker
+	mu             sync.Mutex
 	activeMessages map[string]*queue.Message // Track messages being processed
 }
 
 // Enqueue implements queue.MessageQueue with tracking
 func (a *trackingQueueAdapter) Enqueue(msg signal.IncomingMessage) error {
 	msgID := fmt.Sprintf("msg-%d", msg.Timestamp.UnixNano())
-	
+
 	// Track the message
 	a.tracker.TrackMessage(msgID, msg.FromNumber, msg.Text)
-	
+
 	// Create queue message
 	queueMsg := &queue.Message{
 		ID:             msgID,
@@ -590,16 +591,16 @@ func (a *trackingQueueAdapter) Enqueue(msg signal.IncomingMessage) error {
 		CreatedAt:      msg.Timestamp,
 		State:          queue.StateQueued,
 	}
-	
+
 	// Submit to queue
 	err := a.manager.Submit(queueMsg)
-	
+
 	// Track state change
 	if err != nil {
 		a.tracker.RecordStateChange(msgID, queue.MessageStateQueued, queue.MessageStateFailed,
 			"enqueue failed", err)
 	}
-	
+
 	return err
 }
 
@@ -609,19 +610,19 @@ func (a *trackingQueueAdapter) GetNext(workerID string) (*queue.QueuedMessage, e
 	if err != nil || msg == nil {
 		return nil, err
 	}
-	
+
 	// Track state change
 	a.tracker.RecordStateChange(msg.ID, queue.MessageStateQueued, queue.MessageStateProcessing,
 		fmt.Sprintf("assigned to worker %s", workerID), nil)
-	
+
 	// Keep reference to track completion
 	a.mu.Lock()
 	a.activeMessages[msg.ID] = msg
 	a.mu.Unlock()
-	
+
 	// Start monitoring this message for completion
 	go a.monitorMessageCompletion(msg)
-	
+
 	// Convert to QueuedMessage
 	return &queue.QueuedMessage{
 		ID:             msg.ID,
@@ -642,14 +643,14 @@ func (a *trackingQueueAdapter) UpdateState(msgID string, state queue.MessageStat
 	if msg, ok := a.tracker.GetMessage(msgID); ok {
 		a.tracker.RecordStateChange(msgID, msg.CurrentState, state, reason, nil)
 	}
-	
+
 	// Remove from active if completed/failed
 	if state == queue.MessageStateCompleted || state == queue.MessageStateFailed {
 		a.mu.Lock()
 		delete(a.activeMessages, msgID)
 		a.mu.Unlock()
 	}
-	
+
 	return nil
 }
 
@@ -658,12 +659,12 @@ func (a *trackingQueueAdapter) monitorMessageCompletion(msg *queue.Message) {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	timeout := time.After(10 * time.Second)
-	
+
 	for {
 		select {
 		case <-timeout:
 			// Timeout - mark as failed
-			a.tracker.RecordStateChange(msg.ID, queue.MessageStateProcessing, 
+			a.tracker.RecordStateChange(msg.ID, queue.MessageStateProcessing,
 				queue.MessageStateFailed, "processing timeout", nil)
 			a.mu.Lock()
 			delete(a.activeMessages, msg.ID)
@@ -685,16 +686,16 @@ func (a *trackingQueueAdapter) monitorMessageCompletion(msg *queue.Message) {
 				default:
 					continue
 				}
-				
-				a.tracker.RecordStateChange(msg.ID, queue.MessageStateProcessing, 
+
+				a.tracker.RecordStateChange(msg.ID, queue.MessageStateProcessing,
 					newState, "state change detected", nil)
-				
+
 				a.mu.Lock()
 				delete(a.activeMessages, msg.ID)
 				a.mu.Unlock()
 				return
 			}
-			
+
 			// Also check if message was completed/failed through queue manager
 			if a.manager != nil {
 				// Check if message is still in processing
@@ -702,9 +703,9 @@ func (a *trackingQueueAdapter) monitorMessageCompletion(msg *queue.Message) {
 				if stats["processing_messages"] == 0 {
 					// No messages processing, this one must have completed or failed
 					// Default to failed if we got here
-					a.tracker.RecordStateChange(msg.ID, queue.MessageStateProcessing, 
+					a.tracker.RecordStateChange(msg.ID, queue.MessageStateProcessing,
 						queue.MessageStateFailed, "processing ended without state update", nil)
-					
+
 					a.mu.Lock()
 					delete(a.activeMessages, msg.ID)
 					a.mu.Unlock()
@@ -719,7 +720,7 @@ func (a *trackingQueueAdapter) monitorMessageCompletion(msg *queue.Message) {
 func (a *trackingQueueAdapter) Stats() queue.Stats {
 	managerStats := a.manager.Stats()
 	trackerStats := a.tracker.GetStats()
-	
+
 	return queue.Stats{
 		TotalQueued:       managerStats["queued_messages"],
 		TotalProcessing:   managerStats["processing_messages"],
@@ -738,10 +739,10 @@ type trackingMessageEnqueuer struct {
 // Enqueue implements signal.MessageEnqueuer with tracking
 func (e *trackingMessageEnqueuer) Enqueue(msg signal.IncomingMessage) error {
 	msgID := fmt.Sprintf("msg-%d", msg.Timestamp.UnixNano())
-	
+
 	// Track the message
 	e.tracker.TrackMessage(msgID, msg.FromNumber, msg.Text)
-	
+
 	// Create and submit queue message
 	queueMsg := &queue.Message{
 		ID:             msgID,
@@ -752,7 +753,7 @@ func (e *trackingMessageEnqueuer) Enqueue(msg signal.IncomingMessage) error {
 		CreatedAt:      msg.Timestamp,
 		State:          queue.StateQueued,
 	}
-	
+
 	return e.queue.Submit(queueMsg)
 }
 
@@ -760,15 +761,15 @@ func (e *trackingMessageEnqueuer) Enqueue(msg signal.IncomingMessage) error {
 func RunScenario(t *testing.T, name string, config HarnessConfig, scenario func(*testing.T, *TestHarness)) {
 	t.Run(name, func(t *testing.T) {
 		harness := NewTestHarness(t, config)
-		
+
 		if err := harness.Setup(); err != nil {
 			t.Fatalf("Failed to setup test harness: %v", err)
 		}
-		
+
 		defer harness.Teardown()
-		
+
 		scenario(t, harness)
-		
+
 		// Check for unexpected errors
 		if errors := harness.GetErrors(); len(errors) > 0 {
 			for _, err := range errors {

@@ -14,17 +14,17 @@ func TestDefaultPanicHandler(t *testing.T) {
 	oldLogger := log.Writer()
 	log.SetOutput(&buf)
 	defer log.SetOutput(oldLogger)
-	
+
 	handler := NewDefaultPanicHandler()
-	
+
 	// Test panic handling
 	shouldReplace := handler.HandlePanic("test-worker", "test panic", []byte("stack trace here"))
-	
+
 	// Should always return true (replace worker)
 	if !shouldReplace {
 		t.Error("Default handler should always return true")
 	}
-	
+
 	// Check log output
 	logOutput := buf.String()
 	if !strings.Contains(logOutput, "PANIC in worker test-worker") {
@@ -40,7 +40,7 @@ func TestDefaultPanicHandler(t *testing.T) {
 
 func TestNoPanicHandler(t *testing.T) {
 	handler := NewNoPanicHandler()
-	
+
 	// Should re-panic
 	defer func() {
 		if r := recover(); r == nil {
@@ -52,7 +52,7 @@ func TestNoPanicHandler(t *testing.T) {
 			}
 		}
 	}()
-	
+
 	handler.HandlePanic("test-worker", "test panic", []byte("stack"))
 	t.Error("Should not reach here")
 }
@@ -61,21 +61,21 @@ func TestMetricsPanicHandler(t *testing.T) {
 	var panicCount atomic.Int32
 	var lastWorkerID string
 	var lastPanicValue any
-	
+
 	onPanic := func(workerID string, panicValue any) {
 		panicCount.Add(1)
 		lastWorkerID = workerID
 		lastPanicValue = panicValue
 	}
-	
+
 	// Test with wrapped default handler
 	handler := NewMetricsPanicHandler(NewDefaultPanicHandler(), onPanic)
-	
+
 	shouldReplace := handler.HandlePanic("worker-1", "panic 1", []byte("stack"))
 	if !shouldReplace {
 		t.Error("Should return true when wrapped handler returns true")
 	}
-	
+
 	if panicCount.Load() != 1 {
 		t.Errorf("Expected panic count 1, got %d", panicCount.Load())
 	}
@@ -85,7 +85,7 @@ func TestMetricsPanicHandler(t *testing.T) {
 	if lastPanicValue != "panic 1" {
 		t.Errorf("Expected panic value 'panic 1', got %v", lastPanicValue)
 	}
-	
+
 	// Test multiple panics
 	handler.HandlePanic("worker-2", "panic 2", []byte("stack"))
 	if panicCount.Load() != 2 {
@@ -114,12 +114,12 @@ func TestHandleRecoveredPanic(t *testing.T) {
 		},
 		{
 			name:          "custom handler can choose not to replace",
-			panicValue:    "test panic", 
+			panicValue:    "test panic",
 			handler:       &customPanicHandler{shouldReplace: false},
 			expectReplace: false,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Capture log output for default handler test
@@ -129,9 +129,9 @@ func TestHandleRecoveredPanic(t *testing.T) {
 				log.SetOutput(&buf)
 				defer log.SetOutput(oldLogger)
 			}
-			
+
 			shouldReplace := HandleRecoveredPanic("test-worker", tt.panicValue, tt.handler)
-			
+
 			if shouldReplace != tt.expectReplace {
 				t.Errorf("Expected replace=%v, got %v", tt.expectReplace, shouldReplace)
 			}
@@ -153,26 +153,26 @@ func TestPanicHandlerIntegration(t *testing.T) {
 				}
 			}
 		}()
-		
+
 		handler := NewNoPanicHandler()
 		// This should panic
 		handler.HandlePanic("test-worker", "test panic", []byte("stack"))
 	})
-	
+
 	// Test custom handler behavior
 	t.Run("custom handler", func(t *testing.T) {
 		customHandler := &customPanicHandler{shouldReplace: false}
-		
+
 		// Handler should track panics
 		shouldReplace := HandleRecoveredPanic("worker-1", "panic 1", customHandler)
 		if shouldReplace {
 			t.Error("Custom handler should return false")
 		}
-		
+
 		if len(customHandler.panics) != 1 {
 			t.Errorf("Expected 1 panic tracked, got %d", len(customHandler.panics))
 		}
-		
+
 		// Multiple panics should be tracked
 		HandleRecoveredPanic("worker-2", "panic 2", customHandler)
 		if len(customHandler.panics) != 2 {

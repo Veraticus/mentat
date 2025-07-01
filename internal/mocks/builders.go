@@ -126,15 +126,15 @@ func (b *MessageBuilder) Build(opts ...MessageOption) *queue.Message {
 		t := *b.msg.ProcessedAt
 		msg.ProcessedAt = &t
 	}
-	
+
 	// Create a temporary builder with the new message
 	tempBuilder := &MessageBuilder{msg: msg}
-	
+
 	// Apply all options to the copy
 	for _, opt := range opts {
 		opt(tempBuilder)
 	}
-	
+
 	return tempBuilder.msg
 }
 
@@ -245,15 +245,15 @@ func (b *QueuedMessageBuilder) Build(opts ...QueuedMessageOption) *queue.QueuedM
 		MaxAttempts:    b.msg.MaxAttempts,
 		NextRetryAt:    b.msg.NextRetryAt,
 	}
-	
+
 	// Create a temporary builder with the copy
 	tempBuilder := &QueuedMessageBuilder{msg: &msg}
-	
+
 	// Apply all options to the copy
 	for _, opt := range opts {
 		opt(tempBuilder)
 	}
-	
+
 	return tempBuilder.msg
 }
 
@@ -321,15 +321,15 @@ func (b *LLMResponseBuilder) Build(opts ...LLMResponseOption) *claude.LLMRespons
 	resp := *b.resp
 	resp.ToolCalls = make([]claude.ToolCall, len(b.resp.ToolCalls))
 	copy(resp.ToolCalls, b.resp.ToolCalls)
-	
+
 	// Create a temporary builder with the copy
 	tempBuilder := &LLMResponseBuilder{resp: &resp}
-	
+
 	// Apply all options to the copy
 	for _, opt := range opts {
 		opt(tempBuilder)
 	}
-	
+
 	return tempBuilder.resp
 }
 
@@ -401,15 +401,15 @@ func (b *ValidationResultBuilder) Build(opts ...ValidationResultOption) *agent.V
 	for k, v := range b.result.Metadata {
 		result.Metadata[k] = v
 	}
-	
+
 	// Create a temporary builder with the copy
 	tempBuilder := &ValidationResultBuilder{result: &result}
-	
+
 	// Apply all options to the copy
 	for _, opt := range opts {
 		opt(tempBuilder)
 	}
-	
+
 	return tempBuilder.result
 }
 
@@ -481,25 +481,25 @@ func WithDeliveryStatus(delivered, read bool) SignalMessageOption {
 func (b *SignalMessageBuilder) Build(opts ...SignalMessageOption) *signal.Message {
 	// Create a copy of the message
 	msg := *b.msg
-	
+
 	// Create a temporary builder with the copy
 	tempBuilder := &SignalMessageBuilder{msg: &msg}
-	
+
 	// Apply all options to the copy
 	for _, opt := range opts {
 		opt(tempBuilder)
 	}
-	
+
 	return tempBuilder.msg
 }
 
 // ScenarioBuilder creates complete test scenarios.
 type ScenarioBuilder struct {
-	name          string
-	messages      []*queue.Message
-	responses     map[string]*claude.LLMResponse
-	validations   map[string]*agent.ValidationResult
-	expectations  []Expectation
+	name         string
+	messages     []*queue.Message
+	responses    map[string]*claude.LLMResponse
+	validations  map[string]*agent.ValidationResult
+	expectations []Expectation
 }
 
 // Expectation represents an expected outcome in a scenario.
@@ -514,10 +514,10 @@ type Expectation struct {
 // NewScenarioBuilder creates a new scenario builder.
 func NewScenarioBuilder(name string) *ScenarioBuilder {
 	return &ScenarioBuilder{
-		name:        name,
-		messages:    []*queue.Message{},
-		responses:   make(map[string]*claude.LLMResponse),
-		validations: make(map[string]*agent.ValidationResult),
+		name:         name,
+		messages:     []*queue.Message{},
+		responses:    make(map[string]*claude.LLMResponse),
+		validations:  make(map[string]*agent.ValidationResult),
 		expectations: []Expectation{},
 	}
 }
@@ -558,7 +558,7 @@ func (b *ScenarioBuilder) Build(opts ...ScenarioOption) *Scenario {
 	for _, opt := range opts {
 		opt(b)
 	}
-	
+
 	return &Scenario{
 		Name:         b.name,
 		Messages:     b.messages,
@@ -645,15 +645,15 @@ func WithConversationSessionID(sessionID string) ConversationMessageOption {
 func (b *ConversationMessageBuilder) Build(opts ...ConversationMessageOption) *conversation.Message {
 	// Create a copy of the message
 	msg := *b.msg
-	
+
 	// Create a temporary builder with the copy
 	tempBuilder := &ConversationMessageBuilder{msg: &msg}
-	
+
 	// Apply all options to the copy
 	for _, opt := range opts {
 		opt(tempBuilder)
 	}
-	
+
 	return tempBuilder.msg
 }
 
@@ -679,7 +679,7 @@ func NewStoredMessageBuilder() *StoredMessageBuilder {
 	}
 }
 
-// StoredMessageOption is a functional option for StoredMessageBuilder.  
+// StoredMessageOption is a functional option for StoredMessageBuilder.
 type StoredMessageOption func(*StoredMessageBuilder)
 
 // WithStoredMessageID sets the message ID.
@@ -749,15 +749,15 @@ func WithStoredMetadata(metadata []byte) StoredMessageOption {
 func (b *StoredMessageBuilder) Build(opts ...StoredMessageOption) *storage.StoredMessage {
 	// Create a copy of the message
 	msg := *b.msg
-	
+
 	// Create a temporary builder with the copy
 	tempBuilder := &StoredMessageBuilder{msg: &msg}
-	
+
 	// Apply all options to the copy
 	for _, opt := range opts {
 		opt(tempBuilder)
 	}
-	
+
 	return tempBuilder.msg
 }
 
@@ -766,28 +766,28 @@ func (b *StoredMessageBuilder) Build(opts ...StoredMessageOption) *storage.Store
 // CreateSimpleConversation creates a basic conversation flow.
 func CreateSimpleConversation(userMessage, assistantResponse string) *Scenario {
 	msgID := "test-msg-" + time.Now().Format("20060102150405")
-	
+
 	msg := NewMessageBuilder().Build(
 		WithID(msgID),
 		WithText(userMessage),
 	)
-	
+
 	resp := NewLLMResponseBuilder().Build(
 		WithMessage(assistantResponse),
 	)
-	
+
 	validation := NewValidationResultBuilder().Build(
 		WithStatus(agent.ValidationStatusSuccess),
 		WithConfidence(0.98),
 	)
-	
+
 	return NewScenarioBuilder("Simple Conversation").Build(
 		WithMessages(msg),
 		WithLLMResponse(msgID, resp),
 		WithValidation(msgID, validation),
 		WithExpectation(Expectation{
 			MessageID:        msgID,
-			FinalState:      queue.StateCompleted,
+			FinalState:       queue.StateCompleted,
 			ResponseContains: assistantResponse,
 		}),
 	)
@@ -796,16 +796,16 @@ func CreateSimpleConversation(userMessage, assistantResponse string) *Scenario {
 // CreateFailureScenario creates a scenario where LLM fails.
 func CreateFailureScenario() *Scenario {
 	msgID := "fail-msg-" + time.Now().Format("20060102150405")
-	
+
 	msg := NewMessageBuilder().Build(
 		WithID(msgID),
 		WithText("This will fail"),
 	)
-	
+
 	resp := NewLLMResponseBuilder().Build(
 		WithMessage("Error: Service temporarily unavailable"),
 	)
-	
+
 	return NewScenarioBuilder("Failure Scenario").Build(
 		WithMessages(msg),
 		WithLLMResponse(msgID, resp),
@@ -821,28 +821,28 @@ func CreateFailureScenario() *Scenario {
 // CreateRetryScenario creates a scenario requiring validation retry.
 func CreateRetryScenario() *Scenario {
 	msgID := "retry-msg-" + time.Now().Format("20060102150405")
-	
+
 	msg := NewMessageBuilder().Build(
 		WithID(msgID),
 		WithText("Find my meeting tomorrow"),
 	)
-	
+
 	// First response - incomplete
 	resp1 := NewLLMResponseBuilder().Build(
 		WithMessage("You have a meeting tomorrow."),
 	)
-	
+
 	// Validation says incomplete
 	validation1 := NewValidationResultBuilder().Build(
 		WithStatus(agent.ValidationStatusIncompleteSearch),
 		WithConfidence(0.6),
 		WithIssues("Did not check calendar MCP tool"),
 		WithMetadata(map[string]string{
-			"requires_retry": "true",
+			"requires_retry":   "true",
 			"generated_prompt": "Please check the calendar MCP tool for tomorrow's meetings",
 		}),
 	)
-	
+
 	// Second response - complete
 	resp2 := NewLLMResponseBuilder().Build(
 		WithMessage("You have a 2pm meeting with John about Q4 planning."),
@@ -853,13 +853,13 @@ func CreateRetryScenario() *Scenario {
 			},
 		}),
 	)
-	
+
 	// Final validation passes
 	validation2 := NewValidationResultBuilder().Build(
 		WithStatus(agent.ValidationStatusSuccess),
 		WithConfidence(0.95),
 	)
-	
+
 	return NewScenarioBuilder("Retry Scenario").Build(
 		WithMessages(msg),
 		WithLLMResponse(msgID+"-attempt1", resp1),
@@ -868,7 +868,7 @@ func CreateRetryScenario() *Scenario {
 		WithValidation(msgID+"-attempt2", validation2),
 		WithExpectation(Expectation{
 			MessageID:        msgID,
-			FinalState:      queue.StateCompleted,
+			FinalState:       queue.StateCompleted,
 			ResponseContains: "2pm meeting with John",
 		}),
 	)
@@ -882,23 +882,23 @@ func CreateComplexScenario() *Scenario {
 		WithText("What's my schedule today?"),
 		WithConversationID("+15551234567"),
 	)
-	
+
 	resp1 := NewLLMResponseBuilder().Build(
 		WithMessage("Let me check your calendar. You have 3 meetings today..."),
 		WithToolCalls(claude.ToolCall{
-			Tool: "calendar_list",
+			Tool:       "calendar_list",
 			Parameters: map[string]claude.ToolParameter{},
 		}),
 	)
-	
+
 	// Follow-up message within session window
 	msg2 := NewMessageBuilder().Build(
 		WithID("complex-2"),
 		WithText("Cancel the 2pm one"),
 		WithConversationID("+15551234567"),
-		WithCreatedAt(time.Now().Add(30 * time.Second)),
+		WithCreatedAt(time.Now().Add(30*time.Second)),
 	)
-	
+
 	resp2 := NewLLMResponseBuilder().Build(
 		WithMessage("I've canceled your 2pm meeting with the product team."),
 		WithToolCalls(claude.ToolCall{
@@ -908,13 +908,13 @@ func CreateComplexScenario() *Scenario {
 			},
 		}),
 	)
-	
+
 	// Both pass validation
 	validation := NewValidationResultBuilder().Build(
 		WithStatus(agent.ValidationStatusSuccess),
 		WithConfidence(0.99),
 	)
-	
+
 	return NewScenarioBuilder("Complex Multi-Message").Build(
 		WithMessages(msg1, msg2),
 		WithLLMResponse("complex-1", resp1),
@@ -923,12 +923,12 @@ func CreateComplexScenario() *Scenario {
 		WithValidation("complex-2", validation),
 		WithExpectation(Expectation{
 			MessageID:        "complex-1",
-			FinalState:      queue.StateCompleted,
+			FinalState:       queue.StateCompleted,
 			ResponseContains: "3 meetings today",
 		}),
 		WithExpectation(Expectation{
 			MessageID:        "complex-2",
-			FinalState:      queue.StateCompleted,
+			FinalState:       queue.StateCompleted,
 			ResponseContains: "canceled your 2pm meeting",
 		}),
 	)

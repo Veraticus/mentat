@@ -7,7 +7,7 @@ import (
 
 func TestConfigZeroValue(t *testing.T) {
 	var cfg Config
-	
+
 	// Zero value should be identifiable as uninitialized
 	if cfg.SocketPath != "" {
 		t.Error("Expected empty SocketPath for zero value")
@@ -22,7 +22,7 @@ func TestConfigZeroValue(t *testing.T) {
 
 func TestMessageZeroValue(t *testing.T) {
 	var msg Message
-	
+
 	// Zero value should be identifiable as uninitialized
 	if !msg.Timestamp.IsZero() {
 		t.Error("Expected zero Timestamp for zero value")
@@ -49,7 +49,7 @@ func TestMessageZeroValue(t *testing.T) {
 
 func TestTypingIndicatorZeroValue(t *testing.T) {
 	var ti TypingIndicator
-	
+
 	// Zero value should be identifiable as uninitialized
 	if ti.Recipient != "" {
 		t.Error("Expected empty Recipient for zero value")
@@ -61,7 +61,7 @@ func TestTypingIndicatorZeroValue(t *testing.T) {
 
 func TestIncomingMessageZeroValue(t *testing.T) {
 	var msg IncomingMessage
-	
+
 	// Zero value should be identifiable as uninitialized
 	if !msg.Timestamp.IsZero() {
 		t.Error("Expected zero time for Timestamp")
@@ -81,7 +81,7 @@ func TestIncomingMessageCreation(t *testing.T) {
 		From:      "+1234567890",
 		Text:      "Hello, world!",
 	}
-	
+
 	if msg.Timestamp != now {
 		t.Error("Timestamp not set correctly")
 	}
@@ -104,7 +104,7 @@ func TestMessageCreation(t *testing.T) {
 		IsDelivered: true,
 		IsRead:      true,
 	}
-	
+
 	if msg.Timestamp != now {
 		t.Error("Timestamp not set correctly")
 	}

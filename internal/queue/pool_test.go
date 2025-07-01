@@ -70,7 +70,7 @@ func TestDynamicWorkerPool_Creation(t *testing.T) {
 				require.NoError(t, err)
 				assert.NotNil(t, pool)
 				assert.Equal(t, tt.config.InitialSize, pool.Size())
-				
+
 				// Verify defaults
 				if tt.config.MinSize == 0 {
 					assert.Equal(t, 1, pool.config.MinSize)
@@ -78,7 +78,7 @@ func TestDynamicWorkerPool_Creation(t *testing.T) {
 				if tt.config.MaxSize == 0 {
 					assert.Equal(t, pool.config.MinSize*2, pool.config.MaxSize)
 				}
-				
+
 				// Don't call Stop() since we didn't Start() the pool
 			}
 		})
@@ -89,10 +89,10 @@ func TestDynamicWorkerPool_ScaleUp(t *testing.T) {
 	// Set up mocks
 	mockLLM := &mockLLM{response: "test"}
 	mockMessenger := &mockMessenger{}
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	
+
 	queueMgr := NewManager(ctx)
 	go queueMgr.Start()
 	defer func() {
@@ -100,7 +100,7 @@ func TestDynamicWorkerPool_ScaleUp(t *testing.T) {
 			t.Logf("Shutdown error: %v", err)
 		}
 	}()
-	
+
 	config := PoolConfig{
 		InitialSize:  2,
 		MinSize:      1,
@@ -110,27 +110,27 @@ func TestDynamicWorkerPool_ScaleUp(t *testing.T) {
 		QueueManager: queueMgr,
 		RateLimiter:  NewRateLimiter(10, 1, time.Second),
 	}
-	
+
 	pool, err := NewDynamicWorkerPool(config)
 	require.NoError(t, err)
 	defer pool.Stop()
-	
+
 	err = pool.Start(ctx)
 	require.NoError(t, err)
-	
+
 	// Initial size should be 2
 	assert.Equal(t, 2, pool.Size())
-	
+
 	// Scale up by 2
 	err = pool.ScaleUp(2)
 	require.NoError(t, err)
 	assert.Equal(t, 4, pool.Size())
-	
+
 	// Try to scale beyond max
 	err = pool.ScaleUp(3)
 	require.NoError(t, err) // Should succeed but only add 1
 	assert.Equal(t, 5, pool.Size())
-	
+
 	// Try to scale when at max
 	err = pool.ScaleUp(1)
 	require.Error(t, err)
@@ -141,10 +141,10 @@ func TestDynamicWorkerPool_ScaleDown(t *testing.T) {
 	// Set up mocks
 	mockLLM := &mockLLM{response: "test"}
 	mockMessenger := &mockMessenger{}
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	
+
 	queueMgr := NewManager(ctx)
 	go queueMgr.Start()
 	defer func() {
@@ -152,7 +152,7 @@ func TestDynamicWorkerPool_ScaleDown(t *testing.T) {
 			t.Logf("Shutdown error: %v", err)
 		}
 	}()
-	
+
 	config := PoolConfig{
 		InitialSize:  5,
 		MinSize:      2,
@@ -162,27 +162,27 @@ func TestDynamicWorkerPool_ScaleDown(t *testing.T) {
 		QueueManager: queueMgr,
 		RateLimiter:  NewRateLimiter(10, 1, time.Second),
 	}
-	
+
 	pool, err := NewDynamicWorkerPool(config)
 	require.NoError(t, err)
 	defer pool.Stop()
-	
+
 	err = pool.Start(ctx)
 	require.NoError(t, err)
-	
+
 	// Initial size should be 5
 	assert.Equal(t, 5, pool.Size())
-	
+
 	// Scale down by 2
 	err = pool.ScaleDown(2)
 	require.NoError(t, err)
 	assert.Equal(t, 3, pool.Size())
-	
+
 	// Try to scale below minimum
 	err = pool.ScaleDown(2)
 	require.NoError(t, err) // Should succeed but only remove 1
 	assert.Equal(t, 2, pool.Size())
-	
+
 	// Try to scale when at minimum
 	err = pool.ScaleDown(1)
 	require.Error(t, err)
@@ -202,16 +202,16 @@ func TestDynamicWorkerPool_WorkerFailureHandling(t *testing.T) {
 			return &claude.LLMResponse{Message: "Response"}, nil
 		},
 	}
-	
+
 	mockMessenger := &mockMessenger{
 		sendFunc: func(_ context.Context, _, _ string) error {
 			return nil
 		},
 	}
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	
+
 	queueMgr := NewManager(ctx)
 	go queueMgr.Start()
 	defer func() {
@@ -219,7 +219,7 @@ func TestDynamicWorkerPool_WorkerFailureHandling(t *testing.T) {
 			t.Logf("Shutdown error: %v", err)
 		}
 	}()
-	
+
 	config := PoolConfig{
 		InitialSize:  3,
 		MinSize:      2,
@@ -229,14 +229,14 @@ func TestDynamicWorkerPool_WorkerFailureHandling(t *testing.T) {
 		QueueManager: queueMgr,
 		RateLimiter:  NewRateLimiter(10, 1, time.Second),
 	}
-	
+
 	pool, err := NewDynamicWorkerPool(config)
 	require.NoError(t, err)
 	defer pool.Stop()
-	
+
 	err = pool.Start(ctx)
 	require.NoError(t, err)
-	
+
 	// Submit multiple messages
 	for i := 0; i < 5; i++ {
 		msg := &Message{
@@ -249,10 +249,10 @@ func TestDynamicWorkerPool_WorkerFailureHandling(t *testing.T) {
 		err = queueMgr.Submit(msg)
 		require.NoError(t, err)
 	}
-	
+
 	// Wait for processing
-	time.Sleep(500 * time.Millisecond)
-	
+	<-time.After(500 * time.Millisecond)
+
 	// Despite the panic, the pool should maintain at least minimum size
 	assert.GreaterOrEqual(t, pool.Size(), config.MinSize)
 }
@@ -264,20 +264,20 @@ func TestDynamicWorkerPool_GracefulShutdown(t *testing.T) {
 		queryFunc: func(_ context.Context, _, _ string) (*claude.LLMResponse, error) {
 			// Simulate slow processing
 			wg.Done()
-			time.Sleep(200 * time.Millisecond)
+			<-time.After(200 * time.Millisecond)
 			return &claude.LLMResponse{Message: "Response"}, nil
 		},
 	}
-	
+
 	mockMessenger := &mockMessenger{
 		sendFunc: func(_ context.Context, _, _ string) error {
 			return nil
 		},
 	}
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	
+
 	queueMgr := NewManager(ctx)
 	go queueMgr.Start()
 	defer func() {
@@ -285,7 +285,7 @@ func TestDynamicWorkerPool_GracefulShutdown(t *testing.T) {
 			t.Logf("Shutdown error: %v", err)
 		}
 	}()
-	
+
 	config := PoolConfig{
 		InitialSize:  2,
 		LLM:          mockLLM,
@@ -293,13 +293,13 @@ func TestDynamicWorkerPool_GracefulShutdown(t *testing.T) {
 		QueueManager: queueMgr,
 		RateLimiter:  NewRateLimiter(10, 1, time.Second),
 	}
-	
+
 	pool, err := NewDynamicWorkerPool(config)
 	require.NoError(t, err)
-	
+
 	err = pool.Start(ctx)
 	require.NoError(t, err)
-	
+
 	// Submit messages
 	wg.Add(2)
 	for i := 0; i < 2; i++ {
@@ -313,21 +313,21 @@ func TestDynamicWorkerPool_GracefulShutdown(t *testing.T) {
 		err = queueMgr.Submit(msg)
 		require.NoError(t, err)
 	}
-	
+
 	// Wait for workers to start processing
 	wg.Wait()
-	
+
 	// Cancel context and stop pool
 	cancel()
 	pool.Stop()
-	
+
 	// Wait should complete without hanging
 	done := make(chan bool)
 	go func() {
 		pool.Wait()
 		done <- true
 	}()
-	
+
 	select {
 	case <-done:
 		// Success
@@ -346,10 +346,10 @@ func TestDynamicWorkerPool_ConcurrentOperations(t *testing.T) {
 			return nil
 		},
 	}
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	
+
 	queueMgr := NewManager(ctx)
 	go queueMgr.Start()
 	defer func() {
@@ -357,7 +357,7 @@ func TestDynamicWorkerPool_ConcurrentOperations(t *testing.T) {
 			t.Logf("Shutdown error: %v", err)
 		}
 	}()
-	
+
 	config := PoolConfig{
 		InitialSize:  3,
 		MinSize:      2,
@@ -367,35 +367,35 @@ func TestDynamicWorkerPool_ConcurrentOperations(t *testing.T) {
 		QueueManager: queueMgr,
 		RateLimiter:  NewRateLimiter(10, 1, time.Second),
 	}
-	
+
 	pool, err := NewDynamicWorkerPool(config)
 	require.NoError(t, err)
 	defer pool.Stop()
-	
+
 	err = pool.Start(ctx)
 	require.NoError(t, err)
-	
+
 	// Perform concurrent operations
 	var wg sync.WaitGroup
 	wg.Add(4)
-	
+
 	// Concurrent scaling operations
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 5; i++ {
 			_ = pool.ScaleUp(1)
-			time.Sleep(10 * time.Millisecond)
+			<-time.After(10 * time.Millisecond)
 		}
 	}()
-	
+
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 5; i++ {
 			_ = pool.ScaleDown(1)
-			time.Sleep(10 * time.Millisecond)
+			<-time.After(10 * time.Millisecond)
 		}
 	}()
-	
+
 	// Concurrent size checks
 	go func() {
 		defer wg.Done()
@@ -403,10 +403,10 @@ func TestDynamicWorkerPool_ConcurrentOperations(t *testing.T) {
 			size := pool.Size()
 			assert.GreaterOrEqual(t, size, config.MinSize)
 			assert.LessOrEqual(t, size, config.MaxSize)
-			time.Sleep(5 * time.Millisecond)
+			<-time.After(5 * time.Millisecond)
 		}
 	}()
-	
+
 	// Concurrent size checks
 	go func() {
 		defer wg.Done()
@@ -414,12 +414,12 @@ func TestDynamicWorkerPool_ConcurrentOperations(t *testing.T) {
 			size := pool.Size()
 			assert.GreaterOrEqual(t, size, 0)
 			assert.LessOrEqual(t, size, pool.config.MaxSize)
-			time.Sleep(5 * time.Millisecond)
+			<-time.After(5 * time.Millisecond)
 		}
 	}()
-	
+
 	wg.Wait()
-	
+
 	// Verify pool is still in valid state
 	size := pool.Size()
 	assert.GreaterOrEqual(t, size, config.MinSize)

@@ -72,7 +72,6 @@ func (m *messenger) Subscribe(ctx context.Context) (<-chan IncomingMessage, erro
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-
 	// If there's an existing subscription, close it first
 	if m.subscription != nil {
 		m.subscription.cancel()
@@ -104,7 +103,6 @@ func (m *messenger) runSubscription(sub *subscription) {
 	defer close(sub.done)
 	defer close(sub.outCh) // Close channel from sender side only
 
-
 	// Subscribe to messages from the client
 	msgCh, err := m.client.Subscribe(sub.ctx)
 	if err != nil {
@@ -120,7 +118,6 @@ func (m *messenger) runSubscription(sub *subscription) {
 		return
 	}
 
-
 	// Process incoming messages
 	for {
 		select {
@@ -133,18 +130,17 @@ func (m *messenger) runSubscription(sub *subscription) {
 				return
 			}
 
-
 			// Convert envelope to IncomingMessage
 			msg := m.convertEnvelope(envelope)
 			if msg != nil {
-				
+
 				// Send read receipt for data messages
 				if envelope.DataMessage != nil {
 					go func() {
 						_ = m.client.SendReceipt(context.Background(), envelope.Source, envelope.Timestamp, "read")
 					}()
 				}
-				
+
 				select {
 				case sub.outCh <- *msg:
 				case <-sub.ctx.Done():

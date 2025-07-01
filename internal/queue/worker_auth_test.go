@@ -54,18 +54,18 @@ func TestWorkerHandlesAuthenticationError(t *testing.T) {
 	mockLLM := &mockLLMAuth{}
 	mockMessenger := &mockMessengerCapture{}
 	mockQueueMgr := NewManager(ctx)
-	
+
 	// Start queue manager
 	go mockQueueMgr.Start()
-	time.Sleep(100 * time.Millisecond)
+	<-time.After(100 * time.Millisecond)
 
 	// Create worker config
 	config := WorkerConfig{
-		ID:           1,
-		LLM:          mockLLM,
-		Messenger:    mockMessenger,
-		QueueManager: mockQueueMgr,
-		RateLimiter:  NewRateLimiter(10, 1, time.Minute),
+		ID:                 1,
+		LLM:                mockLLM,
+		Messenger:          mockMessenger,
+		QueueManager:       mockQueueMgr,
+		RateLimiter:        NewRateLimiter(10, 1, time.Minute),
 		TypingIndicatorMgr: signal.NewTypingIndicatorManager(mockMessenger),
 	}
 
@@ -87,7 +87,7 @@ func TestWorkerHandlesAuthenticationError(t *testing.T) {
 	}()
 
 	// Give worker time to process
-	time.Sleep(500 * time.Millisecond)
+	<-time.After(500 * time.Millisecond)
 
 	// Cancel context to stop worker
 	cancel()
@@ -110,7 +110,7 @@ func TestWorkerHandlesAuthenticationError(t *testing.T) {
 	}
 
 	sentMsg := mockMessenger.sentMessages[0]
-	
+
 	// Verify recipient
 	if sentMsg.recipient != "+1234567890" {
 		t.Errorf("Expected recipient +1234567890, got %s", sentMsg.recipient)
@@ -120,7 +120,7 @@ func TestWorkerHandlesAuthenticationError(t *testing.T) {
 	expectedMessage := "Claude Code authentication required. Please run the following command on the server to log in:\n\n" +
 		"sudo -u signal-cli /usr/local/bin/claude-mentat /login\n\n" +
 		"Once authenticated, I'll be able to respond to your messages."
-	
+
 	if sentMsg.message != expectedMessage {
 		t.Errorf("Message mismatch.\nExpected:\n%s\n\nGot:\n%s", expectedMessage, sentMsg.message)
 	}
@@ -145,10 +145,10 @@ func TestWorkerAuthErrorNotRetried(t *testing.T) {
 	mockLLM := &mockLLMAuth{}
 	mockMessenger := &mockMessengerCapture{}
 	mockQueueMgr := NewManager(ctx)
-	
+
 	// Start queue manager
 	go mockQueueMgr.Start()
-	time.Sleep(100 * time.Millisecond)
+	<-time.After(100 * time.Millisecond)
 
 	// Create worker config
 	config := WorkerConfig{
@@ -177,7 +177,7 @@ func TestWorkerAuthErrorNotRetried(t *testing.T) {
 	}()
 
 	// Give worker time to process
-	time.Sleep(500 * time.Millisecond)
+	<-time.After(500 * time.Millisecond)
 
 	// Check queue stats - message should be completed, not retrying
 	stats := mockQueueMgr.Stats()

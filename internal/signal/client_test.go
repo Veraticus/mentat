@@ -8,6 +8,53 @@ import (
 	"time"
 )
 
+// Helper functions to reduce complexity.
+func createTimestampResponse(timestamp int64) *json.RawMessage {
+	msg := json.RawMessage(fmt.Sprintf(`{"timestamp": %d}`, timestamp))
+	return &msg
+}
+
+func validateSendParams(t *testing.T, params map[string]any, req *SendRequest) {
+	t.Helper()
+
+	// Check recipient/group
+	if req.Recipients != nil {
+		if _, ok := params["recipient"]; !ok {
+			t.Error("Expected 'recipient' in params")
+		}
+	}
+	if req.GroupID != "" {
+		if _, ok := params["groupId"]; !ok {
+			t.Error("Expected 'groupId' in params")
+		}
+	}
+
+	// Check message
+	if _, ok := params["message"]; !ok {
+		t.Error("Expected 'message' in params")
+	}
+
+	// Check attachments
+	validateAttachmentParams(t, params, req.Attachments)
+}
+
+func validateAttachmentParams(t *testing.T, params map[string]any, attachments []string) {
+	t.Helper()
+
+	switch len(attachments) {
+	case 0:
+		// No attachments expected
+	case 1:
+		if _, ok := params["attachment"]; !ok {
+			t.Error("Expected 'attachment' for single attachment")
+		}
+	default:
+		if _, ok := params["attachments"]; !ok {
+			t.Error("Expected 'attachments' for multiple attachments")
+		}
+	}
+}
+
 func TestClient_Send(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -23,11 +70,8 @@ func TestClient_Send(t *testing.T) {
 				Recipients: []string{"+1234567890"},
 				Message:    "Hello, World!",
 			},
-			transportResult: func() *json.RawMessage {
-				msg := json.RawMessage(`{"timestamp": 1699564800000}`)
-				return &msg
-			}(),
-			wantErr: false,
+			transportResult: createTimestampResponse(1699564800000),
+			wantErr:         false,
 			validateResponse: func(t *testing.T, resp *SendResponse) {
 				t.Helper()
 				if resp.Timestamp != 1699564800000 {
@@ -42,11 +86,8 @@ func TestClient_Send(t *testing.T) {
 				Message:     "Check this out",
 				Attachments: []string{"/tmp/photo.jpg"},
 			},
-			transportResult: func() *json.RawMessage {
-				msg := json.RawMessage(`{"timestamp": 1699564800001}`)
-				return &msg
-			}(),
-			wantErr: false,
+			transportResult: createTimestampResponse(1699564800001),
+			wantErr:         false,
 		},
 		{
 			name: "send with multiple attachments",
@@ -59,11 +100,8 @@ func TestClient_Send(t *testing.T) {
 					"/tmp/photo3.jpg",
 				},
 			},
-			transportResult: func() *json.RawMessage {
-				msg := json.RawMessage(`{"timestamp": 1699564800002}`)
-				return &msg
-			}(),
-			wantErr: false,
+			transportResult: createTimestampResponse(1699564800002),
+			wantErr:         false,
 		},
 		{
 			name: "send to group",
@@ -71,11 +109,8 @@ func TestClient_Send(t *testing.T) {
 				GroupID: "group123",
 				Message: "Team update",
 			},
-			transportResult: func() *json.RawMessage {
-				msg := json.RawMessage(`{"timestamp": 1699564800003}`)
-				return &msg
-			}(),
-			wantErr: false,
+			transportResult: createTimestampResponse(1699564800003),
+			wantErr:         false,
 		},
 		{
 			name: "send with mentions",
@@ -86,11 +121,8 @@ func TestClient_Send(t *testing.T) {
 					{Start: 4, Length: 5, Author: "+0987654321"},
 				},
 			},
-			transportResult: func() *json.RawMessage {
-				msg := json.RawMessage(`{"timestamp": 1699564800004}`)
-				return &msg
-			}(),
-			wantErr: false,
+			transportResult: createTimestampResponse(1699564800004),
+			wantErr:         false,
 		},
 		{
 			name: "missing recipient and group",
@@ -151,37 +183,15 @@ func TestClient_Send(t *testing.T) {
 				calls := transport.GetCalls("send")
 				if len(calls) != 1 {
 					t.Errorf("Expected 1 call to send, got %d", len(calls))
-				} else {
-					// Verify params structure
-					params, ok := calls[0].(map[string]any)
-					if !ok {
-						t.Fatal("Expected params to be map[string]any")
-					}
-					if tt.request.Recipients != nil {
-						if _, ok := params["recipient"]; !ok {
-							t.Error("Expected 'recipient' in params")
-						}
-					}
-					if tt.request.GroupID != "" {
-						if _, ok := params["groupId"]; !ok {
-							t.Error("Expected 'groupId' in params")
-						}
-					}
-					if _, ok := params["message"]; !ok {
-						t.Error("Expected 'message' in params")
-					}
-
-					// Check attachment handling
-					if len(tt.request.Attachments) == 1 {
-						if _, ok := params["attachment"]; !ok {
-							t.Error("Expected 'attachment' for single attachment")
-						}
-					} else if len(tt.request.Attachments) > 1 {
-						if _, ok := params["attachments"]; !ok {
-							t.Error("Expected 'attachments' for multiple attachments")
-						}
-					}
+					return
 				}
+
+				// Verify params structure
+				params, ok := calls[0].(map[string]any)
+				if !ok {
+					t.Fatal("Expected params to be map[string]any")
+				}
+				validateSendParams(t, params, tt.request)
 			}
 		})
 	}
@@ -457,7 +467,7 @@ func containsError(err, target error) bool {
 		return true
 	}
 	// Check if error contains the target error string
-	return err != nil && target != nil && 
-		(err.Error() == target.Error() || 
-		 err.Error() == fmt.Sprintf("send failed: %v", target))
+	return err != nil && target != nil &&
+		(err.Error() == target.Error() ||
+			err.Error() == fmt.Sprintf("send failed: %v", target))
 }

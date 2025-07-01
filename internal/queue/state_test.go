@@ -211,7 +211,7 @@ func TestStateMachine_ConcurrentTransitions(t *testing.T) {
 			err := sm.Transition(msg, StateProcessing)
 			if err == nil {
 				atomic.AddInt32(&successCount, 1)
-			} else if !strings.Contains(err.Error(), "invalid transition") && 
+			} else if !strings.Contains(err.Error(), "invalid transition") &&
 				!strings.Contains(err.Error(), "state changed during transition") {
 				// Only log if it's not an expected concurrent modification or invalid transition error
 				t.Errorf("Unexpected error: %v", err)
@@ -257,7 +257,7 @@ func TestStateMachine_StateHistory(t *testing.T) {
 	}
 
 	if history[0].From != MessageStateQueued || history[0].To != MessageStateProcessing {
-		t.Errorf("Expected transition from %d to %d, got from %d to %d", 
+		t.Errorf("Expected transition from %d to %d, got from %d to %d",
 			MessageStateQueued, MessageStateProcessing, history[0].From, history[0].To)
 	}
 

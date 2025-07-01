@@ -106,11 +106,11 @@ type TypingMessage struct {
 
 // ReceiptMessage represents a read receipt.
 type ReceiptMessage struct {
-	When        int64   `json:"when"`
-	IsDelivery  bool    `json:"isDelivery"`
-	IsRead      bool    `json:"isRead"`
-	IsViewed    bool    `json:"isViewed"`
-	Timestamps  []int64 `json:"timestamps"`
+	When       int64   `json:"when"`
+	IsDelivery bool    `json:"isDelivery"`
+	IsRead     bool    `json:"isRead"`
+	IsViewed   bool    `json:"isViewed"`
+	Timestamps []int64 `json:"timestamps"`
 }
 
 // Contact represents a contact.
@@ -262,47 +262,59 @@ func (c *client) Subscribe(ctx context.Context) (<-chan *Envelope, error) {
 	// Create envelope channel
 	envelopes := make(chan *Envelope, 10)
 
-
 	// Start processing notifications
-	go func() {
-		defer close(envelopes)
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case notif, ok := <-notifications:
-				if !ok {
-					return
-				}
-
-
-				// Only process "receive" notifications
-				if notif.Method != "receive" {
-					continue
-				}
-
-				// Parse params
-				var params struct {
-					Envelope *Envelope `json:"envelope"`
-				}
-
-				if err := json.Unmarshal(notif.Params, &params); err != nil {
-					continue
-				}
-
-				if params.Envelope != nil {
-					select {
-					case envelopes <- params.Envelope:
-					case <-ctx.Done():
-						return
-					}
-				}
-			}
-		}
-	}()
+	go c.processNotifications(ctx, notifications, envelopes)
 
 	return envelopes, nil
+}
+
+// processNotifications handles incoming notifications and converts them to envelopes.
+func (c *client) processNotifications(ctx context.Context, notifications <-chan *Notification, envelopes chan<- *Envelope) {
+	defer close(envelopes)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case notif, ok := <-notifications:
+			if !ok {
+				return
+			}
+			c.handleNotification(ctx, notif, envelopes)
+		}
+	}
+}
+
+// handleNotification processes a single notification.
+func (c *client) handleNotification(ctx context.Context, notif *Notification, envelopes chan<- *Envelope) {
+	// Only process "receive" notifications
+	if notif.Method != "receive" {
+		return
+	}
+
+	envelope := c.parseEnvelope(notif)
+	if envelope == nil {
+		return
+	}
+
+	// Send envelope or exit if context is done
+	select {
+	case envelopes <- envelope:
+	case <-ctx.Done():
+	}
+}
+
+// parseEnvelope extracts an envelope from a notification.
+func (c *client) parseEnvelope(notif *Notification) *Envelope {
+	var params struct {
+		Envelope *Envelope `json:"envelope"`
+	}
+
+	if err := json.Unmarshal(notif.Params, &params); err != nil {
+		return nil
+	}
+
+	return params.Envelope
 }
 
 // Close implements Client.Close.
@@ -312,11 +324,11 @@ func (c *client) Close() error {
 
 // MockClient implements Client for testing.
 type MockClient struct {
-	SendFunc               func(ctx context.Context, req *SendRequest) (*SendResponse, error)
+	SendFunc                func(ctx context.Context, req *SendRequest) (*SendResponse, error)
 	SendTypingIndicatorFunc func(ctx context.Context, recipient string, stop bool) error
-	SendReceiptFunc        func(ctx context.Context, recipient string, timestamp int64, receiptType string) error
-	SubscribeFunc          func(ctx context.Context) (<-chan *Envelope, error)
-	CloseFunc              func() error
+	SendReceiptFunc         func(ctx context.Context, recipient string, timestamp int64, receiptType string) error
+	SubscribeFunc           func(ctx context.Context) (<-chan *Envelope, error)
+	CloseFunc               func() error
 
 	// For simpler testing
 	SentMessages     []SentMessage
@@ -343,9 +355,9 @@ type MockTypingIndicator struct {
 
 // MockReceipt records a receipt for testing.
 type MockReceipt struct {
-	Recipient    string
-	Timestamp    int64
-	ReceiptType  string
+	Recipient   string
+	Timestamp   int64
+	ReceiptType string
 }
 
 // NewMockClient creates a new mock client.

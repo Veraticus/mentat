@@ -30,26 +30,26 @@ type Client struct {
 
 // jsonResponse is the JSON structure returned by Claude CLI.
 type jsonResponse struct {
-	Message   string                `json:"message"`
-	Result    string                `json:"result"`      // Claude Code uses "result" field
-	Type      string                `json:"type"`        // Response type
-	IsError   bool                  `json:"is_error"`    // Whether it's an error
-	ToolCalls []jsonToolCall        `json:"tool_calls,omitempty"`
-	Metadata  jsonResponseMetadata  `json:"metadata,omitempty"`
-	Usage     jsonUsage            `json:"usage,omitempty"`        // Usage stats
+	Message   string               `json:"message"`
+	Result    string               `json:"result"`   // Claude Code uses "result" field
+	Type      string               `json:"type"`     // Response type
+	IsError   bool                 `json:"is_error"` // Whether it's an error
+	ToolCalls []jsonToolCall       `json:"tool_calls,omitempty"`
+	Metadata  jsonResponseMetadata `json:"metadata,omitempty"`
+	Usage     jsonUsage            `json:"usage,omitempty"`          // Usage stats
 	TotalCost float64              `json:"total_cost_usd,omitempty"` // Cost in USD
 }
 
 // jsonToolCall is the JSON structure for tool calls.
 type jsonToolCall struct {
-	Name       string                        `json:"name"`
-	Parameters map[string]jsonToolParameter  `json:"parameters,omitempty"`
+	Name       string                       `json:"name"`
+	Parameters map[string]jsonToolParameter `json:"parameters,omitempty"`
 }
 
 // jsonToolParameter is the JSON structure for tool parameters.
 type jsonToolParameter struct {
-	Type  string      `json:"type"`
-	Value any `json:"value"`
+	Type  string `json:"type"`
+	Value any    `json:"value"`
 }
 
 // jsonResponseMetadata is the JSON structure for metadata.
@@ -61,8 +61,8 @@ type jsonResponseMetadata struct {
 
 // jsonUsage is the JSON structure for usage stats.
 type jsonUsage struct {
-	InputTokens   int `json:"input_tokens"`
-	OutputTokens  int `json:"output_tokens"`
+	InputTokens     int `json:"input_tokens"`
+	OutputTokens    int `json:"output_tokens"`
 	CacheReadTokens int `json:"cache_read_input_tokens"`
 }
 
@@ -87,105 +87,147 @@ func NewClient(config Config) (*Client, error) {
 // Query executes a Claude query with the given prompt and session ID.
 func (c *Client) Query(ctx context.Context, prompt string, sessionID string) (*LLMResponse, error) {
 	// Validate inputs
-	if prompt == "" {
-		return nil, fmt.Errorf("prompt cannot be empty")
-	}
-	if sessionID == "" {
-		return nil, fmt.Errorf("session ID cannot be empty")
+	if err := validateQueryInputs(prompt, sessionID); err != nil {
+		return nil, err
 	}
 
-	// Apply timeout to context if not already present
-	queryCtx := ctx
-	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-		var cancel context.CancelFunc
-		queryCtx, cancel = context.WithTimeout(ctx, c.config.Timeout)
-		defer cancel()
-	}
+	// Prepare context with timeout
+	queryCtx, cancel := prepareQueryContext(ctx, c.config.Timeout)
+	defer cancel()
 
 	// Build command arguments
-	args := []string{
-		"--print",  // Non-interactive mode
-		"--output-format", "json",
-		"--model", "sonnet",
-	}
-	
-	// Only add MCP config if specified
-	if c.config.MCPConfigPath != "" {
-		args = append(args, "--mcp-config", c.config.MCPConfigPath)
-	}
-	
-	// Combine system prompt with user prompt if specified
-	finalPrompt := prompt
-	if c.config.SystemPrompt != "" {
-		finalPrompt = "<system>\n" + c.config.SystemPrompt + "\n</system>\n\n<user>\n" + prompt + "\n</user>"
-	}
-	
-	// Add the combined prompt last
-	args = append(args, finalPrompt)
+	args := buildCommandArgs(c.config, prompt)
 
 	// Execute the command
 	output, err := c.cmdRunner.RunCommandContext(queryCtx, c.config.Command, args...)
 	if err != nil {
-		// Check if it's a context error (timeout/cancellation)
-		if queryCtx.Err() != nil {
-			return nil, fmt.Errorf("claude query timed out: %w", queryCtx.Err())
-		}
-		
-		// Check if the error contains JSON output (command package embeds output in error)
-		// Look for JSON in the error message itself
-		errorStr := err.Error()
-		if jsonStart := strings.Index(errorStr, "{"); jsonStart >= 0 {
-			// Extract JSON from error message
-			jsonOutput := errorStr[jsonStart:]
-			// Find the end of JSON (last closing brace)
-			if jsonEnd := strings.LastIndex(jsonOutput, "}"); jsonEnd >= 0 {
-				jsonOutput = jsonOutput[:jsonEnd+1]
-				
-				// Try to parse the JSON
-				var jsonResp jsonResponse
-				if parseErr := json.Unmarshal([]byte(jsonOutput), &jsonResp); parseErr == nil {
-					// Check for authentication error
-					if jsonResp.IsError && (strings.Contains(jsonResp.Result, "Invalid API key") || 
-						strings.Contains(jsonResp.Result, "Please run /login")) {
-						return nil, &AuthenticationError{
-							Message: "Claude Code authentication required",
-						}
-					}
-				}
-			}
-		}
-		
-		// Try to extract useful error information from output
-		errMsg := extractErrorMessage(output)
-		return nil, fmt.Errorf("failed to execute claude CLI: %w (output: %s)", err, errMsg)
+		return nil, handleCommandError(queryCtx, err, output)
 	}
 
-	// Parse the response using our robust parser
+	// Parse and convert response
+	return parseAndConvertResponse(output, prompt)
+}
+
+func validateQueryInputs(prompt, sessionID string) error {
+	if prompt == "" {
+		return fmt.Errorf("prompt cannot be empty")
+	}
+	if sessionID == "" {
+		return fmt.Errorf("session ID cannot be empty")
+	}
+	return nil
+}
+
+func prepareQueryContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		return context.WithTimeout(ctx, timeout)
+	}
+	// Return a no-op cancel function if context already has deadline
+	return ctx, func() {}
+}
+
+func buildCommandArgs(config Config, prompt string) []string {
+	args := []string{
+		"--print", // Non-interactive mode
+		"--output-format", "json",
+		"--model", "sonnet",
+	}
+
+	if config.MCPConfigPath != "" {
+		args = append(args, "--mcp-config", config.MCPConfigPath)
+	}
+
+	finalPrompt := prepareFinalPrompt(config.SystemPrompt, prompt)
+	args = append(args, finalPrompt)
+
+	return args
+}
+
+func prepareFinalPrompt(systemPrompt, userPrompt string) string {
+	if systemPrompt == "" {
+		return userPrompt
+	}
+	return fmt.Sprintf("<system>\n%s\n</system>\n\n<user>\n%s\n</user>", systemPrompt, userPrompt)
+}
+
+func handleCommandError(ctx context.Context, err error, output string) error {
+	// Check if it's a context error (timeout/cancellation)
+	if ctx.Err() != nil {
+		return fmt.Errorf("claude query timed out: %w", ctx.Err())
+	}
+
+	// Check for authentication error in JSON output
+	if authErr := checkAuthenticationError(err); authErr != nil {
+		return authErr
+	}
+
+	// Extract useful error information
+	errMsg := extractErrorMessage(output)
+	return fmt.Errorf("failed to execute claude CLI: %w (output: %s)", err, errMsg)
+}
+
+func checkAuthenticationError(err error) error {
+	errorStr := err.Error()
+	jsonStart := strings.Index(errorStr, "{")
+	if jsonStart < 0 {
+		return nil
+	}
+
+	jsonOutput := extractJSONFromError(errorStr[jsonStart:])
+	if jsonOutput == "" {
+		return nil
+	}
+
+	var jsonResp jsonResponse
+	parseErr := json.Unmarshal([]byte(jsonOutput), &jsonResp)
+	if parseErr != nil {
+		// If we can't parse the JSON, it's not an authentication error
+		//nolint:nilerr // Intentionally returning nil - not an auth error
+		return nil
+	}
+
+	if isAuthenticationError(jsonResp) {
+		return &AuthenticationError{
+			Message: "Claude Code authentication required",
+		}
+	}
+
+	return nil
+}
+
+func extractJSONFromError(errorStr string) string {
+	jsonEnd := strings.LastIndex(errorStr, "}")
+	if jsonEnd < 0 {
+		return ""
+	}
+	return errorStr[:jsonEnd+1]
+}
+
+func isAuthenticationError(resp jsonResponse) bool {
+	return resp.IsError && (strings.Contains(resp.Result, "Invalid API key") ||
+		strings.Contains(resp.Result, "Please run /login"))
+}
+
+func parseAndConvertResponse(output, prompt string) (*LLMResponse, error) {
 	jsonResp, err := parseResponse(output)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse claude response: %w\nPrompt: %s\nOutput: %s", err, prompt, output)
 	}
 
 	// Check for authentication error
-	if jsonResp.IsError && strings.Contains(jsonResp.Result, "Invalid API key") {
+	if isAuthenticationError(*jsonResp) {
 		return nil, &AuthenticationError{
 			Message: "Claude Code authentication required",
 		}
 	}
 
-	// Convert to LLMResponse
-	// Use Result field if Message is empty (Claude Code format)
-	message := strings.TrimSpace(jsonResp.Message)
-	if message == "" && jsonResp.Result != "" {
-		message = strings.TrimSpace(jsonResp.Result)
-	}
-	
-	// Calculate total tokens if using Claude Code format
-	totalTokens := jsonResp.Metadata.TokensUsed
-	if totalTokens == 0 && jsonResp.Usage.InputTokens > 0 {
-		totalTokens = jsonResp.Usage.InputTokens + jsonResp.Usage.OutputTokens
-	}
-	
+	return buildLLMResponse(jsonResp), nil
+}
+
+func buildLLMResponse(jsonResp *jsonResponse) *LLMResponse {
+	message := extractMessage(jsonResp)
+	totalTokens := calculateTotalTokens(jsonResp)
+
 	response := &LLMResponse{
 		Message: message,
 		Metadata: ResponseMetadata{
@@ -196,21 +238,42 @@ func (c *Client) Query(ctx context.Context, prompt string, sessionID string) (*L
 	}
 
 	// Convert tool calls
+	convertToolCalls(jsonResp, response)
+
+	return response
+}
+
+func extractMessage(jsonResp *jsonResponse) string {
+	message := strings.TrimSpace(jsonResp.Message)
+	if message == "" && jsonResp.Result != "" {
+		message = strings.TrimSpace(jsonResp.Result)
+	}
+	return message
+}
+
+func calculateTotalTokens(jsonResp *jsonResponse) int {
+	if jsonResp.Metadata.TokensUsed > 0 {
+		return jsonResp.Metadata.TokensUsed
+	}
+	if jsonResp.Usage.InputTokens > 0 {
+		return jsonResp.Usage.InputTokens + jsonResp.Usage.OutputTokens
+	}
+	return 0
+}
+
+func convertToolCalls(jsonResp *jsonResponse, response *LLMResponse) {
 	for _, tc := range jsonResp.ToolCalls {
 		toolCall := ToolCall{
 			Tool:       tc.Name,
 			Parameters: make(map[string]ToolParameter),
 		}
-		
-		// Convert parameters
+
 		for name, param := range tc.Parameters {
 			toolCall.Parameters[name] = convertJSONParameter(param)
 		}
-		
+
 		response.ToolCalls = append(response.ToolCalls, toolCall)
 	}
-
-	return response, nil
 }
 
 // SetCommandRunner allows injecting a mock command runner for testing.
@@ -223,55 +286,116 @@ func (c *Client) SetCommandRunner(runner commandRunner) {
 func convertJSONParameter(param jsonToolParameter) ToolParameter {
 	switch param.Type {
 	case "string":
-		if str, ok := param.Value.(string); ok {
-			return NewStringParam(str)
-		}
+		return convertStringParam(param)
 	case "int":
-		if val, ok := param.Value.(float64); ok {
-			return NewIntParam(int(val))
-		}
+		return convertIntParam(param)
 	case "bool":
-		if val, ok := param.Value.(bool); ok {
-			return NewBoolParam(val)
-		}
+		return convertBoolParam(param)
 	case "float":
-		if val, ok := param.Value.(float64); ok {
-			return NewFloatParam(val)
-		}
+		return convertFloatParam(param)
 	case "array":
-		if arr, ok := param.Value.([]any); ok {
-			var params []ToolParameter
-			for _, item := range arr {
-				if jsonParam, ok := item.(map[string]any); ok {
-					if typeStr, ok := jsonParam["type"].(string); ok {
-						p := jsonToolParameter{
-							Type:  typeStr,
-							Value: jsonParam["value"],
-						}
-						params = append(params, convertJSONParameter(p))
-					}
-				}
-			}
-			return NewArrayParam(params)
-		}
+		return convertArrayParam(param)
 	case "object":
-		if obj, ok := param.Value.(map[string]any); ok {
-			params := make(map[string]ToolParameter)
-			for k, v := range obj {
-				if jsonParam, ok := v.(map[string]any); ok {
-					if typeStr, ok := jsonParam["type"].(string); ok {
-						p := jsonToolParameter{
-							Type:  typeStr,
-							Value: jsonParam["value"],
-						}
-						params[k] = convertJSONParameter(p)
-					}
-				}
-			}
-			return NewObjectParam(params)
+		return convertObjectParam(param)
+	default:
+		return NewStringParam(fmt.Sprintf("%v", param.Value))
+	}
+}
+
+// Helper functions to reduce complexity
+
+func convertStringParam(param jsonToolParameter) ToolParameter {
+	if str, ok := param.Value.(string); ok {
+		return NewStringParam(str)
+	}
+	return NewStringParam(fmt.Sprintf("%v", param.Value))
+}
+
+func convertIntParam(param jsonToolParameter) ToolParameter {
+	if val, ok := param.Value.(float64); ok {
+		return NewIntParam(int(val))
+	}
+	return NewStringParam(fmt.Sprintf("%v", param.Value))
+}
+
+func convertBoolParam(param jsonToolParameter) ToolParameter {
+	if val, ok := param.Value.(bool); ok {
+		return NewBoolParam(val)
+	}
+	return NewStringParam(fmt.Sprintf("%v", param.Value))
+}
+
+func convertFloatParam(param jsonToolParameter) ToolParameter {
+	if val, ok := param.Value.(float64); ok {
+		return NewFloatParam(val)
+	}
+	return NewStringParam(fmt.Sprintf("%v", param.Value))
+}
+
+func convertArrayParam(param jsonToolParameter) ToolParameter {
+	arr, ok := param.Value.([]any)
+	if !ok {
+		return NewStringParam(fmt.Sprintf("%v", param.Value))
+	}
+
+	var params []ToolParameter
+	for _, item := range arr {
+		if p := parseArrayItem(item); p != nil {
+			params = append(params, *p)
 		}
 	}
-	
-	// Default to string if type is unknown
-	return NewStringParam(fmt.Sprintf("%v", param.Value))
+	return NewArrayParam(params)
+}
+
+func parseArrayItem(item any) *ToolParameter {
+	jsonParam, ok := item.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	typeStr, ok := jsonParam["type"].(string)
+	if !ok {
+		return nil
+	}
+
+	p := jsonToolParameter{
+		Type:  typeStr,
+		Value: jsonParam["value"],
+	}
+	result := convertJSONParameter(p)
+	return &result
+}
+
+func convertObjectParam(param jsonToolParameter) ToolParameter {
+	obj, ok := param.Value.(map[string]any)
+	if !ok {
+		return NewStringParam(fmt.Sprintf("%v", param.Value))
+	}
+
+	params := make(map[string]ToolParameter)
+	for k, v := range obj {
+		if p := parseObjectValue(v); p != nil {
+			params[k] = *p
+		}
+	}
+	return NewObjectParam(params)
+}
+
+func parseObjectValue(v any) *ToolParameter {
+	jsonParam, ok := v.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	typeStr, ok := jsonParam["type"].(string)
+	if !ok {
+		return nil
+	}
+
+	p := jsonToolParameter{
+		Type:  typeStr,
+		Value: jsonParam["value"],
+	}
+	result := convertJSONParameter(p)
+	return &result
 }

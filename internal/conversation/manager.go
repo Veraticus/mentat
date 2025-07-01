@@ -28,7 +28,7 @@ func NewManager(window time.Duration) *Manager {
 	if window <= 0 {
 		window = DefaultSessionWindow
 	}
-	
+
 	return &Manager{
 		sessions: make(map[string]*session),
 		window:   window,
@@ -40,9 +40,9 @@ func NewManager(window time.Duration) *Manager {
 func (m *Manager) GetOrCreateSession(conversationID string) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	now := time.Now()
-	
+
 	// Check for existing session
 	if sess, exists := m.sessions[conversationID]; exists {
 		// Check if session is still valid
@@ -51,7 +51,7 @@ func (m *Manager) GetOrCreateSession(conversationID string) string {
 			return sess.id
 		}
 	}
-	
+
 	// Create new session
 	sessionID := fmt.Sprintf("conv-%s-%d", conversationID, now.UnixNano())
 	m.sessions[conversationID] = &session{
@@ -59,7 +59,7 @@ func (m *Manager) GetOrCreateSession(conversationID string) string {
 		startTime:    now,
 		lastActivity: now,
 	}
-	
+
 	return sessionID
 }
 
@@ -68,12 +68,12 @@ func (m *Manager) GetOrCreateSession(conversationID string) string {
 func (m *Manager) ShouldContinueSession(conversationID string, timestamp time.Time) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	sess, exists := m.sessions[conversationID]
 	if !exists {
 		return false
 	}
-	
+
 	// Check if the timestamp is within the window
 	return timestamp.Sub(sess.lastActivity) <= m.window
 }
@@ -82,7 +82,7 @@ func (m *Manager) ShouldContinueSession(conversationID string, timestamp time.Ti
 func (m *Manager) EndSession(conversationID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	delete(m.sessions, conversationID)
 }
 
@@ -90,17 +90,17 @@ func (m *Manager) EndSession(conversationID string) {
 func (m *Manager) CleanupExpired() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	now := time.Now()
 	removed := 0
-	
+
 	for convID, sess := range m.sessions {
 		if now.Sub(sess.lastActivity) > m.window {
 			delete(m.sessions, convID)
 			removed++
 		}
 	}
-	
+
 	return removed
 }
 
@@ -108,16 +108,16 @@ func (m *Manager) CleanupExpired() int {
 func (m *Manager) Stats() map[string]int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	active := 0
 	now := time.Now()
-	
+
 	for _, sess := range m.sessions {
 		if now.Sub(sess.lastActivity) <= m.window {
 			active++
 		}
 	}
-	
+
 	return map[string]int{
 		"total":  len(m.sessions),
 		"active": active,

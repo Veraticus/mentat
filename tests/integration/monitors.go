@@ -1,3 +1,4 @@
+//go:build integration
 // +build integration
 
 package integration
@@ -20,12 +21,12 @@ type ResourceMonitor struct {
 
 // ResourceSample represents a point-in-time resource measurement
 type ResourceSample struct {
-	Timestamp    time.Time
-	Goroutines   int
-	HeapAlloc    uint64
-	HeapInUse    uint64
-	StackInUse   uint64
-	NumGC        uint32
+	Timestamp  time.Time
+	Goroutines int
+	HeapAlloc  uint64
+	HeapInUse  uint64
+	StackInUse uint64
+	NumGC      uint32
 }
 
 // NewResourceMonitor creates a resource monitor
@@ -41,20 +42,20 @@ func NewResourceMonitor() *ResourceMonitor {
 func (rm *ResourceMonitor) Sample() ResourceSample {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-	
+
 	sample := ResourceSample{
-		Timestamp:    time.Now(),
-		Goroutines:   runtime.NumGoroutine(),
-		HeapAlloc:    m.HeapAlloc,
-		HeapInUse:    m.HeapInuse,
-		StackInUse:   m.StackInuse,
-		NumGC:        m.NumGC,
+		Timestamp:  time.Now(),
+		Goroutines: runtime.NumGoroutine(),
+		HeapAlloc:  m.HeapAlloc,
+		HeapInUse:  m.HeapInuse,
+		StackInUse: m.StackInuse,
+		NumGC:      m.NumGC,
 	}
-	
+
 	rm.mu.Lock()
 	rm.samples = append(rm.samples, sample)
 	rm.mu.Unlock()
-	
+
 	return sample
 }
 
@@ -70,11 +71,11 @@ func (rm *ResourceMonitor) CheckLeaks() error {
 
 // QueueMonitor provides detailed queue monitoring
 type QueueMonitor struct {
-	mu       sync.RWMutex
-	samples  []QueueSample
-	alerts   []QueueAlert
-	ticker   *time.Ticker
-	stopCh   chan struct{}
+	mu      sync.RWMutex
+	samples []QueueSample
+	alerts  []QueueAlert
+	ticker  *time.Ticker
+	stopCh  chan struct{}
 }
 
 // QueueSample represents queue metrics at a point in time
@@ -106,7 +107,7 @@ func NewQueueMonitor() *QueueMonitor {
 // Start begins monitoring
 func (qm *QueueMonitor) Start(ctx context.Context, interval time.Duration, statsFn func() map[string]int) {
 	qm.ticker = time.NewTicker(interval)
-	
+
 	go func() {
 		for {
 			select {
@@ -135,7 +136,7 @@ func (qm *QueueMonitor) Stop() {
 func (qm *QueueMonitor) recordSample(stats map[string]int) {
 	qm.mu.Lock()
 	defer qm.mu.Unlock()
-	
+
 	sample := QueueSample{
 		Timestamp:      time.Now(),
 		QueueDepth:     stats["queued_messages"],
@@ -143,7 +144,7 @@ func (qm *QueueMonitor) recordSample(stats map[string]int) {
 		WaitingWorkers: stats["waiting_workers"],
 		Conversations:  stats["conversations"],
 	}
-	
+
 	qm.samples = append(qm.samples, sample)
 }
 
@@ -151,7 +152,7 @@ func (qm *QueueMonitor) recordSample(stats map[string]int) {
 func (qm *QueueMonitor) checkAlerts(stats map[string]int) {
 	qm.mu.Lock()
 	defer qm.mu.Unlock()
-	
+
 	// Alert on high queue depth
 	if stats["queued_messages"] > 100 {
 		qm.alerts = append(qm.alerts, QueueAlert{
@@ -161,7 +162,7 @@ func (qm *QueueMonitor) checkAlerts(stats map[string]int) {
 			Metrics:     stats,
 		})
 	}
-	
+
 	// Alert on no processing
 	if stats["processing_messages"] == 0 && stats["queued_messages"] > 0 {
 		qm.alerts = append(qm.alerts, QueueAlert{

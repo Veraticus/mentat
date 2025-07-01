@@ -31,12 +31,11 @@ type UnixSocketTransport struct {
 
 // NewUnixSocketTransport creates a new UNIX socket transport.
 func NewUnixSocketTransport(socketPath string) (*UnixSocketTransport, error) {
-	
+
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to signal-cli socket: %w", err)
 	}
-
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -116,7 +115,6 @@ func (t *UnixSocketTransport) readLoop() {
 	scanner := bufio.NewScanner(t.conn)
 	scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024) // 10MB max
 
-
 	for scanner.Scan() {
 		select {
 		case <-t.ctx.Done():
@@ -167,10 +165,10 @@ func (t *UnixSocketTransport) Close() error {
 
 // Internal types.
 type rpcRequest struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      string      `json:"id"`
-	Method  string      `json:"method"`
-	Params  any `json:"params,omitempty"`
+	JSONRPC string `json:"jsonrpc"`
+	ID      string `json:"id"`
+	Method  string `json:"method"`
+	Params  any    `json:"params,omitempty"`
 }
 
 type rpcResponse struct {

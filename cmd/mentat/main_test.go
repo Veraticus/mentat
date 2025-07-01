@@ -14,7 +14,7 @@ func TestComponentInitialization(t *testing.T) {
 
 	// Test that we can create the components struct
 	c := &components{}
-	
+
 	// Verify the struct has the expected fields
 	if c.signalHandler != nil {
 		t.Error("Expected signalHandler to be nil initially")
@@ -25,7 +25,7 @@ func TestComponentInitialization(t *testing.T) {
 	if c.queueManager != nil {
 		t.Error("Expected queueManager to be nil initially")
 	}
-	
+
 	// Test the context is properly set up
 	select {
 	case <-ctx.Done():
@@ -39,7 +39,7 @@ func TestGenerateMessageID(t *testing.T) {
 	// Test message ID generation
 	testTime := time.Date(2024, 1, 15, 14, 30, 45, 123456789, time.UTC)
 	id := generateMessageID(testTime)
-	
+
 	expected := "20240115143045.123456789"
 	if id != expected {
 		t.Errorf("Expected message ID %s, got %s", expected, id)
@@ -49,7 +49,7 @@ func TestGenerateMessageID(t *testing.T) {
 func TestMessageEnqueuerAdapter(t *testing.T) {
 	// This tests the adapter structure without real queue manager
 	adapter := &messageEnqueuerAdapter{manager: nil}
-	
+
 	// Verify it has the expected field
 	if adapter.manager != nil {
 		t.Error("Expected manager to be nil")
@@ -60,7 +60,7 @@ func TestReadPhoneNumber(t *testing.T) {
 	// This test will likely fail without the actual config file
 	// but it verifies the function exists and can be called
 	_, err := readPhoneNumber()
-	
+
 	// We expect an error if the file doesn't exist in test environment
 	// but the function should not panic
 	if err == nil {

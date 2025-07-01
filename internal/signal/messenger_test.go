@@ -145,214 +145,206 @@ func TestMessengerSendTypingIndicator(t *testing.T) {
 	}
 }
 
+// Helper functions to reduce test complexity.
+func createMockSubscribeClient(clientCh chan *Envelope) *MockClient {
+	return &MockClient{
+		SubscribeFunc: func(_ context.Context) (<-chan *Envelope, error) {
+			return clientCh, nil
+		},
+		SendReceiptFunc: func(_ context.Context, _ string, _ int64, _ string) error {
+			return nil
+		},
+	}
+}
+
+func waitForMessage(t *testing.T, msgCh <-chan IncomingMessage, timeout time.Duration) (*IncomingMessage, bool) {
+	t.Helper()
+	select {
+	case msg, ok := <-msgCh:
+		return &msg, ok
+	case <-time.After(timeout):
+		t.Fatal("timeout waiting for message")
+		return nil, false
+	}
+}
+
+func expectChannelClosed(t *testing.T, ch <-chan IncomingMessage, timeout time.Duration) {
+	t.Helper()
+	select {
+	case _, ok := <-ch:
+		if ok {
+			t.Fatal("expected channel to be closed")
+		}
+	case <-time.After(timeout):
+		t.Fatal("timeout waiting for channel to close")
+	}
+}
+
 // TestMessengerSubscribe tests the Subscribe method and message flow.
 func TestMessengerSubscribe(t *testing.T) {
-	t.Run("successful subscription", func(t *testing.T) {
-		// Create a channel for the mock client to send messages
-		clientCh := make(chan *Envelope)
-		client := &MockClient{
-			SubscribeFunc: func(_ context.Context) (<-chan *Envelope, error) {
-				return clientCh, nil
-			},
-			SendReceiptFunc: func(_ context.Context, _ string, _ int64, _ string) error {
-				return nil
-			},
+	t.Run("successful subscription", testSuccessfulSubscription)
+	t.Run("subscription error", testSubscriptionError)
+	t.Run("filters self messages", testFiltersSelfMessages)
+	t.Run("multiple subscriptions", testMultipleSubscriptions)
+}
+
+func testSuccessfulSubscription(t *testing.T) {
+	// Create a channel for the mock client to send messages
+	clientCh := make(chan *Envelope)
+	client := createMockSubscribeClient(clientCh)
+	m := NewMessenger(client, "+1234567890")
+
+	// Subscribe
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	msgCh, err := m.Subscribe(ctx)
+	if err != nil {
+		t.Fatalf("Subscribe failed: %v", err)
+	}
+
+	// Send a test message
+	testEnv := &Envelope{
+		Source:       "+0987654321",
+		SourceNumber: "+0987654321",
+		SourceName:   "Test User",
+		Timestamp:    time.Now().UnixMilli(),
+		DataMessage: &DataMessage{
+			Message: "Hello from test",
+		},
+	}
+
+	go func() {
+		clientCh <- testEnv
+		close(clientCh)
+	}()
+
+	// Receive and validate the message
+	msg, ok := waitForMessage(t, msgCh, time.Second)
+	if !ok {
+		t.Fatal("message channel closed unexpectedly")
+	}
+	if msg.From != "Test User" {
+		t.Errorf("expected From=%q, got %q", "Test User", msg.From)
+	}
+	if msg.Text != "Hello from test" {
+		t.Errorf("expected Text=%q, got %q", "Hello from test", msg.Text)
+	}
+
+	// Cancel and verify channel closes
+	cancel()
+	expectChannelClosed(t, msgCh, time.Second)
+}
+
+func testSubscriptionError(t *testing.T) {
+	client := &MockClient{
+		SubscribeFunc: func(_ context.Context) (<-chan *Envelope, error) {
+			return nil, errors.New("subscription failed")
+		},
+	}
+	m := NewMessenger(client, "+1234567890")
+
+	msgCh, err := m.Subscribe(context.Background())
+	if err != nil {
+		t.Fatalf("Subscribe should not return error: %v", err)
+	}
+
+	// Should receive error message
+	msg, ok := waitForMessage(t, msgCh, time.Second)
+	if !ok {
+		t.Fatal("message channel closed unexpectedly")
+	}
+	if msg.From != "system" {
+		t.Errorf("expected system message, got from=%q", msg.From)
+	}
+	if !contains(msg.Text, "Failed to subscribe") {
+		t.Errorf("expected error message, got %q", msg.Text)
+	}
+}
+
+func testFiltersSelfMessages(t *testing.T) {
+	selfPhone := "+1234567890"
+	clientCh := make(chan *Envelope)
+	client := createMockSubscribeClient(clientCh)
+	m := NewMessenger(client, selfPhone)
+
+	msgCh, err := m.Subscribe(context.Background())
+	if err != nil {
+		t.Fatalf("Subscribe failed: %v", err)
+	}
+
+	// Send messages from self and other
+	go func() {
+		clientCh <- &Envelope{
+			Source:      selfPhone,
+			DataMessage: &DataMessage{Message: "From self"},
 		}
-		m := NewMessenger(client, "+1234567890")
-
-		// Subscribe
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		msgCh, err := m.Subscribe(ctx)
-		if err != nil {
-			t.Fatalf("Subscribe failed: %v", err)
+		clientCh <- &Envelope{
+			SourceNumber: selfPhone,
+			DataMessage:  &DataMessage{Message: "Also from self"},
 		}
-
-		// Send a test message
-		testEnv := &Envelope{
-			Source:       "+0987654321",
-			SourceNumber: "+0987654321",
-			SourceName:   "Test User",
-			Timestamp:    time.Now().UnixMilli(),
-			DataMessage: &DataMessage{
-				Message: "Hello from test",
-			},
+		clientCh <- &Envelope{
+			Source:      "+0987654321",
+			DataMessage: &DataMessage{Message: "From other"},
 		}
+		close(clientCh)
+	}()
 
-		go func() {
-			clientCh <- testEnv
-			close(clientCh)
-		}()
+	// Should only receive the message from other
+	msg, ok := waitForMessage(t, msgCh, time.Second)
+	if !ok {
+		t.Fatal("message channel closed unexpectedly")
+	}
+	if msg.Text != "From other" {
+		t.Errorf("expected message from other, got %q", msg.Text)
+	}
 
-		// Receive the message
-		select {
-		case msg, ok := <-msgCh:
-			if !ok {
-				t.Fatal("message channel closed unexpectedly")
-			}
-			if msg.From != "Test User" {
-				t.Errorf("expected From=%q, got %q", "Test User", msg.From)
-			}
-			if msg.Text != "Hello from test" {
-				t.Errorf("expected Text=%q, got %q", "Hello from test", msg.Text)
-			}
-		case <-time.After(time.Second):
-			t.Fatal("timeout waiting for message")
-		}
+	// Channel should close after client channel closes
+	expectChannelClosed(t, msgCh, time.Second)
+}
 
-		// Cancel and verify channel closes
-		cancel()
-		select {
-		case _, ok := <-msgCh:
-			if ok {
-				t.Fatal("expected channel to be closed")
-			}
-		case <-time.After(time.Second):
-			t.Fatal("timeout waiting for channel to close")
-		}
-	})
+func testMultipleSubscriptions(t *testing.T) {
+	client := &MockClient{
+		SubscribeFunc: func(ctx context.Context) (<-chan *Envelope, error) {
+			ch := make(chan *Envelope)
+			go func() {
+				// Keep channel open until context is done
+				<-ctx.Done()
+				close(ch)
+			}()
+			return ch, nil
+		},
+	}
+	m := NewMessenger(client, "+1234567890")
 
-	t.Run("subscription error", func(t *testing.T) {
-		client := &MockClient{
-			SubscribeFunc: func(_ context.Context) (<-chan *Envelope, error) {
-				return nil, errors.New("subscription failed")
-			},
-		}
-		m := NewMessenger(client, "+1234567890")
+	// First subscription
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	ch1, err := m.Subscribe(ctx1)
+	if err != nil {
+		t.Fatalf("First subscribe failed: %v", err)
+	}
 
-		msgCh, err := m.Subscribe(context.Background())
-		if err != nil {
-			t.Fatalf("Subscribe should not return error: %v", err)
-		}
+	// Second subscription should cancel the first
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	ch2, err := m.Subscribe(ctx2)
+	if err != nil {
+		t.Fatalf("Second subscribe failed: %v", err)
+	}
 
-		// Should receive error message
-		select {
-		case msg, ok := <-msgCh:
-			if !ok {
-				t.Fatal("message channel closed unexpectedly")
-			}
-			if msg.From != "system" {
-				t.Errorf("expected system message, got from=%q", msg.From)
-			}
-			if !contains(msg.Text, "Failed to subscribe") {
-				t.Errorf("expected error message, got %q", msg.Text)
-			}
-		case <-time.After(time.Second):
-			t.Fatal("timeout waiting for error message")
-		}
-	})
+	// First channel should be closed
+	expectChannelClosed(t, ch1, time.Second)
 
-	t.Run("filters self messages", func(t *testing.T) {
-		selfPhone := "+1234567890"
-		clientCh := make(chan *Envelope)
-		client := &MockClient{
-			SubscribeFunc: func(_ context.Context) (<-chan *Envelope, error) {
-				return clientCh, nil
-			},
-			SendReceiptFunc: func(_ context.Context, _ string, _ int64, _ string) error {
-				return nil
-			},
-		}
-		m := NewMessenger(client, selfPhone)
+	// Second channel should still be open
+	select {
+	case <-ch2:
+		t.Fatal("second channel should not be closed yet")
+	default:
+		// Expected - channel is still open
+	}
 
-		msgCh, err := m.Subscribe(context.Background())
-		if err != nil {
-			t.Fatalf("Subscribe failed: %v", err)
-		}
-
-		// Send messages from self (should be filtered)
-		go func() {
-			clientCh <- &Envelope{
-				Source:      selfPhone,
-				DataMessage: &DataMessage{Message: "From self"},
-			}
-			clientCh <- &Envelope{
-				SourceNumber: selfPhone,
-				DataMessage:  &DataMessage{Message: "Also from self"},
-			}
-			// Send message from other (should pass through)
-			clientCh <- &Envelope{
-				Source:      "+0987654321",
-				DataMessage: &DataMessage{Message: "From other"},
-			}
-			close(clientCh)
-		}()
-
-		// Should only receive the message from other
-		select {
-		case msg, ok := <-msgCh:
-			if !ok {
-				t.Fatal("message channel closed unexpectedly")
-			}
-			if msg.Text != "From other" {
-				t.Errorf("expected message from other, got %q", msg.Text)
-			}
-		case <-time.After(time.Second):
-			t.Fatal("timeout waiting for message")
-		}
-
-		// Channel should close after client channel closes
-		select {
-		case _, ok := <-msgCh:
-			if ok {
-				t.Fatal("expected channel to be closed")
-			}
-		case <-time.After(time.Second):
-			t.Fatal("timeout waiting for channel to close")
-		}
-	})
-
-	t.Run("multiple subscriptions", func(t *testing.T) {
-		client := &MockClient{
-			SubscribeFunc: func(ctx context.Context) (<-chan *Envelope, error) {
-				ch := make(chan *Envelope)
-				go func() {
-					// Keep channel open until context is done
-					<-ctx.Done()
-					close(ch)
-				}()
-				return ch, nil
-			},
-		}
-		m := NewMessenger(client, "+1234567890")
-
-		// First subscription
-		ctx1, cancel1 := context.WithCancel(context.Background())
-		ch1, err := m.Subscribe(ctx1)
-		if err != nil {
-			t.Fatalf("First subscribe failed: %v", err)
-		}
-
-		// Second subscription should cancel the first
-		ctx2, cancel2 := context.WithCancel(context.Background())
-		defer cancel2()
-		ch2, err := m.Subscribe(ctx2)
-		if err != nil {
-			t.Fatalf("Second subscribe failed: %v", err)
-		}
-
-		// First channel should be closed
-		select {
-		case _, ok := <-ch1:
-			if ok {
-				t.Fatal("expected first channel to be closed")
-			}
-		case <-time.After(time.Second):
-			t.Fatal("timeout waiting for first channel to close")
-		}
-
-		// Second channel should still be open
-		select {
-		case <-ch2:
-			t.Fatal("second channel should not be closed yet")
-		default:
-			// Expected - channel is still open
-		}
-
-		// Cleanup
-		cancel1()
-	})
+	// Cleanup
+	cancel1()
 }
 
 // TestMessengerConvertEnvelope tests envelope conversion logic.
@@ -532,7 +524,7 @@ func TestMessengerConcurrency(t *testing.T) {
 
 	// Wait for all operations to complete
 	wg.Wait()
-	
+
 	// Cancel context to clean up the last subscription
 	cancel()
 }

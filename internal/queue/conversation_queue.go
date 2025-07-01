@@ -77,12 +77,12 @@ func (cq *ConversationQueue) Dequeue() *Message {
 		if !ok {
 			continue
 		}
-		
+
 		// Check if message is ready for retry
 		if !msg.IsReadyForRetry() {
 			continue
 		}
-		
+
 		// Found a message ready to process
 		cq.messages.Remove(elem)
 		cq.processing = msg

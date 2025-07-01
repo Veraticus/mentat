@@ -14,22 +14,22 @@ import (
 type ScriptedResponse struct {
 	// Response to return when patterns match
 	Response *claude.LLMResponse
-	
+
 	// Optional callback to run before returning (for side effects in tests)
 	BeforeReturn func(prompt string, sessionID string)
-	
+
 	// Error to return instead of response
 	Error error
-	
+
 	// Pattern to match against the prompt (regex). If empty, matches any prompt.
 	PromptPattern string
-	
+
 	// Session pattern to match (regex). If empty, matches any session.
 	SessionPattern string
-	
+
 	// Delay before returning response (simulates processing time)
 	Delay time.Duration
-	
+
 	// Whether this response can be used multiple times
 	Repeatable bool
 }
@@ -51,11 +51,11 @@ func NewScriptedLLM(opts ...ScriptedLLMOption) *ScriptedLLM {
 		scripts: make([]ScriptedResponse, 0),
 		calls:   make([]LLMCall, 0),
 	}
-	
+
 	for _, opt := range opts {
 		opt(s)
 	}
-	
+
 	return s
 }
 
@@ -87,7 +87,7 @@ func WithFallbackError(err error) ScriptedLLMOption {
 func (s *ScriptedLLM) AddScript(script ScriptedResponse) *ScriptedLLM {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	s.scripts = append(s.scripts, script)
 	return s
 }
@@ -134,81 +134,128 @@ func (s *ScriptedLLM) AddDelayedScript(response *claude.LLMResponse, delay time.
 func (s *ScriptedLLM) Query(ctx context.Context, prompt string, sessionID string) (*claude.LLMResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	// Record the call
+	s.recordCall(prompt, sessionID)
+
+	// Find and execute matching script
+	if resp, found, err := s.findAndExecuteScript(ctx, prompt, sessionID); found {
+		return resp, err
+	}
+
+	// Handle no matching script
+	return s.handleNoMatch(prompt, sessionID)
+}
+
+// recordCall records an LLM call.
+func (s *ScriptedLLM) recordCall(prompt, sessionID string) {
 	call := LLMCall{
 		Prompt:    prompt,
 		SessionID: sessionID,
 		Timestamp: time.Now(),
 	}
 	s.calls = append(s.calls, call)
-	
-	// Find matching script
+}
+
+// findAndExecuteScript finds a matching script and executes it.
+func (s *ScriptedLLM) findAndExecuteScript(ctx context.Context, prompt, sessionID string) (*claude.LLMResponse, bool, error) {
 	for i, script := range s.scripts {
-		// Skip already used non-repeatable scripts
-		if !script.Repeatable && i < s.currentIndex {
+		if !s.scriptMatches(&script, i, prompt, sessionID) {
 			continue
 		}
-		
-		// Check prompt pattern
-		if script.PromptPattern != "" {
-			matched, err := regexp.MatchString(script.PromptPattern, prompt)
-			if err != nil || !matched {
-				continue
-			}
-		}
-		
-		// Check session pattern
-		if script.SessionPattern != "" {
-			matched, err := regexp.MatchString(script.SessionPattern, sessionID)
-			if err != nil || !matched {
-				continue
-			}
-		}
-		
+
 		// Found a match!
 		if !script.Repeatable {
 			s.currentIndex = i + 1
 		}
-		
-		// Execute callback if provided
-		if script.BeforeReturn != nil {
-			script.BeforeReturn(prompt, sessionID)
-		}
-		
-		// Simulate delay
-		if script.Delay > 0 {
-			select {
-			case <-time.After(script.Delay):
-				// Delay completed
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			}
-		}
-		
-		// Return error if specified
-		if script.Error != nil {
-			return nil, script.Error
-		}
-		
-		// Return response
-		return script.Response, nil
+
+		return s.executeScript(ctx, &script, prompt, sessionID)
 	}
-	
-	// No matching script found
+
+	return nil, false, nil
+}
+
+// scriptMatches checks if a script matches the current call.
+func (s *ScriptedLLM) scriptMatches(script *ScriptedResponse, index int, prompt, sessionID string) bool {
+	// Skip already used non-repeatable scripts
+	if !script.Repeatable && index < s.currentIndex {
+		return false
+	}
+
+	// Check prompt pattern
+	if !matchesPattern(script.PromptPattern, prompt) {
+		return false
+	}
+
+	// Check session pattern
+	if !matchesPattern(script.SessionPattern, sessionID) {
+		return false
+	}
+
+	return true
+}
+
+// matchesPattern checks if a value matches a regex pattern.
+func matchesPattern(pattern, value string) bool {
+	if pattern == "" {
+		return true
+	}
+
+	matched, err := regexp.MatchString(pattern, value)
+	return err == nil && matched
+}
+
+// executeScript executes a matched script.
+func (s *ScriptedLLM) executeScript(ctx context.Context, script *ScriptedResponse, prompt, sessionID string) (*claude.LLMResponse, bool, error) {
+	// Execute callback if provided
+	if script.BeforeReturn != nil {
+		script.BeforeReturn(prompt, sessionID)
+	}
+
+	// Simulate delay
+	if err := s.simulateDelay(ctx, script.Delay); err != nil {
+		return nil, true, err
+	}
+
+	// Return error if specified
+	if script.Error != nil {
+		return nil, true, script.Error
+	}
+
+	// Return response
+	return script.Response, true, nil
+}
+
+// simulateDelay simulates a delay if specified.
+func (s *ScriptedLLM) simulateDelay(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+
+	select {
+	case <-time.After(delay):
+		// Delay completed
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// handleNoMatch handles the case when no script matches.
+func (s *ScriptedLLM) handleNoMatch(prompt, sessionID string) (*claude.LLMResponse, error) {
 	if s.strictMode {
 		return nil, fmt.Errorf("no script matches prompt: %q in session: %q", prompt, sessionID)
 	}
-	
+
 	// Use fallback
 	if s.fallbackError != nil {
 		return nil, s.fallbackError
 	}
-	
+
 	if s.fallbackResponse != nil {
 		return s.fallbackResponse, nil
 	}
-	
+
 	// Default fallback
 	return &claude.LLMResponse{
 		Message: "No script configured for this prompt",
@@ -224,7 +271,7 @@ func (s *ScriptedLLM) Query(ctx context.Context, prompt string, sessionID string
 func (s *ScriptedLLM) GetCalls() []LLMCall {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	// Return a copy to prevent external modification
 	calls := make([]LLMCall, len(s.calls))
 	copy(calls, s.calls)
@@ -235,7 +282,7 @@ func (s *ScriptedLLM) GetCalls() []LLMCall {
 func (s *ScriptedLLM) GetCallCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	return len(s.calls)
 }
 
@@ -243,7 +290,7 @@ func (s *ScriptedLLM) GetCallCount() int {
 func (s *ScriptedLLM) Reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	s.calls = make([]LLMCall, 0)
 	s.currentIndex = 0
 }
@@ -261,19 +308,19 @@ func (s *ScriptedLLM) ExpectNCalls(n int) error {
 func (s *ScriptedLLM) ExpectPromptContains(substring string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	for _, call := range s.calls {
 		if contains(call.Prompt, substring) {
 			return nil
 		}
 	}
-	
+
 	return fmt.Errorf("no call contained prompt substring: %q", substring)
 }
 
 // contains is a simple string contains helper.
 func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || substr == "" || 
+	return len(s) >= len(substr) && (s == substr || substr == "" ||
 		(s != "" && substr != "" && findSubstring(s, substr) >= 0))
 }
 
@@ -285,7 +332,7 @@ func findSubstring(s, substr string) int {
 	if len(substr) > len(s) {
 		return -1
 	}
-	
+
 	for i := 0; i <= len(s)-len(substr); i++ {
 		if s[i:i+len(substr)] == substr {
 			return i

@@ -11,10 +11,10 @@ import (
 var (
 	// ErrRateLimited indicates the request was rate limited by the LLM provider.
 	ErrRateLimited = errors.New("rate limited by LLM provider")
-	
+
 	// ErrQueueStopped indicates the queue has been stopped.
 	ErrQueueStopped = errors.New("queue stopped")
-	
+
 	// ErrMessageNotFound indicates the message was not found.
 	ErrMessageNotFound = errors.New("message not found")
 )
@@ -45,18 +45,18 @@ func IsRateLimitError(err error) bool {
 	if err == nil {
 		return false
 	}
-	
+
 	// Check if it's already a RateLimitError
 	var rateLimitErr *RateLimitError
 	if errors.As(err, &rateLimitErr) {
 		return true
 	}
-	
+
 	// Check if it's our sentinel error
 	if errors.Is(err, ErrRateLimited) {
 		return true
 	}
-	
+
 	// Check error message for common rate limit indicators
 	errMsg := strings.ToLower(err.Error())
 	rateLimitIndicators := []string{
@@ -69,13 +69,13 @@ func IsRateLimitError(err error) bool {
 		"throttled",
 		"slow down",
 	}
-	
+
 	for _, indicator := range rateLimitIndicators {
 		if strings.Contains(errMsg, indicator) {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
@@ -96,7 +96,7 @@ func ExtractRetryAfter(err error) time.Duration {
 	if errors.As(err, &rateLimitErr) && rateLimitErr.RetryAfter > 0 {
 		return rateLimitErr.RetryAfter
 	}
-	
+
 	// Default to 0, letting the caller decide on backoff strategy
 	return 0
 }

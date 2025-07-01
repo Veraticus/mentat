@@ -33,11 +33,11 @@ type SystemConfig struct {
 
 // System represents the integrated queue system with all components.
 type System struct {
-	Coordinator  *Coordinator
-	WorkerPool   *DynamicWorkerPool
-	RateLimiter  RateLimiter
-	ctx          context.Context
-	cancel       context.CancelFunc
+	Coordinator *Coordinator
+	WorkerPool  *DynamicWorkerPool
+	RateLimiter RateLimiter
+	ctx         context.Context
+	cancel      context.CancelFunc
 }
 
 // NewSystem creates a new integrated queue system with all components wired together.
@@ -62,11 +62,11 @@ func NewSystem(ctx context.Context, config SystemConfig) (*System, error) {
 	if refillRate < 1 {
 		refillRate = 1
 	}
-	
+
 	rateLimiter := NewRateLimiter(
-		config.BurstLimit,     // capacity (burst)
-		refillRate,            // tokens per refill
-		refillPeriod,          // refill every second
+		config.BurstLimit, // capacity (burst)
+		refillRate,        // tokens per refill
+		refillPeriod,      // refill every second
 	)
 
 	// Create the Coordinator (which creates the Manager internally)
@@ -77,14 +77,14 @@ func NewSystem(ctx context.Context, config SystemConfig) (*System, error) {
 
 	// Create worker pool configuration
 	poolConfig := PoolConfig{
-		InitialSize:        config.WorkerPoolSize,
-		MinSize:            config.MinWorkers,
-		MaxSize:            config.MaxWorkers,
-		LLM:                config.LLM,
-		Messenger:          config.Messenger,
-		QueueManager:       coordinator.manager,
-		MessageQueue:       coordinator,  // Pass the coordinator for state updates
-		RateLimiter:        rateLimiter,
+		InitialSize:  config.WorkerPoolSize,
+		MinSize:      config.MinWorkers,
+		MaxSize:      config.MaxWorkers,
+		LLM:          config.LLM,
+		Messenger:    config.Messenger,
+		QueueManager: coordinator.manager,
+		MessageQueue: coordinator, // Pass the coordinator for state updates
+		RateLimiter:  rateLimiter,
 	}
 
 	// Create the dynamic worker pool with a custom worker factory
@@ -93,15 +93,14 @@ func NewSystem(ctx context.Context, config SystemConfig) (*System, error) {
 		sysCancel()
 		return nil, fmt.Errorf("failed to create worker pool: %w", err)
 	}
-	
 
 	// Create the integrated system
 	system := &System{
-		Coordinator:  coordinator,
-		WorkerPool:   workerPool,
-		RateLimiter:  rateLimiter,
-		ctx:          sysCtx,
-		cancel:       sysCancel,
+		Coordinator: coordinator,
+		WorkerPool:  workerPool,
+		RateLimiter: rateLimiter,
+		ctx:         sysCtx,
+		cancel:      sysCancel,
 	}
 
 	return system, nil
@@ -112,10 +111,10 @@ func (qs *System) GetDetailedStats() DetailedStats {
 	// Update worker stats first
 	active := qs.WorkerPool.Size()
 	total := active
-	
+
 	// Safely convert to int32 with bounds checking
 	const maxInt32 = int(^uint32(0) >> 1)
-	
+
 	// Clamp values to maxInt32 before conversion
 	if active > maxInt32 {
 		active = maxInt32
@@ -123,11 +122,11 @@ func (qs *System) GetDetailedStats() DetailedStats {
 	if total > maxInt32 {
 		total = maxInt32
 	}
-	
+
 	// Safe to convert now - values are guaranteed to fit in int32
 	//nolint:gosec // Values are bounded by maxInt32 check above
 	qs.Coordinator.statsCollector.UpdateWorkerCount(int32(active), int32(active), int32(total))
-	
+
 	return qs.Coordinator.GetDetailedStats()
 }
 
@@ -170,10 +169,10 @@ func (qs *System) Stats() Stats {
 	// Update worker stats in the StatsCollector
 	active := qs.WorkerPool.Size()
 	total := active // For now, total equals active
-	
+
 	// Safely convert to int32 with bounds checking
 	const maxInt32 = int(^uint32(0) >> 1)
-	
+
 	// Clamp values to maxInt32 before conversion
 	if active > maxInt32 {
 		active = maxInt32
@@ -181,17 +180,17 @@ func (qs *System) Stats() Stats {
 	if total > maxInt32 {
 		total = maxInt32
 	}
-	
+
 	// Safe to convert now - values are guaranteed to fit in int32
 	//nolint:gosec // Values are bounded by maxInt32 check above
 	qs.Coordinator.statsCollector.UpdateWorkerCount(int32(active), int32(active), int32(total))
-	
+
 	stats := qs.Coordinator.Stats()
-	
+
 	// Add worker pool stats
 	stats.ActiveWorkers = active
 	stats.HealthyWorkers = active // All active workers are considered healthy
-	
+
 	return stats
 }
 
@@ -251,7 +250,7 @@ func validateSystemConfig(config *SystemConfig) error {
 
 	// Validate configuration consistency
 	if config.MinWorkers > config.MaxWorkers {
-		return fmt.Errorf("MinWorkers (%d) cannot be greater than MaxWorkers (%d)", 
+		return fmt.Errorf("MinWorkers (%d) cannot be greater than MaxWorkers (%d)",
 			config.MinWorkers, config.MaxWorkers)
 	}
 	if config.WorkerPoolSize < config.MinWorkers {
