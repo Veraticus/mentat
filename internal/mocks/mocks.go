@@ -1,5 +1,5 @@
-// Package testing provides mock implementations for testing.
-package testing
+// Package mocks provides mock implementations for testing.
+package mocks
 
 import (
 	"context"
@@ -79,6 +79,11 @@ func (m *MockLLM) Query(_ context.Context, prompt string, sessionID string) (*cl
 
 	// Check for session-wide response
 	if resp, ok := m.responses[sessionID]; ok {
+		return resp, nil
+	}
+	
+	// Check for empty sessionID (default response)
+	if resp, ok := m.responses[""]; ok {
 		return resp, nil
 	}
 
