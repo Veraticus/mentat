@@ -57,23 +57,22 @@ func TestMyFeature(t *testing.T) {
 }
 ```
 
-### Enhanced Usage
+### Advanced Usage
 
 ```go
 func TestAdvancedFeature(t *testing.T) {
-    RunEnhancedScenario(t, "advanced", DefaultConfig(), func(t *testing.T, h *EnhancedTestHarness) {
-        // Track complete message lifecycle
+    RunScenario(t, "advanced", DefaultConfig(), func(t *testing.T, h *TestHarness) {
+        // Configure multiple responses
+        h.SetLLMResponse("First response", nil)
+        
+        // Send message and get the message ID for tracking
         err := h.SendMessage("+1234567890", "Track this")
         if err != nil {
             t.Fatal(err)
         }
         
-        // Wait for specific message completion
-        msgID := fmt.Sprintf("msg-%d", time.Now().UnixNano())
-        err = h.WaitForMessageCompletion(msgID, 5*time.Second)
-        if err != nil {
-            t.Fatal(err)
-        }
+        // Wait for completion and check stats
+        time.Sleep(2 * time.Second)
         
         // Get detailed statistics
         stats := h.GetMessageStats()
@@ -82,13 +81,21 @@ func TestAdvancedFeature(t *testing.T) {
         // Check queue metrics
         metrics := h.GetQueueMetrics()
         t.Logf("Max queue depth: %d", metrics.MaxDepth)
+        
+        // Verify queue state
+        queueState := h.VerifyQueueState()
+        if queueState.CompletedMessages != 1 {
+            t.Errorf("Expected 1 completed message, got %d", queueState.CompletedMessages)
+        }
     })
 }
 ```
 
 ## Features
 
-### Basic Test Harness
+The test harness provides comprehensive testing capabilities:
+
+### Core Features
 
 - **Component Initialization**: Sets up Signal handler, message queue, worker pool with mocked external dependencies
 - **Message Flow Testing**: Send messages and verify responses
@@ -97,42 +104,41 @@ func TestAdvancedFeature(t *testing.T) {
 - **Error Collection**: Track unexpected errors during test execution
 - **Graceful Shutdown**: Proper cleanup with timeout protection
 
-### Enhanced Test Harness
-
-All basic features plus:
-
-#### 1. Message Lifecycle Tracking
-- Complete state transition history (Queued → Processing → Completed/Failed)
+### Message Lifecycle Tracking
+- Complete state transition history (Queued → Processing → Completed/Failed/Retrying)
 - Processing time measurement
 - Retry attempt tracking
 - Error history with context
 - Response correlation
+- Automatic state detection when workers complete/fail messages
 
-#### 2. Performance Metrics
+### Performance Metrics
 - Queue depth monitoring over time
 - Message throughput calculation
 - Processing latency tracking
 - Worker utilization metrics
 - Concurrent load testing support
 
-#### 3. Resource Monitoring
+### Resource Monitoring
 - Goroutine leak detection
 - Memory usage tracking
 - Garbage collection statistics
 - Resource growth analysis
+- Automatic leak detection on teardown
 
-#### 4. Advanced Testing Capabilities
-- **Error Injection**: Simulate failures at specific points
-- **Timing Control**: Deterministic time advancement for testing timeouts
-- **Queue Backpressure**: Test overflow and rate limiting
-- **Chaos Testing**: Random failure injection
-- **Load Testing**: Concurrent user simulation
+### Advanced Testing Capabilities
+- **Error Injection**: Configure LLM to return errors
+- **Rate Limiting**: Test rate limit behavior with configurable tokens
+- **Queue State Tracking**: Monitor all messages through their lifecycle
+- **Concurrent Testing**: Simulate multiple users simultaneously
+- **Load Testing**: High-volume message processing
 
-#### 5. Observability
+### Observability
 - Queue alerts (high depth, stalled processing)
 - Performance bottleneck detection
 - Detailed state change tracking
 - Comprehensive test reporting
+- Debug helpers for failed tests
 
 ## Configuration
 
@@ -229,19 +235,19 @@ final := h.resourceMonitor.Sample()
 
 ## Best Practices
 
-1. **Use Enhanced Harness for Complex Tests**: The enhanced harness provides much better debugging and verification capabilities
+1. **Configure Responses Before Sending**: Always set up expected LLM responses before sending messages
 
-2. **Configure Responses Before Sending**: Always set up expected LLM responses before sending messages
+2. **Wait for Completion**: Use appropriate timeouts when waiting for responses
 
-3. **Wait for Completion**: Use appropriate timeouts when waiting for responses
+3. **Verify Complete State**: Check both responses and queue state for comprehensive verification
 
-4. **Verify Complete State**: Check both responses and queue state for comprehensive verification
+4. **Clean Up Resources**: The harness handles cleanup automatically, but always use RunScenario() which ensures proper teardown
 
-5. **Clean Up Resources**: The harness handles cleanup automatically, but always use defer for teardown
+5. **Use Subtests**: Leverage Go's t.Run() for better test organization
 
-6. **Use Subtests**: Leverage Go's t.Run() for better test organization
+6. **Check for Leaks**: The harness automatically checks for resource leaks on teardown
 
-7. **Check for Leaks**: In long-running tests, verify no resource leaks
+7. **Use Message Stats**: For complex scenarios, use GetMessageStats() to verify all messages were processed correctly
 
 ## Debugging Failed Tests
 
@@ -314,7 +320,7 @@ type MyCustomTracker struct {
     // Custom tracking fields
 }
 
-func (h *EnhancedTestHarness) TrackCustomMetric(metric string, value int) {
+func (h *TestHarness) TrackCustomMetric(metric string, value int) {
     // Add to your custom tracker
 }
 ```
@@ -348,12 +354,13 @@ func (m *MockMessengerWithIncoming) SimulateNetworkError() {
 
 When adding new integration tests:
 
-1. Decide if basic or enhanced harness is needed
+1. Use RunScenario() to ensure proper setup and teardown
 2. Follow existing patterns for consistency
 3. Add appropriate documentation
 4. Ensure tests are deterministic
 5. Avoid external dependencies
 6. Keep tests focused and readable
+7. Use the test harness features (message tracking, queue monitoring) for comprehensive verification
 
 ## Future Enhancements
 
