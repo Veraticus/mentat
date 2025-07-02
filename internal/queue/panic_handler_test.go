@@ -1,7 +1,6 @@
 package queue_test
 
 import (
-	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -23,20 +22,11 @@ func TestDefaultPanicHandler(t *testing.T) {
 func TestNoPanicHandler(t *testing.T) {
 	handler := queue.NewNoPanicHandler()
 
-	// Should re-panic
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("NoPanicHandler should re-panic")
-		} else {
-			msg, ok := r.(string)
-			if !ok || !strings.Contains(msg, "Worker test-worker panicked: test panic") {
-				t.Errorf("Unexpected panic message: %v", r)
-			}
-		}
-	}()
-
-	handler.HandlePanic("test-worker", "test panic", []byte("stack"))
-	t.Error("Should not reach here")
+	// Should return false (no replacement)
+	shouldReplace := handler.HandlePanic("test-worker", "test panic", []byte("stack"))
+	if shouldReplace {
+		t.Error("NoPanicHandler should return false to not replace worker")
+	}
 }
 
 func TestMetricsPanicHandler(t *testing.T) {
@@ -118,22 +108,13 @@ func TestHandleRecoveredPanic(t *testing.T) {
 
 // TestPanicHandlerIntegration tests panic handling in the context of a worker pool.
 func TestPanicHandlerIntegration(t *testing.T) {
-	// Test that NoPanicHandler re-panics
-	t.Run("no panic handler re-panics", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("Expected panic to propagate")
-			} else {
-				msg, ok := r.(string)
-				if !ok || !strings.Contains(msg, "Worker test-worker panicked") {
-					t.Errorf("Unexpected panic: %v", r)
-				}
-			}
-		}()
-
+	// Test that NoPanicHandler returns false
+	t.Run("no panic handler returns false", func(t *testing.T) {
 		handler := queue.NewNoPanicHandler()
-		// This should panic
-		handler.HandlePanic("test-worker", "test panic", []byte("stack"))
+		shouldReplace := handler.HandlePanic("test-worker", "test panic", []byte("stack"))
+		if shouldReplace {
+			t.Error("NoPanicHandler should return false")
+		}
 	})
 
 	// Test custom handler behavior

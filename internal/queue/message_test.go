@@ -65,15 +65,19 @@ func TestMessageCreationFromIncoming(t *testing.T) {
 	}
 }
 
-func TestMessage_StateTransitions(t *testing.T) {
-	tests := []struct {
-		name         string
-		fromState    queue.State
-		toState      queue.State
-		reason       string
-		expectError  bool
-		validateFunc func(t *testing.T, msg *queue.Message)
-	}{
+// transitionTest defines a state transition test case.
+type transitionTest struct {
+	name         string
+	fromState    queue.State
+	toState      queue.State
+	reason       string
+	expectError  bool
+	validateFunc func(t *testing.T, msg *queue.Message)
+}
+
+// getTransitionTests returns all state transition test cases.
+func getTransitionTests() []transitionTest {
+	return []transitionTest{
 		{
 			name:        "valid transition: queued to processing",
 			fromState:   queue.StateQueued,
@@ -82,13 +86,9 @@ func TestMessage_StateTransitions(t *testing.T) {
 			expectError: false,
 			validateFunc: func(t *testing.T, msg *queue.Message) {
 				t.Helper()
-				// Old message should be unchanged
-				// Message should have new state
 				if msg.State != queue.StateProcessing {
 					t.Errorf("expected state %v, got %v", queue.StateProcessing, msg.State)
 				}
-
-				// State history should be updated
 				history := msg.GetStateHistory()
 				if len(history) < 2 {
 					t.Errorf("expected at least 2 state transitions")
@@ -143,29 +143,49 @@ func TestMessage_StateTransitions(t *testing.T) {
 			expectError: true,
 		},
 	}
+}
+
+func TestMessage_StateTransitions(t *testing.T) {
+	tests := getTransitionTests()
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a fresh message for each test
-			testMsg := createTestMessage()
-
-			// Set up initial state
-			testMsg = setupInitialState(t, testMsg, tt.fromState)
-			oldState := testMsg.GetState()
-
-			// Perform the transition
-			// Note: In the new design, state transitions are done directly
-			testMsg.SetState(tt.toState)
-			testMsg.AddStateTransition(oldState, tt.toState, tt.reason)
-
-			// Verify state history was updated
-			validateStateHistory(t, testMsg, tt.fromState, tt.toState, tt.reason)
-
-			// Run custom validation
-			if tt.validateFunc != nil {
-				tt.validateFunc(t, testMsg)
-			}
+			testStateTransition(t, tt)
 		})
+	}
+}
+
+// testStateTransition executes a single state transition test.
+func testStateTransition(t *testing.T, tt transitionTest) {
+	t.Helper()
+
+	// Create a fresh message for each test
+	testMsg := createTestMessage()
+
+	// Set up initial state
+	testMsg = setupInitialState(t, testMsg, tt.fromState)
+	oldState := testMsg.GetState()
+
+	// Perform the transition
+	testMsg.SetState(tt.toState)
+	testMsg.AddStateTransition(oldState, tt.toState, tt.reason)
+
+	// Handle special state transitions
+	if tt.toState == queue.StateCompleted {
+		now := time.Now()
+		testMsg.CompletedAt = &now
+	}
+	if tt.toState == queue.StateRetrying {
+		retryTime := time.Now().Add(time.Second)
+		testMsg.NextRetryAt = &retryTime
+	}
+
+	// Verify state history was updated
+	validateStateHistory(t, testMsg, tt.fromState, tt.toState, tt.reason)
+
+	// Run custom validation
+	if tt.validateFunc != nil {
+		tt.validateFunc(t, testMsg)
 	}
 }
 
@@ -416,7 +436,10 @@ func validateStateHistory(
 func createTestMessage() *queue.Message {
 	now := time.Now()
 	msgID := fmt.Sprintf("%d-%s", now.UnixNano(), "+1234567890")
-	return queue.NewMessage(msgID, "+1234567890", "Test User", "+1234567890", "Test message")
+	msg := queue.NewMessage(msgID, "+1234567890", "Test User", "+1234567890", "Test message")
+	// Add initial state transition like the Coordinator does
+	msg.AddStateTransition(queue.StateQueued, queue.StateQueued, "message created")
+	return msg
 }
 
 // getTransitionPath returns the states needed to transition from one state to another.

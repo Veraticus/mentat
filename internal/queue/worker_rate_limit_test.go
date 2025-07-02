@@ -187,7 +187,7 @@ func TestRateLimitIntegration(t *testing.T) {
 
 	// Check that message is queued for retry with appropriate delay
 	stats := manager.Stats()
-	if totalQueued, ok := stats["total_queued"]; !ok || totalQueued != 1 {
+	if queued, ok := stats["queued"]; !ok || queued != 1 {
 		t.Errorf("Expected 1 queued message (for retry), got %v", stats)
 	}
 

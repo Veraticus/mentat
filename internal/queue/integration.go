@@ -150,19 +150,20 @@ func (qs *System) Start(ctx context.Context) error {
 
 // Stop gracefully shuts down the queue system.
 func (qs *System) Stop() error {
+	// Stop the coordinator first (which stops the manager and closes stopCh)
+	// This ensures workers get proper shutdown signals
+	if err := qs.Coordinator.Stop(); err != nil {
+		return fmt.Errorf("failed to stop coordinator: %w", err)
+	}
+
 	// Cancel the context to signal shutdown
 	qs.cancel()
 
-	// Stop the worker pool first
+	// Stop the worker pool
 	qs.WorkerPool.Stop(context.Background())
 
 	// Wait for workers to finish processing
 	qs.WorkerPool.Wait()
-
-	// Stop the coordinator (which stops the manager)
-	if err := qs.Coordinator.Stop(); err != nil {
-		return fmt.Errorf("failed to stop coordinator: %w", err)
-	}
 
 	return nil
 }
