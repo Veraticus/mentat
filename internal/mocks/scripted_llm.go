@@ -10,6 +10,18 @@ import (
 	"github.com/Veraticus/mentat/internal/claude"
 )
 
+// ScriptedLLM constants.
+const (
+	// scriptedLatencyMS is the default latency for scripted responses.
+	scriptedLatencyMS = 100
+	// scriptedTokensUsed is the default token count for scripted responses.
+	scriptedTokensUsed = 50
+	// fallbackLatencyMS is the latency for fallback responses.
+	fallbackLatencyMS = 50
+	// fallbackTokensUsed is the token count for fallback responses.
+	fallbackTokensUsed = 10
+)
+
 // ScriptedResponse represents a scripted response for the LLM.
 type ScriptedResponse struct {
 	// Response to return when patterns match
@@ -99,8 +111,8 @@ func (s *ScriptedLLM) AddSimpleScript(message string) *ScriptedLLM {
 			Message: message,
 			Metadata: claude.ResponseMetadata{
 				ModelVersion: "claude-3.5-sonnet-20241022",
-				Latency:      100 * time.Millisecond,
-				TokensUsed:   50,
+				Latency:      scriptedLatencyMS * time.Millisecond,
+				TokensUsed:   scriptedTokensUsed,
 			},
 		},
 	})
@@ -114,7 +126,10 @@ func (s *ScriptedLLM) AddErrorScript(err error) *ScriptedLLM {
 }
 
 // AddPatternScript adds a pattern-matched response script.
-func (s *ScriptedLLM) AddPatternScript(promptPattern string, response *claude.LLMResponse) *ScriptedLLM {
+func (s *ScriptedLLM) AddPatternScript(
+	promptPattern string,
+	response *claude.LLMResponse,
+) *ScriptedLLM {
 	return s.AddScript(ScriptedResponse{
 		PromptPattern: promptPattern,
 		Response:      response,
@@ -123,7 +138,10 @@ func (s *ScriptedLLM) AddPatternScript(promptPattern string, response *claude.LL
 }
 
 // AddDelayedScript adds a response with simulated delay.
-func (s *ScriptedLLM) AddDelayedScript(response *claude.LLMResponse, delay time.Duration) *ScriptedLLM {
+func (s *ScriptedLLM) AddDelayedScript(
+	response *claude.LLMResponse,
+	delay time.Duration,
+) *ScriptedLLM {
 	return s.AddScript(ScriptedResponse{
 		Response: response,
 		Delay:    delay,
@@ -131,7 +149,11 @@ func (s *ScriptedLLM) AddDelayedScript(response *claude.LLMResponse, delay time.
 }
 
 // Query implements the LLM interface.
-func (s *ScriptedLLM) Query(ctx context.Context, prompt string, sessionID string) (*claude.LLMResponse, error) {
+func (s *ScriptedLLM) Query(
+	ctx context.Context,
+	prompt string,
+	sessionID string,
+) (*claude.LLMResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -158,7 +180,10 @@ func (s *ScriptedLLM) recordCall(prompt, sessionID string) {
 }
 
 // findAndExecuteScript finds a matching script and executes it.
-func (s *ScriptedLLM) findAndExecuteScript(ctx context.Context, prompt, sessionID string) (*claude.LLMResponse, bool, error) {
+func (s *ScriptedLLM) findAndExecuteScript(
+	ctx context.Context,
+	prompt, sessionID string,
+) (*claude.LLMResponse, bool, error) {
 	for i, script := range s.scripts {
 		if !s.scriptMatches(&script, i, prompt, sessionID) {
 			continue
@@ -176,7 +201,11 @@ func (s *ScriptedLLM) findAndExecuteScript(ctx context.Context, prompt, sessionI
 }
 
 // scriptMatches checks if a script matches the current call.
-func (s *ScriptedLLM) scriptMatches(script *ScriptedResponse, index int, prompt, sessionID string) bool {
+func (s *ScriptedLLM) scriptMatches(
+	script *ScriptedResponse,
+	index int,
+	prompt, sessionID string,
+) bool {
 	// Skip already used non-repeatable scripts
 	if !script.Repeatable && index < s.currentIndex {
 		return false
@@ -206,7 +235,11 @@ func matchesPattern(pattern, value string) bool {
 }
 
 // executeScript executes a matched script.
-func (s *ScriptedLLM) executeScript(ctx context.Context, script *ScriptedResponse, prompt, sessionID string) (*claude.LLMResponse, bool, error) {
+func (s *ScriptedLLM) executeScript(
+	ctx context.Context,
+	script *ScriptedResponse,
+	prompt, sessionID string,
+) (*claude.LLMResponse, bool, error) {
 	// Execute callback if provided
 	if script.BeforeReturn != nil {
 		script.BeforeReturn(prompt, sessionID)
@@ -237,7 +270,7 @@ func (s *ScriptedLLM) simulateDelay(ctx context.Context, delay time.Duration) er
 		// Delay completed
 		return nil
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("context cancelled during delay: %w", ctx.Err())
 	}
 }
 
@@ -261,8 +294,8 @@ func (s *ScriptedLLM) handleNoMatch(prompt, sessionID string) (*claude.LLMRespon
 		Message: "No script configured for this prompt",
 		Metadata: claude.ResponseMetadata{
 			ModelVersion: "test",
-			Latency:      50 * time.Millisecond,
-			TokensUsed:   10,
+			Latency:      fallbackLatencyMS * time.Millisecond,
+			TokensUsed:   fallbackTokensUsed,
 		},
 	}, nil
 }

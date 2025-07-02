@@ -3,7 +3,7 @@ package queue_test
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/Veraticus/mentat/internal/claude"
@@ -50,13 +50,16 @@ func ExampleSystem() {
 	// Create the queue system
 	system, err := queue.NewSystem(ctx, config)
 	if err != nil {
-		log.Printf("Failed to create queue system: %v", err)
+		logger := slog.Default()
+		logger.ErrorContext(ctx, "Failed to create queue system", slog.Any("error", err))
 		return
 	}
 
 	// Start the system
-	if err := system.Start(); err != nil {
-		log.Printf("Failed to start queue system: %v", err)
+	err = system.Start(ctx)
+	if err != nil {
+		logger := slog.Default()
+		logger.ErrorContext(ctx, "Failed to start queue system", slog.Any("error", err))
 		return
 	}
 
@@ -68,8 +71,10 @@ func ExampleSystem() {
 		Timestamp:  time.Now(),
 	}
 
-	if err := system.Enqueue(msg); err != nil {
-		log.Printf("Failed to enqueue message: %v", err)
+	err = system.Enqueue(msg)
+	if err != nil {
+		logger := slog.Default()
+		logger.ErrorContext(ctx, "Failed to enqueue message", slog.Any("error", err))
 	}
 
 	// Wait for message to be processed
@@ -89,19 +94,23 @@ func ExampleSystem() {
 
 	// Scale workers if needed
 	if stats.TotalQueued > 10 {
-		if err := system.ScaleWorkers(2); err != nil {
-			log.Printf("Failed to scale workers: %v", err)
+		err = system.ScaleWorkers(2)
+		if err != nil {
+			logger := slog.Default()
+			logger.ErrorContext(ctx, "Failed to scale workers", slog.Any("error", err))
 		}
 	}
 
 	// Graceful shutdown
-	if err := system.Stop(); err != nil {
-		log.Printf("Failed to stop system: %v", err)
+	err = system.Stop()
+	if err != nil {
+		logger := slog.Default()
+		logger.ErrorContext(ctx, "Failed to stop system", slog.Any("error", err))
 	}
 
 	// Output:
 	// Sending to +1234567890: I received your message: Hello, world!
-	// Queue stats: {TotalQueued:0 TotalProcessing:0 TotalCompleted:1 TotalFailed:0 ConversationCount:1 OldestMessageAge:0s AverageWaitTime:0s AverageProcessTime:0s ActiveWorkers:3 HealthyWorkers:3}
+	// Queue stats: {TotalQueued:0 TotalProcessing:0 TotalCompleted:1 TotalFailed:0 ConversationCount:1 LongestMessageAge:0s AverageWaitTime:0s AverageProcessTime:0s ActiveWorkers:3 HealthyWorkers:3}
 }
 
 // Mock implementations for the example.

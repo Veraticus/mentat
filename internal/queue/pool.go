@@ -2,14 +2,25 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/Veraticus/mentat/internal/claude"
 	"github.com/Veraticus/mentat/internal/signal"
+)
+
+// Pool constants.
+const (
+	// workerSizeMultiplier is used to calculate default max size from min size.
+	workerSizeMultiplier = 2
+	// commandChannelSize is the buffer size for pool commands.
+	commandChannelSize = 10
+	// commandTimeout is the timeout for sending/receiving commands.
+	commandTimeout = 2 * time.Second
 )
 
 // PoolConfig holds configuration for the WorkerPool.
@@ -49,11 +60,10 @@ type DynamicWorkerPool struct {
 	workerDone chan string
 
 	// Synchronization
-	ctx          context.Context
 	cancel       context.CancelFunc
 	wg           sync.WaitGroup
-	workerCtx    context.Context
 	workerCancel context.CancelFunc
+	stopCh       chan struct{}
 
 	// Metrics
 	activeWorkers atomic.Int32
@@ -61,7 +71,7 @@ type DynamicWorkerPool struct {
 }
 
 // NewDynamicWorkerPool creates a new dynamic worker pool.
-func NewDynamicWorkerPool(config PoolConfig) (*DynamicWorkerPool, error) {
+func NewDynamicWorkerPool(ctx context.Context, config PoolConfig) (*DynamicWorkerPool, error) {
 	if config.InitialSize < 1 {
 		return nil, fmt.Errorf("initial size must be at least 1")
 	}
@@ -69,33 +79,32 @@ func NewDynamicWorkerPool(config PoolConfig) (*DynamicWorkerPool, error) {
 		config.MinSize = 1
 	}
 	if config.MaxSize < config.MinSize {
-		config.MaxSize = config.MinSize * 2
+		config.MaxSize = config.MinSize * workerSizeMultiplier
 	}
 	if config.PanicHandler == nil {
 		config.PanicHandler = NewDefaultPanicHandler()
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	workerCtx, workerCancel := context.WithCancel(context.Background())
+	_, cancel := context.WithCancel(context.Background())
+	_, workerCancel := context.WithCancel(context.Background())
 
 	pool := &DynamicWorkerPool{
 		config:       config,
 		workers:      make(map[string]*workerInfo),
 		typingMgr:    signal.NewTypingIndicatorManager(config.Messenger),
 		panicHandler: config.PanicHandler,
-		commands:     make(chan poolCommand, 10),
+		commands:     make(chan poolCommand, commandChannelSize),
 		workerDone:   make(chan string, config.MaxSize),
-		ctx:          ctx,
 		cancel:       cancel,
-		workerCtx:    workerCtx,
 		workerCancel: workerCancel,
+		stopCh:       make(chan struct{}),
 	}
 
 	// Create initial workers
-	for i := 0; i < config.InitialSize; i++ {
-		if _, err := pool.createWorker(); err != nil {
+	for range config.InitialSize {
+		if _, err := pool.createWorker(ctx); err != nil {
 			// Clean up any created workers
-			pool.Stop()
+			pool.Stop(context.Background())
 			return nil, fmt.Errorf("failed to create initial workers: %w", err)
 		}
 	}
@@ -107,7 +116,7 @@ func NewDynamicWorkerPool(config PoolConfig) (*DynamicWorkerPool, error) {
 func (p *DynamicWorkerPool) Start(ctx context.Context) error {
 	// Start the pool manager goroutine
 	p.wg.Add(1)
-	go p.manage()
+	go p.manage(ctx)
 
 	// Start all initial workers
 	for id, wi := range p.workers {
@@ -118,34 +127,36 @@ func (p *DynamicWorkerPool) Start(ctx context.Context) error {
 }
 
 // manage handles pool commands and worker lifecycle.
-func (p *DynamicWorkerPool) manage() {
+func (p *DynamicWorkerPool) manage(ctx context.Context) {
 	defer p.wg.Done()
 
 	for {
 		select {
-		case <-p.ctx.Done():
+		case <-ctx.Done():
+			return
+		case <-p.stopCh:
 			return
 
 		case cmd := <-p.commands:
 			switch cmd.cmd {
 			case "add":
-				cmd.response <- p.addWorkers(cmd.count)
+				cmd.response <- p.addWorkers(ctx, cmd.count)
 			case "remove":
-				cmd.response <- p.removeWorkers(cmd.count)
+				cmd.response <- p.removeWorkers(ctx, cmd.count)
 			case "stop":
-				p.stopAllWorkers()
+				p.stopAllWorkers(ctx)
 				cmd.response <- nil
 				return
 			}
 
 		case workerID := <-p.workerDone:
-			p.handleWorkerDone(workerID)
+			p.handleWorkerDone(ctx, workerID)
 		}
 	}
 }
 
 // createWorker creates a new worker and adds it to the pool.
-func (p *DynamicWorkerPool) createWorker() (string, error) {
+func (p *DynamicWorkerPool) createWorker(ctx context.Context) (string, error) {
 	id := int(p.nextWorkerID.Add(1))
 
 	config := WorkerConfig{
@@ -167,12 +178,13 @@ func (p *DynamicWorkerPool) createWorker() (string, error) {
 
 	p.activeWorkers.Add(1)
 
-	log.Printf("Created worker %s", workerID)
+	logger := slog.Default()
+	logger.InfoContext(ctx, "Created worker", slog.String("worker_id", workerID))
 	return workerID, nil
 }
 
 // startWorker starts a worker in a new goroutine.
-func (p *DynamicWorkerPool) startWorker(_ context.Context, id string, worker Worker) {
+func (p *DynamicWorkerPool) startWorker(ctx context.Context, id string, worker Worker) {
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
@@ -184,27 +196,32 @@ func (p *DynamicWorkerPool) startWorker(_ context.Context, id string, worker Wor
 				if HandleRecoveredPanic(id, r, p.panicHandler) {
 					select {
 					case p.workerDone <- id:
-					case <-p.ctx.Done():
+					case <-p.stopCh:
 					}
 				}
 			} else {
 				// Normal exit - always replace worker
 				select {
 				case p.workerDone <- id:
-				case <-p.ctx.Done():
+				case <-p.stopCh:
 				}
 			}
 		}()
 
-		log.Printf("Starting worker %s", id)
-		if err := worker.Start(p.workerCtx); err != nil && err != context.Canceled {
-			log.Printf("Worker %s stopped with error: %v", id, err)
+		logger := slog.Default()
+		logger.InfoContext(ctx, "Starting worker", slog.String("workerID", id))
+		workerCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		if err := worker.Start(workerCtx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.ErrorContext(workerCtx, "Worker stopped with error",
+				slog.String("workerID", id),
+				slog.Any("error", err))
 		}
 	}()
 }
 
 // addWorkers adds the specified number of workers to the pool.
-func (p *DynamicWorkerPool) addWorkers(count int) error {
+func (p *DynamicWorkerPool) addWorkers(ctx context.Context, count int) error {
 	currentSize := len(p.workers)
 	maxAdd := p.config.MaxSize - currentSize
 
@@ -216,24 +233,25 @@ func (p *DynamicWorkerPool) addWorkers(count int) error {
 		count = maxAdd
 	}
 
-	for i := 0; i < count; i++ {
-		workerID, err := p.createWorker()
+	for range count {
+		workerID, err := p.createWorker(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to add worker: %w", err)
 		}
 
 		// Start the new worker
 		if wi, ok := p.workers[workerID]; ok {
-			p.startWorker(p.ctx, workerID, wi.worker)
+			p.startWorker(ctx, workerID, wi.worker)
 		}
 	}
 
-	log.Printf("Added %d workers, pool size now %d", count, len(p.workers))
+	logger := slog.Default()
+	logger.InfoContext(ctx, "Added workers", slog.Int("count", count), slog.Int("pool_size", len(p.workers)))
 	return nil
 }
 
 // removeWorkers removes the specified number of workers from the pool.
-func (p *DynamicWorkerPool) removeWorkers(count int) error {
+func (p *DynamicWorkerPool) removeWorkers(ctx context.Context, count int) error {
 	currentSize := len(p.workers)
 	maxRemove := currentSize - p.config.MinSize
 
@@ -254,49 +272,60 @@ func (p *DynamicWorkerPool) removeWorkers(count int) error {
 
 		if wi, ok := p.workers[id]; ok {
 			if err := wi.worker.Stop(); err != nil {
-				log.Printf("Failed to stop worker %s: %v", id, err)
+				logger := slog.Default()
+				logger.ErrorContext(ctx, "Failed to stop worker", slog.String("worker_id", id), slog.Any("error", err))
 			}
 			delete(p.workers, id)
 			p.activeWorkers.Add(-1)
 			removed++
-			log.Printf("Removed worker %s", id)
+			logger := slog.Default()
+			logger.InfoContext(ctx, "Removed worker", slog.String("worker_id", id))
 		}
 	}
 
-	log.Printf("Removed %d workers, pool size now %d", removed, len(p.workers))
+	logger := slog.Default()
+	logger.InfoContext(ctx, "Removed workers", slog.Int("count", removed), slog.Int("pool_size", len(p.workers)))
 	return nil
 }
 
 // handleWorkerDone handles a worker that has stopped.
-func (p *DynamicWorkerPool) handleWorkerDone(workerID string) {
-	if _, ok := p.workers[workerID]; ok {
-		delete(p.workers, workerID)
-		p.activeWorkers.Add(-1)
+func (p *DynamicWorkerPool) handleWorkerDone(ctx context.Context, workerID string) {
+	_, ok := p.workers[workerID]
+	if !ok {
+		return
+	}
 
-		log.Printf("Worker %s stopped", workerID)
+	delete(p.workers, workerID)
+	p.activeWorkers.Add(-1)
+	logger := slog.Default()
+	logger.InfoContext(ctx, "Worker stopped", slog.String("worker_id", workerID))
 
-		// Replace the worker if we're below minimum size
-		if len(p.workers) < p.config.MinSize {
-			newWorkerID, err := p.createWorker()
-			if err != nil {
-				log.Printf("Failed to replace stopped worker: %v", err)
-			} else {
-				// Start the replacement worker
-				if wi, ok := p.workers[newWorkerID]; ok {
-					p.startWorker(p.ctx, newWorkerID, wi.worker)
-				}
-			}
-		}
+	// Replace the worker if we're below minimum size
+	if len(p.workers) >= p.config.MinSize {
+		return
+	}
+
+	newWorkerID, err := p.createWorker(ctx)
+	if err != nil {
+		logger.ErrorContext(ctx, "Failed to replace stopped worker", slog.Any("error", err))
+		return
+	}
+
+	// Start the replacement worker
+	wi, ok := p.workers[newWorkerID]
+	if ok {
+		p.startWorker(ctx, newWorkerID, wi.worker)
 	}
 }
 
 // stopAllWorkers stops all workers in the pool.
-func (p *DynamicWorkerPool) stopAllWorkers() {
-	log.Printf("Stopping all %d workers", len(p.workers))
+func (p *DynamicWorkerPool) stopAllWorkers(ctx context.Context) {
+	logger := slog.Default()
+	logger.InfoContext(ctx, "Stopping all workers", slog.Int("count", len(p.workers)))
 
 	for id, wi := range p.workers {
 		if err := wi.worker.Stop(); err != nil {
-			log.Printf("Failed to stop worker %s: %v", id, err)
+			logger.ErrorContext(ctx, "Failed to stop worker", slog.String("worker_id", id), slog.Any("error", err))
 		}
 		delete(p.workers, id)
 	}
@@ -320,7 +349,7 @@ func (p *DynamicWorkerPool) ScaleUp(count int) error {
 	select {
 	case p.commands <- cmd:
 		return <-cmd.response
-	case <-p.ctx.Done():
+	case <-p.stopCh:
 		return fmt.Errorf("pool is shutting down")
 	}
 }
@@ -336,7 +365,7 @@ func (p *DynamicWorkerPool) ScaleDown(count int) error {
 	select {
 	case p.commands <- cmd:
 		return <-cmd.response
-	case <-p.ctx.Done():
+	case <-p.stopCh:
 		return fmt.Errorf("pool is shutting down")
 	}
 }
@@ -347,8 +376,9 @@ func (p *DynamicWorkerPool) Size() int {
 }
 
 // Stop gracefully stops the worker pool.
-func (p *DynamicWorkerPool) Stop() {
-	log.Printf("Stopping worker pool")
+func (p *DynamicWorkerPool) Stop(ctx context.Context) {
+	logger := slog.Default()
+	logger.InfoContext(ctx, "Stopping worker pool")
 
 	// Send stop command first (before canceling contexts)
 	cmd := poolCommand{
@@ -361,16 +391,23 @@ func (p *DynamicWorkerPool) Stop() {
 		select {
 		case <-cmd.response:
 			// Command processed - workers have been stopped
-		case <-time.After(2 * time.Second):
-			log.Printf("Timeout waiting for stop command response")
+		case <-time.After(commandTimeout):
+			logger.WarnContext(ctx, "Timeout waiting for stop command response")
 		}
-	case <-time.After(2 * time.Second):
-		log.Printf("Timeout sending stop command")
+	case <-time.After(commandTimeout):
+		logger.WarnContext(ctx, "Timeout sending stop command")
 	}
 
 	// Now cancel contexts to ensure everything shuts down
 	p.workerCancel()
 	p.cancel()
+	// Close stop channel if not already closed
+	select {
+	case <-p.stopCh:
+		// Already closed
+	default:
+		close(p.stopCh)
+	}
 }
 
 // Wait blocks until all workers have stopped.

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -175,8 +176,8 @@ func TestUnixSocketTransport_BasicOperations(t *testing.T) {
 	var resp struct {
 		Timestamp int64 `json:"timestamp"`
 	}
-	if err := json.Unmarshal(*result, &resp); err != nil {
-		t.Fatalf("Failed to unmarshal result: %v", err)
+	if unmarshalErr := json.Unmarshal(*result, &resp); unmarshalErr != nil {
+		t.Fatalf("Failed to unmarshal result: %v", unmarshalErr)
 	}
 	if resp.Timestamp != 1699564800000 {
 		t.Errorf("Expected timestamp 1699564800000, got %d", resp.Timestamp)
@@ -212,8 +213,8 @@ func TestUnixSocketTransport_ErrorHandling(t *testing.T) {
 	}
 
 	// Check error is RPCError
-	rpcErr, ok := err.(*RPCError)
-	if !ok {
+	var rpcErr *RPCError
+	if !errors.As(err, &rpcErr) {
 		t.Fatalf("Expected RPCError, got %T", err)
 	}
 	if rpcErr.Code != -32001 {
@@ -248,15 +249,15 @@ func TestUnixSocketTransport_ConcurrentCalls(t *testing.T) {
 	var wg sync.WaitGroup
 	errors := make(chan error, 10)
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			_, err := transport.Call(ctx, "test", map[string]any{
+			_, callErr := transport.Call(ctx, "test", map[string]any{
 				"id": id,
 			})
-			if err != nil {
-				errors <- err
+			if callErr != nil {
+				errors <- callErr
 			}
 		}(i)
 	}
@@ -291,7 +292,7 @@ func TestUnixSocketTransport_ContextCancellation(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected timeout error")
 	}
-	if err != context.DeadlineExceeded {
+	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("Expected DeadlineExceeded, got %v", err)
 	}
 }

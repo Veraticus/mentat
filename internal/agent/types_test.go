@@ -1,17 +1,19 @@
-package agent
+package agent_test
 
 import (
 	"testing"
+
+	"github.com/Veraticus/mentat/internal/agent"
 )
 
 func TestValidationStatusConstants(t *testing.T) {
 	// Verify that validation status constants have expected values
-	expectedStatuses := map[ValidationStatus]string{
-		ValidationStatusSuccess:          "SUCCESS",
-		ValidationStatusPartial:          "PARTIAL",
-		ValidationStatusFailed:           "FAILED",
-		ValidationStatusUnclear:          "UNCLEAR",
-		ValidationStatusIncompleteSearch: "INCOMPLETE_SEARCH",
+	expectedStatuses := map[agent.ValidationStatus]string{
+		agent.ValidationStatusSuccess:          "SUCCESS",
+		agent.ValidationStatusPartial:          "PARTIAL",
+		agent.ValidationStatusFailed:           "FAILED",
+		agent.ValidationStatusUnclear:          "UNCLEAR",
+		agent.ValidationStatusIncompleteSearch: "INCOMPLETE_SEARCH",
 	}
 
 	for status, expected := range expectedStatuses {
@@ -22,7 +24,7 @@ func TestValidationStatusConstants(t *testing.T) {
 }
 
 func TestValidationResultZeroValue(t *testing.T) {
-	var result ValidationResult
+	var result agent.ValidationResult
 
 	// Zero value should be identifiable as uninitialized
 	if result.Status != "" {
@@ -43,8 +45,8 @@ func TestValidationResultZeroValue(t *testing.T) {
 }
 
 func TestValidationResultCreation(t *testing.T) {
-	result := ValidationResult{
-		Status:      ValidationStatusSuccess,
+	result := agent.ValidationResult{
+		Status:      agent.ValidationStatusSuccess,
 		Issues:      []string{"Issue 1", "Issue 2"},
 		Suggestions: []string{"Suggestion 1", "Suggestion 2"},
 		Confidence:  0.95,
@@ -54,7 +56,7 @@ func TestValidationResultCreation(t *testing.T) {
 		},
 	}
 
-	if result.Status != ValidationStatusSuccess {
+	if result.Status != agent.ValidationStatusSuccess {
 		t.Error("Status not set correctly")
 	}
 	if len(result.Issues) != 2 {
@@ -72,7 +74,7 @@ func TestValidationResultCreation(t *testing.T) {
 }
 
 func TestConfigZeroValue(t *testing.T) {
-	var cfg Config
+	var cfg agent.Config
 
 	// Zero value should have sensible defaults
 	if cfg.MaxRetries != 0 {
@@ -88,7 +90,7 @@ func TestConfigZeroValue(t *testing.T) {
 
 func TestConfigDefaults(t *testing.T) {
 	// Test that a config with defaults provides useful values
-	cfg := Config{
+	cfg := agent.Config{
 		MaxRetries:              2,
 		EnableIntentEnhancement: true,
 		ValidationThreshold:     0.8,
@@ -107,22 +109,22 @@ func TestConfigDefaults(t *testing.T) {
 
 func TestValidationStatusIsSuccess(t *testing.T) {
 	tests := []struct {
-		status   ValidationStatus
+		status   agent.ValidationStatus
 		expected bool
 	}{
-		{ValidationStatusSuccess, true},
-		{ValidationStatusPartial, false},
-		{ValidationStatusFailed, false},
-		{ValidationStatusUnclear, false},
-		{ValidationStatusIncompleteSearch, false},
-		{ValidationStatus("UNKNOWN"), false},
+		{agent.ValidationStatusSuccess, true},
+		{agent.ValidationStatusPartial, false},
+		{agent.ValidationStatusFailed, false},
+		{agent.ValidationStatusUnclear, false},
+		{agent.ValidationStatusIncompleteSearch, false},
+		{agent.ValidationStatus("UNKNOWN"), false},
 	}
 
 	for _, tt := range tests {
 		t.Run(string(tt.status), func(t *testing.T) {
 			// This test assumes there might be an IsSuccess method
 			// If not, we're just testing the constant values
-			isSuccess := tt.status == ValidationStatusSuccess
+			isSuccess := tt.status == agent.ValidationStatusSuccess
 			if isSuccess != tt.expected {
 				t.Errorf("Expected %s success to be %v", tt.status, tt.expected)
 			}
@@ -131,16 +133,16 @@ func TestValidationStatusIsSuccess(t *testing.T) {
 }
 
 func TestValidationResultWithDifferentStatuses(t *testing.T) {
-	statuses := []ValidationStatus{
-		ValidationStatusSuccess,
-		ValidationStatusPartial,
-		ValidationStatusFailed,
-		ValidationStatusUnclear,
-		ValidationStatusIncompleteSearch,
+	statuses := []agent.ValidationStatus{
+		agent.ValidationStatusSuccess,
+		agent.ValidationStatusPartial,
+		agent.ValidationStatusFailed,
+		agent.ValidationStatusUnclear,
+		agent.ValidationStatusIncompleteSearch,
 	}
 
 	for _, status := range statuses {
-		result := ValidationResult{
+		result := agent.ValidationResult{
 			Status:     status,
 			Confidence: 0.5,
 		}
@@ -156,15 +158,15 @@ func TestValidationResultWithDifferentStatuses(t *testing.T) {
 
 		// Verify we can distinguish between different statuses
 		switch result.Status {
-		case ValidationStatusSuccess:
+		case agent.ValidationStatusSuccess:
 			// Success case
-		case ValidationStatusPartial:
+		case agent.ValidationStatusPartial:
 			// Partial case
-		case ValidationStatusFailed:
+		case agent.ValidationStatusFailed:
 			// Failed case
-		case ValidationStatusUnclear:
+		case agent.ValidationStatusUnclear:
 			// Unclear case
-		case ValidationStatusIncompleteSearch:
+		case agent.ValidationStatusIncompleteSearch:
 			// Incomplete search case
 		default:
 			t.Errorf("Unexpected status: %s", result.Status)
@@ -174,8 +176,8 @@ func TestValidationResultWithDifferentStatuses(t *testing.T) {
 
 func TestValidationResultNilSafety(t *testing.T) {
 	// Test that nil slices and maps work correctly
-	result := ValidationResult{
-		Status:      ValidationStatusSuccess,
+	result := agent.ValidationResult{
+		Status:      agent.ValidationStatusSuccess,
 		Issues:      nil,
 		Suggestions: nil,
 		Metadata:    nil,
@@ -183,7 +185,7 @@ func TestValidationResultNilSafety(t *testing.T) {
 	}
 
 	// Verify all fields are set correctly
-	if result.Status != ValidationStatusSuccess {
+	if result.Status != agent.ValidationStatusSuccess {
 		t.Error("Status not set correctly")
 	}
 	if result.Confidence != 1.0 {

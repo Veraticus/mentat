@@ -31,7 +31,7 @@ func NewConversationQueueWithDepth(conversationID string, maxDepth int) *Convers
 	}
 	return &ConversationQueue{
 		conversationID: conversationID,
-		messages:       list.New(),
+		messages:       &list.List{},
 		maxDepth:       maxDepth,
 	}
 }

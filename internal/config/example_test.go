@@ -33,8 +33,8 @@ func ExampleWriteMCPConfig() {
 	// Generate and write MCP config to a file
 	mcpConfig := config.GenerateMCPConfig()
 	configPath := filepath.Join(tmpDir, "mcp-config.json")
-	if err := config.WriteMCPConfig(mcpConfig, configPath); err != nil {
-		fmt.Println("Error writing config:", err)
+	if writeErr := config.WriteMCPConfig(mcpConfig, configPath); writeErr != nil {
+		fmt.Println("Error writing config:", writeErr)
 		return
 	}
 

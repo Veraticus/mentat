@@ -127,12 +127,12 @@ func TestMessageQueue_Stats(t *testing.T) {
 	verifyQueueStats(t, q)
 }
 
-// setupTestMessages enqueues test messages and processes some of them
+// setupTestMessages enqueues test messages and processes some of them.
 func setupTestMessages(t *testing.T, q MessageQueue) []string {
 	t.Helper()
 
 	// Enqueue multiple messages
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		msg := signal.IncomingMessage{
 			From:       fmt.Sprintf("User %d", i%2),
 			FromNumber: fmt.Sprintf("+123456789%d", i%2), // 2 conversations
@@ -147,7 +147,7 @@ func setupTestMessages(t *testing.T, q MessageQueue) []string {
 
 	// Process some messages and store their IDs
 	var msgIDs []string
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		qMsg, err := q.GetNext(fmt.Sprintf("worker-%d", i))
 		if err != nil {
 			t.Fatalf("Failed to get message: %v", err)
@@ -160,7 +160,7 @@ func setupTestMessages(t *testing.T, q MessageQueue) []string {
 	return msgIDs
 }
 
-// simulateMessageFailures simulates permanent and temporary failures
+// simulateMessageFailures simulates permanent and temporary failures.
 func simulateMessageFailures(t *testing.T, q MessageQueue, msgIDs []string) {
 	t.Helper()
 
@@ -175,7 +175,7 @@ func simulateMessageFailures(t *testing.T, q MessageQueue, msgIDs []string) {
 	}
 }
 
-// simulatePermanentFailure simulates a permanent failure
+// simulatePermanentFailure simulates a permanent failure.
 func simulatePermanentFailure(t *testing.T, q MessageQueue, msgID string) {
 	t.Helper()
 
@@ -197,7 +197,7 @@ func simulatePermanentFailure(t *testing.T, q MessageQueue, msgID string) {
 	}
 }
 
-// simulateTemporaryFailure simulates a temporary failure
+// simulateTemporaryFailure simulates a temporary failure.
 func simulateTemporaryFailure(t *testing.T, q MessageQueue, msgID string) {
 	t.Helper()
 
@@ -218,7 +218,7 @@ func simulateTemporaryFailure(t *testing.T, q MessageQueue, msgID string) {
 	}
 }
 
-// verifyQueueStats verifies the queue statistics
+// verifyQueueStats verifies the queue statistics.
 func verifyQueueStats(t *testing.T, q MessageQueue) {
 	t.Helper()
 
@@ -245,8 +245,8 @@ func verifyQueueStats(t *testing.T, q MessageQueue) {
 		t.Errorf("Expected 2 conversations, got %d", stats.ConversationCount)
 	}
 
-	if stats.OldestMessageAge < 0 {
-		t.Error("OldestMessageAge should be positive")
+	if stats.LongestMessageAge < 0 {
+		t.Error("LongestMessageAge should be positive")
 	}
 }
 
@@ -255,7 +255,7 @@ func TestMessageQueue_FIFO(t *testing.T) {
 
 	// Enqueue messages with slight delays
 	var enqueuedMsgs []signal.IncomingMessage
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		msg := signal.IncomingMessage{
 			From:       "John Doe",
 			FromNumber: "+1234567890",
@@ -271,7 +271,7 @@ func TestMessageQueue_FIFO(t *testing.T) {
 	}
 
 	// Get messages and verify FIFO order
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		queuedMsg, err := q.GetNext(fmt.Sprintf("worker-%d", i))
 		if err != nil {
 			t.Fatalf("Failed to get message: %v", err)

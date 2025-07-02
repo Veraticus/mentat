@@ -208,8 +208,8 @@ func (c *client) Send(ctx context.Context, req *SendRequest) (*SendResponse, err
 
 	// Parse response
 	var resp SendResponse
-	if err := json.Unmarshal(*result, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+	if unmarshalErr := json.Unmarshal(*result, &resp); unmarshalErr != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", unmarshalErr)
 	}
 
 	// Validate response has required field
@@ -232,11 +232,19 @@ func (c *client) SendTypingIndicator(ctx context.Context, recipient string, stop
 	}
 
 	_, err := c.transport.Call(ctx, "sendTyping", params)
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to send typing indicator: %w", err)
+	}
+	return nil
 }
 
 // SendReceipt implements Client.SendReceipt.
-func (c *client) SendReceipt(ctx context.Context, recipient string, timestamp int64, receiptType string) error {
+func (c *client) SendReceipt(
+	ctx context.Context,
+	recipient string,
+	timestamp int64,
+	receiptType string,
+) error {
 	params := map[string]any{
 		"recipient":       []string{recipient},
 		"targetTimestamp": timestamp,
@@ -248,7 +256,10 @@ func (c *client) SendReceipt(ctx context.Context, recipient string, timestamp in
 	}
 
 	_, err := c.transport.Call(ctx, "sendReceipt", params)
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to send receipt: %w", err)
+	}
+	return nil
 }
 
 // Subscribe implements Client.Subscribe.
@@ -256,7 +267,7 @@ func (c *client) Subscribe(ctx context.Context) (<-chan *Envelope, error) {
 	// Get notification channel from transport
 	notifications, err := c.transport.Subscribe(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to subscribe to notifications: %w", err)
 	}
 
 	// Create envelope channel
@@ -269,7 +280,11 @@ func (c *client) Subscribe(ctx context.Context) (<-chan *Envelope, error) {
 }
 
 // processNotifications handles incoming notifications and converts them to envelopes.
-func (c *client) processNotifications(ctx context.Context, notifications <-chan *Notification, envelopes chan<- *Envelope) {
+func (c *client) processNotifications(
+	ctx context.Context,
+	notifications <-chan *Notification,
+	envelopes chan<- *Envelope,
+) {
 	defer close(envelopes)
 
 	for {
@@ -286,7 +301,11 @@ func (c *client) processNotifications(ctx context.Context, notifications <-chan 
 }
 
 // handleNotification processes a single notification.
-func (c *client) handleNotification(ctx context.Context, notif *Notification, envelopes chan<- *Envelope) {
+func (c *client) handleNotification(
+	ctx context.Context,
+	notif *Notification,
+	envelopes chan<- *Envelope,
+) {
 	// Only process "receive" notifications
 	if notif.Method != "receive" {
 		return
@@ -319,7 +338,10 @@ func (c *client) parseEnvelope(notif *Notification) *Envelope {
 
 // Close implements Client.Close.
 func (c *client) Close() error {
-	return c.transport.Close()
+	if err := c.transport.Close(); err != nil {
+		return fmt.Errorf("failed to close transport: %w", err)
+	}
+	return nil
 }
 
 // MockClient implements Client for testing.
@@ -427,7 +449,12 @@ func (m *MockClient) SendTypingIndicator(ctx context.Context, recipient string, 
 }
 
 // SendReceipt implements Client.SendReceipt.
-func (m *MockClient) SendReceipt(ctx context.Context, recipient string, timestamp int64, receiptType string) error {
+func (m *MockClient) SendReceipt(
+	ctx context.Context,
+	recipient string,
+	timestamp int64,
+	receiptType string,
+) error {
 	return m.SendReceiptFunc(ctx, recipient, timestamp, receiptType)
 }
 

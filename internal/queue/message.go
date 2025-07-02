@@ -2,18 +2,27 @@ package queue
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/Veraticus/mentat/internal/signal"
+)
+
+// Message constants.
+const (
+	// defaultMaxAttempts is the default maximum retry attempts for a message.
+	defaultMaxAttempts = 3
+	// jitterDivisor is used to calculate jitter (10% jitter).
+	jitterDivisor = 10
 )
 
 // NewQueuedMessage creates a new queued message from a Signal message.
 func NewQueuedMessage(msg signal.IncomingMessage, priority Priority) *QueuedMessage {
 	now := time.Now()
 	// Generate ID from timestamp and sender
-	id := fmt.Sprintf("%d-%s", msg.Timestamp.UnixNano(), msg.From)
+	id := strconv.FormatInt(msg.Timestamp.UnixNano(), 10) + "-" + msg.From
 	// ConversationID is based on the sender
-	conversationID := fmt.Sprintf("conv-%s", msg.From)
+	conversationID := "conv-" + msg.From
 
 	return &QueuedMessage{
 		ID:             id,
@@ -32,7 +41,7 @@ func NewQueuedMessage(msg signal.IncomingMessage, priority Priority) *QueuedMess
 		},
 		QueuedAt:     now,
 		Attempts:     0,
-		MaxAttempts:  3,
+		MaxAttempts:  defaultMaxAttempts,
 		ErrorHistory: []ErrorRecord{},
 	}
 }
@@ -78,6 +87,8 @@ func (q *QueuedMessage) WithState(newState MessageState, reason string) (*Queued
 		retryDelay := CalculateRetryDelay(newMsg.Attempts)
 		retryTime := now.Add(retryDelay)
 		newMsg.NextRetryAt = &retryTime
+	case MessageStateQueued, MessageStateValidating, MessageStateFailed:
+		// No timing updates needed for these states
 	}
 
 	return newMsg, nil
@@ -257,7 +268,7 @@ func CalculateRetryDelay(attempts int) time.Duration {
 	}
 
 	// Add 10% jitter
-	jitterRange := delay / 10
+	jitterRange := delay / jitterDivisor
 	if jitterRange > 0 {
 		// Use modulo to get a value within jitter range
 		jitter := time.Duration(time.Now().UnixNano() % int64(jitterRange))

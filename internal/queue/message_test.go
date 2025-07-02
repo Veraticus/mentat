@@ -236,7 +236,7 @@ func TestQueuedMessage_WithState(t *testing.T) {
 
 func TestQueuedMessage_WithError(t *testing.T) {
 	msg := createTestMessage()
-	testError := errors.New("test error")
+	testError := fmt.Errorf("test error")
 
 	// Add error
 	newMsg := msg.WithError(testError, MessageStateProcessing)
@@ -250,7 +250,7 @@ func TestQueuedMessage_WithError(t *testing.T) {
 	}
 
 	// New message should have error
-	if newMsg.LastError != testError {
+	if !errors.Is(newMsg.LastError, testError) {
 		t.Errorf("expected LastError to be %v, got %v", testError, newMsg.LastError)
 	}
 
@@ -259,7 +259,7 @@ func TestQueuedMessage_WithError(t *testing.T) {
 	if len(errorHistory) != 1 {
 		t.Fatalf("expected 1 error history entry, got %d", len(errorHistory))
 	}
-	if errorHistory[0].Error != testError {
+	if !errors.Is(errorHistory[0].Error, testError) {
 		t.Errorf("expected error %v in history, got %v", testError, errorHistory[0].Error)
 	}
 	if errorHistory[0].State != MessageStateProcessing {

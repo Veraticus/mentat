@@ -3,13 +3,22 @@ package queue
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/Veraticus/mentat/internal/signal"
+)
+
+// Queue manager constants.
+const (
+	// requestTimeout is the timeout for message requests.
+	requestTimeout = 50 * time.Millisecond
+	// retryJitterDivisor is used to calculate retry jitter (20% jitter).
+	retryJitterDivisor = 5
 )
 
 // Coordinator implements the MessageQueue interface with conversation isolation.
@@ -54,11 +63,11 @@ func NewCoordinator(ctx context.Context) *Coordinator {
 			queueStartTime: time.Now(),
 		},
 		statsCollector:  NewStatsCollector(),
-		shutdownTimeout: 30 * time.Second,
+		shutdownTimeout: defaultShutdownTimeout,
 	}
 
 	// Start the underlying manager
-	go qm.manager.Start()
+	go qm.manager.Start(ctx)
 
 	return qm
 }
@@ -70,7 +79,7 @@ func (qm *Coordinator) Enqueue(msg signal.IncomingMessage) error {
 	}
 
 	// Generate ID from timestamp and sender
-	msgID := fmt.Sprintf("%d-%s", msg.Timestamp.UnixNano(), msg.From)
+	msgID := strconv.FormatInt(msg.Timestamp.UnixNano(), 10) + "-" + msg.From
 	conversationID := msg.From // Use sender as conversation ID
 
 	// Create internal Message from IncomingMessage
@@ -90,7 +99,7 @@ func (qm *Coordinator) Enqueue(msg signal.IncomingMessage) error {
 		StateHistory:   []StateTransition{},
 		QueuedAt:       time.Now(),
 		Attempts:       0,
-		MaxAttempts:    3,
+		MaxAttempts:    defaultMessageMaxAttempts,
 	}
 	qm.queuedMessages.Store(msgID, queuedMsg)
 
@@ -121,7 +130,7 @@ func (qm *Coordinator) GetNext(workerID string) (*QueuedMessage, error) {
 	}
 
 	// Use a short timeout context to avoid blocking indefinitely
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 
 	// Request from underlying manager
@@ -153,7 +162,7 @@ func (qm *Coordinator) GetNext(workerID string) (*QueuedMessage, error) {
 		From:      MessageStateQueued,
 		To:        MessageStateProcessing,
 		Timestamp: now,
-		Reason:    fmt.Sprintf("Assigned to worker %s", workerID),
+		Reason:    "Assigned to worker " + workerID,
 	})
 
 	atomic.AddInt64(&qm.stats.totalQueued, -1)
@@ -167,6 +176,112 @@ func (qm *Coordinator) GetNext(workerID string) (*QueuedMessage, error) {
 	}
 
 	return queuedMsg, nil
+}
+
+// handleCompletedState handles the transition to completed state.
+func (qm *Coordinator) handleCompletedState(msgID string, msg *Message, queuedMsg *QueuedMessage, now time.Time) error {
+	queuedMsg.CompletedAt = &now
+	qm.stats.completionTimes.Store(msgID, now)
+	atomic.AddInt64(&qm.stats.totalProcessing, -1)
+	atomic.AddInt64(&qm.stats.totalCompleted, 1)
+
+	// Record processing time if we have start time
+	if startTime, ok := qm.stats.processingTimes.Load(msgID); ok {
+		if start, isTime := startTime.(time.Time); isTime {
+			qm.statsCollector.RecordProcessingTime(now.Sub(start))
+		}
+	}
+
+	// Mark as completed in underlying manager
+	if err := qm.manager.CompleteMessage(msg); err != nil {
+		return fmt.Errorf("failed to complete message: %w", err)
+	}
+	return nil
+}
+
+// handleFailedState handles the transition to failed state.
+func (qm *Coordinator) handleFailedState(msg *Message, now time.Time) error {
+	atomic.AddInt64(&qm.stats.totalProcessing, -1)
+	atomic.AddInt64(&qm.stats.totalFailed, 1)
+
+	// Record error if present
+	if msg.Error != nil {
+		qm.recordError(msg.Error)
+	}
+
+	// Mark as completed in underlying manager (failed is terminal)
+	if err := qm.manager.CompleteMessage(msg); err != nil {
+		return fmt.Errorf("failed to mark message as failed: %w", err)
+	}
+	return nil
+}
+
+// recordError records an error in the stats collector.
+func (qm *Coordinator) recordError(err error) {
+	var errType string
+	switch {
+	case IsRateLimitError(err):
+		errType = "rate_limit"
+	case strings.Contains(strings.ToLower(err.Error()), "validation"):
+		errType = "validation"
+	default:
+		errType = "processing"
+	}
+	qm.statsCollector.RecordError(errType)
+}
+
+// handleRetryingState handles the transition to retrying state.
+func (qm *Coordinator) handleRetryingState(msgID string, msg *Message, queuedMsg *QueuedMessage, now time.Time) error {
+	queuedMsg.Attempts++
+	qm.statsCollector.RecordRetryAttempt(queuedMsg.Attempts)
+
+	// Calculate retry delay
+	retryDelay := qm.calculateRetryDelay(msgID, queuedMsg)
+
+	nextRetryTime := now.Add(retryDelay)
+	queuedMsg.NextRetryAt = &nextRetryTime
+
+	// Set the NextRetryAt on the internal message so ConversationQueue respects it
+	msg.SetNextRetryAt(nextRetryTime)
+	msg.SetState(StateQueued)
+	if err := qm.manager.Submit(msg); err != nil {
+		return fmt.Errorf("failed to requeue message for retry: %w", err)
+	}
+	atomic.AddInt64(&qm.stats.totalProcessing, -1)
+	atomic.AddInt64(&qm.stats.totalQueued, 1)
+
+	return nil
+}
+
+// calculateRetryDelay calculates the retry delay based on error type and attempt count.
+func (qm *Coordinator) calculateRetryDelay(msgID string, queuedMsg *QueuedMessage) time.Duration {
+	var retryDelay time.Duration
+
+	// Check if the last error was a rate limit error
+	if msgValue, ok := qm.messages.Load(msgID); ok {
+		if internalMsg, isMsg := msgValue.(*Message); isMsg && internalMsg.Error != nil {
+			if IsRateLimitError(internalMsg.Error) {
+				// For rate limit errors, use longer backoff
+				retryDelay = calculateRateLimitRetryDelay(queuedMsg.Attempts)
+				logger := slog.Default()
+				logger.InfoContext(context.TODO(), "Message rate limited",
+					slog.String("id", msgID),
+					slog.Duration("retry_delay", retryDelay),
+					slog.Int("attempt", queuedMsg.Attempts),
+					slog.Int("max_attempts", queuedMsg.MaxAttempts))
+			} else {
+				// For other errors, use standard exponential backoff
+				retryDelay = CalculateRetryDelay(queuedMsg.Attempts)
+			}
+		}
+	}
+
+	// If no delay was calculated, use default
+	if retryDelay == 0 {
+		retryDelay = CalculateRetryDelay(queuedMsg.Attempts)
+	}
+
+	return retryDelay
 }
 
 // UpdateState marks a message state transition.
@@ -212,82 +327,13 @@ func (qm *Coordinator) UpdateState(msgID string, state MessageState, reason stri
 	// Update timing information
 	switch state {
 	case MessageStateCompleted:
-		queuedMsg.CompletedAt = &now
-		qm.stats.completionTimes.Store(msgID, now)
-		atomic.AddInt64(&qm.stats.totalProcessing, -1)
-		atomic.AddInt64(&qm.stats.totalCompleted, 1)
-
-		// Record processing time if we have start time
-		if startTime, ok := qm.stats.processingTimes.Load(msgID); ok {
-			if start, ok := startTime.(time.Time); ok {
-				qm.statsCollector.RecordProcessingTime(now.Sub(start))
-			}
-		}
-
-		// Mark as completed in underlying manager
-		if err := qm.manager.CompleteMessage(msg); err != nil {
-			return fmt.Errorf("failed to complete message: %w", err)
-		}
+		return qm.handleCompletedState(msgID, msg, queuedMsg, now)
 	case MessageStateFailed:
-		atomic.AddInt64(&qm.stats.totalProcessing, -1)
-		atomic.AddInt64(&qm.stats.totalFailed, 1)
-
-		// Record error if present
-		if msg.Error != nil {
-			var errType string
-			switch {
-			case IsRateLimitError(msg.Error):
-				errType = "rate_limit"
-			case strings.Contains(strings.ToLower(msg.Error.Error()), "validation"):
-				errType = "validation"
-			default:
-				errType = "processing"
-			}
-			qm.statsCollector.RecordError(errType)
-		}
-
-		// Mark as completed in underlying manager (failed is terminal)
-		if err := qm.manager.CompleteMessage(msg); err != nil {
-			return fmt.Errorf("failed to mark message as failed: %w", err)
-		}
+		return qm.handleFailedState(msg, now)
 	case MessageStateRetrying:
-		queuedMsg.Attempts++
-		qm.statsCollector.RecordRetryAttempt(queuedMsg.Attempts)
-
-		// Calculate retry delay based on the error type and attempt count
-		var retryDelay time.Duration
-
-		// Check if the last error was a rate limit error
-		if msgValue, ok := qm.messages.Load(msgID); ok {
-			if internalMsg, ok := msgValue.(*Message); ok && internalMsg.Error != nil {
-				if IsRateLimitError(internalMsg.Error) {
-					// For rate limit errors, use longer backoff
-					retryDelay = calculateRateLimitRetryDelay(queuedMsg.Attempts)
-					log.Printf("Message %s rate limited, will retry after %v (attempt %d/%d)",
-						msgID, retryDelay, queuedMsg.Attempts, queuedMsg.MaxAttempts)
-				} else {
-					// For other errors, use standard exponential backoff
-					retryDelay = CalculateRetryDelay(queuedMsg.Attempts)
-				}
-			}
-		}
-
-		// If no delay was calculated, use default
-		if retryDelay == 0 {
-			retryDelay = CalculateRetryDelay(queuedMsg.Attempts)
-		}
-
-		NextRetryTime := now.Add(retryDelay)
-		queuedMsg.NextRetryAt = &NextRetryTime
-
-		// Set the NextRetryAt on the internal message so ConversationQueue respects it
-		msg.SetNextRetryAt(NextRetryTime)
-		msg.SetState(StateQueued)
-		if err := qm.manager.Submit(msg); err != nil {
-			return fmt.Errorf("failed to requeue message for retry: %w", err)
-		}
-		atomic.AddInt64(&qm.stats.totalProcessing, -1)
-		atomic.AddInt64(&qm.stats.totalQueued, 1)
+		return qm.handleRetryingState(msgID, msg, queuedMsg, now)
+	case MessageStateQueued, MessageStateProcessing, MessageStateValidating:
+		// These states don't require special handling
 	}
 
 	// Update the internal message state to match
@@ -319,7 +365,7 @@ func (qm *Coordinator) Stats() Stats {
 		return true
 	})
 
-	stats.OldestMessageAge = oldestMessageAge
+	stats.LongestMessageAge = oldestMessageAge
 	return stats
 }
 
@@ -381,7 +427,7 @@ func calculateRateLimitRetryDelay(attempts int) time.Duration {
 	}
 
 	// Add 10-20% jitter to prevent thundering herd
-	jitterRange := delay / 5 // 20% total range
+	jitterRange := delay / retryJitterDivisor // 20% total range
 	if jitterRange > 0 {
 		// Use modulo to get a value within jitter range
 		jitter := time.Duration(time.Now().UnixNano() % int64(jitterRange))

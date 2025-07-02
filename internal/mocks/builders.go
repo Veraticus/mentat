@@ -11,6 +11,26 @@ import (
 	"github.com/Veraticus/mentat/internal/storage"
 )
 
+// Test constants.
+const (
+	// defaultMaxAttempts is the default max retry attempts for test messages.
+	defaultMaxAttempts = 3
+	// defaultLatencyMS is the default response latency in milliseconds.
+	defaultLatencyMS = 1500
+	// defaultTokensUsed is the default token count for test responses.
+	defaultTokensUsed = 100
+	// highConfidence is used for successful validation results.
+	highConfidence = 0.95
+	// veryHighConfidence is used for highly confident validation results.
+	veryHighConfidence = 0.98
+	// excellentConfidence is used for near-perfect validation results.
+	excellentConfidence = 0.99
+	// lowConfidence is used for validation results needing retry.
+	lowConfidence = 0.6
+	// followUpDelaySeconds is the delay between related messages in complex scenarios.
+	followUpDelaySeconds = 30
+)
+
 // MessageBuilder creates queue.Message instances for testing.
 type MessageBuilder struct {
 	msg *queue.Message
@@ -28,7 +48,7 @@ func NewMessageBuilder() *MessageBuilder {
 			Text:           "Test message content",
 			State:          queue.StateQueued,
 			Attempts:       0,
-			MaxAttempts:    3,
+			MaxAttempts:    defaultMaxAttempts,
 			CreatedAt:      now,
 			UpdatedAt:      now,
 		},
@@ -270,8 +290,8 @@ func NewLLMResponseBuilder() *LLMResponseBuilder {
 			ToolCalls: []claude.ToolCall{},
 			Metadata: claude.ResponseMetadata{
 				ModelVersion: "claude-3-opus-20240229",
-				Latency:      1500 * time.Millisecond,
-				TokensUsed:   100,
+				Latency:      defaultLatencyMS * time.Millisecond,
+				TokensUsed:   defaultTokensUsed,
 			},
 		},
 	}
@@ -343,7 +363,7 @@ func NewValidationResultBuilder() *ValidationResultBuilder {
 	return &ValidationResultBuilder{
 		result: &agent.ValidationResult{
 			Status:      agent.ValidationStatusSuccess,
-			Confidence:  0.95,
+			Confidence:  highConfidence,
 			Issues:      []string{},
 			Suggestions: []string{},
 			Metadata:    make(map[string]string),
@@ -778,7 +798,7 @@ func CreateSimpleConversation(userMessage, assistantResponse string) *Scenario {
 
 	validation := NewValidationResultBuilder().Build(
 		WithStatus(agent.ValidationStatusSuccess),
-		WithConfidence(0.98),
+		WithConfidence(veryHighConfidence),
 	)
 
 	return NewScenarioBuilder("Simple Conversation").Build(
@@ -835,7 +855,7 @@ func CreateRetryScenario() *Scenario {
 	// Validation says incomplete
 	validation1 := NewValidationResultBuilder().Build(
 		WithStatus(agent.ValidationStatusIncompleteSearch),
-		WithConfidence(0.6),
+		WithConfidence(lowConfidence),
 		WithIssues("Did not check calendar MCP tool"),
 		WithMetadata(map[string]string{
 			"requires_retry":   "true",
@@ -857,7 +877,7 @@ func CreateRetryScenario() *Scenario {
 	// Final validation passes
 	validation2 := NewValidationResultBuilder().Build(
 		WithStatus(agent.ValidationStatusSuccess),
-		WithConfidence(0.95),
+		WithConfidence(highConfidence),
 	)
 
 	return NewScenarioBuilder("Retry Scenario").Build(
@@ -896,7 +916,7 @@ func CreateComplexScenario() *Scenario {
 		WithID("complex-2"),
 		WithText("Cancel the 2pm one"),
 		WithConversationID("+15551234567"),
-		WithCreatedAt(time.Now().Add(30*time.Second)),
+		WithCreatedAt(time.Now().Add(followUpDelaySeconds*time.Second)),
 	)
 
 	resp2 := NewLLMResponseBuilder().Build(
@@ -912,7 +932,7 @@ func CreateComplexScenario() *Scenario {
 	// Both pass validation
 	validation := NewValidationResultBuilder().Build(
 		WithStatus(agent.ValidationStatusSuccess),
-		WithConfidence(0.99),
+		WithConfidence(excellentConfidence),
 	)
 
 	return NewScenarioBuilder("Complex Multi-Message").Build(

@@ -17,7 +17,6 @@ type messenger struct {
 
 // subscription tracks an active message subscription.
 type subscription struct {
-	ctx    context.Context
 	cancel context.CancelFunc
 	outCh  chan IncomingMessage
 	done   chan struct{}
@@ -85,7 +84,6 @@ func (m *messenger) Subscribe(ctx context.Context) (<-chan IncomingMessage, erro
 	done := make(chan struct{})
 
 	sub := &subscription{
-		ctx:    subCtx,
 		cancel: cancel,
 		outCh:  outCh,
 		done:   done,
@@ -93,18 +91,18 @@ func (m *messenger) Subscribe(ctx context.Context) (<-chan IncomingMessage, erro
 	m.subscription = sub
 
 	// Start the subscription goroutine
-	go m.runSubscription(sub)
+	go m.runSubscription(subCtx, sub)
 
 	return outCh, nil
 }
 
 // runSubscription handles the subscription lifecycle.
-func (m *messenger) runSubscription(sub *subscription) {
+func (m *messenger) runSubscription(ctx context.Context, sub *subscription) {
 	defer close(sub.done)
 	defer close(sub.outCh) // Close channel from sender side only
 
 	// Subscribe to messages from the client
-	msgCh, err := m.client.Subscribe(sub.ctx)
+	msgCh, err := m.client.Subscribe(ctx)
 	if err != nil {
 		// If we can't subscribe, send an error message on the channel
 		select {
@@ -113,7 +111,7 @@ func (m *messenger) runSubscription(sub *subscription) {
 			From:      "system",
 			Text:      fmt.Sprintf("Failed to subscribe to messages: %v", err),
 		}:
-		case <-sub.ctx.Done():
+		case <-ctx.Done():
 		}
 		return
 	}
@@ -121,7 +119,7 @@ func (m *messenger) runSubscription(sub *subscription) {
 	// Process incoming messages
 	for {
 		select {
-		case <-sub.ctx.Done():
+		case <-ctx.Done():
 			return
 
 		case envelope, ok := <-msgCh:
@@ -133,17 +131,16 @@ func (m *messenger) runSubscription(sub *subscription) {
 			// Convert envelope to IncomingMessage
 			msg := m.convertEnvelope(envelope)
 			if msg != nil {
-
 				// Send read receipt for data messages
 				if envelope.DataMessage != nil {
-					go func() {
-						_ = m.client.SendReceipt(context.Background(), envelope.Source, envelope.Timestamp, "read")
-					}()
+					go func(ctx context.Context) {
+						_ = m.client.SendReceipt(ctx, envelope.Source, envelope.Timestamp, "read")
+					}(ctx)
 				}
 
 				select {
 				case sub.outCh <- *msg:
-				case <-sub.ctx.Done():
+				case <-ctx.Done():
 					return
 				}
 			}

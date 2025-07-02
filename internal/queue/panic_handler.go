@@ -1,8 +1,8 @@
 package queue
 
 import (
-	"fmt"
-	"log"
+	"context"
+	"log/slog"
 	"runtime/debug"
 )
 
@@ -17,7 +17,11 @@ type PanicHandler interface {
 type defaultPanicHandler struct{}
 
 func (h *defaultPanicHandler) HandlePanic(workerID string, panicValue any, stackTrace []byte) bool {
-	log.Printf("PANIC in worker %s: %v\n%s", workerID, panicValue, stackTrace)
+	logger := slog.Default()
+	logger.ErrorContext(context.Background(), "PANIC in worker",
+		slog.String("worker_id", workerID),
+		slog.Any("panic", panicValue),
+		slog.String("stack_trace", string(stackTrace)))
 	return true // Always replace panicked workers
 }
 
@@ -25,8 +29,15 @@ func (h *defaultPanicHandler) HandlePanic(workerID string, panicValue any, stack
 type noPanicHandler struct{}
 
 func (h *noPanicHandler) HandlePanic(workerID string, panicValue any, _ []byte) bool {
-	// Re-panic to maintain original behavior
-	panic(fmt.Sprintf("Worker %s panicked: %v", workerID, panicValue))
+	// For debugging, log and return false to not replace the worker
+	logger := slog.Default()
+	logger.ErrorContext(
+		context.Background(),
+		"Worker panic (no replacement)",
+		slog.String("worker_id", workerID),
+		slog.Any("panic", panicValue),
+	)
+	return false
 }
 
 // metricsPanicHandler can be used to track panic metrics.

@@ -1,13 +1,15 @@
-package mocks
+package mocks_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/Veraticus/mentat/internal/agent"
 	"github.com/Veraticus/mentat/internal/claude"
+	"github.com/Veraticus/mentat/internal/mocks"
 	"github.com/Veraticus/mentat/internal/queue"
 	"github.com/Veraticus/mentat/internal/scheduler"
 	"github.com/Veraticus/mentat/internal/signal"
@@ -16,7 +18,7 @@ import (
 
 func TestMockLLM(t *testing.T) {
 	ctx := context.Background()
-	mock := NewMockLLM()
+	mock := mocks.NewMockLLM()
 
 	// Test default response
 	resp, err := mock.Query(ctx, "test prompt", "session1")
@@ -58,7 +60,7 @@ func TestMockLLM(t *testing.T) {
 	expectedErr := fmt.Errorf("llm error")
 	mock.SetError(expectedErr)
 	_, err = mock.Query(ctx, "prompt", "session")
-	if err != expectedErr {
+	if !errors.Is(err, expectedErr) {
 		t.Errorf("expected error %v, got %v", expectedErr, err)
 	}
 
@@ -75,7 +77,7 @@ func TestMockLLM(t *testing.T) {
 
 func TestMockMessenger(t *testing.T) {
 	ctx := context.Background()
-	mock := NewMockMessenger()
+	mock := mocks.NewMockMessenger()
 
 	// Test send
 	err := mock.Send(ctx, "recipient1", "message1")
@@ -95,7 +97,7 @@ func TestMockMessenger(t *testing.T) {
 	expectedErr := fmt.Errorf("send error")
 	mock.SetSendError(expectedErr)
 	err = mock.Send(ctx, "recipient2", "message2")
-	if err != expectedErr {
+	if !errors.Is(err, expectedErr) {
 		t.Errorf("expected error %v, got %v", expectedErr, err)
 	}
 
@@ -131,7 +133,7 @@ func TestMockMessenger(t *testing.T) {
 }
 
 func TestMockSessionManager(t *testing.T) {
-	mock := NewMockSessionManager()
+	mock := mocks.NewMockSessionManager()
 
 	// Test get or create session
 	session1 := mock.GetOrCreateSession("user1")
@@ -171,7 +173,7 @@ func TestMockSessionManager(t *testing.T) {
 }
 
 func TestMockRateLimiter(t *testing.T) {
-	mock := NewMockRateLimiter()
+	mock := mocks.NewMockRateLimiter()
 
 	// Test default allow
 	if !mock.Allow("conv1") {
@@ -193,8 +195,8 @@ func TestMockRateLimiter(t *testing.T) {
 
 func TestMockValidationStrategy(t *testing.T) {
 	ctx := context.Background()
-	mock := NewMockValidationStrategy()
-	llm := NewMockLLM()
+	mock := mocks.NewMockValidationStrategy()
+	llm := mocks.NewMockLLM()
 
 	// Test default validation
 	result := mock.Validate(ctx, "request", "response", llm)
@@ -237,7 +239,7 @@ func TestMockValidationStrategy(t *testing.T) {
 }
 
 func TestMockIntentEnhancer(t *testing.T) {
-	mock := NewMockIntentEnhancer()
+	mock := mocks.NewMockIntentEnhancer()
 
 	// Test default behavior
 	if mock.Enhance("test") != "test" {
@@ -269,7 +271,7 @@ func TestMockIntentEnhancer(t *testing.T) {
 
 func TestMockAgentHandler(t *testing.T) {
 	ctx := context.Background()
-	mock := NewMockAgentHandler()
+	mock := mocks.NewMockAgentHandler()
 
 	msg1 := signal.IncomingMessage{From: "user1", Text: "msg1"}
 	msg2 := signal.IncomingMessage{From: "user2", Text: "msg2"}
@@ -289,7 +291,7 @@ func TestMockAgentHandler(t *testing.T) {
 	expectedErr := fmt.Errorf("process error")
 	mock.SetProcessError(expectedErr)
 	err = mock.Process(ctx, msg1)
-	if err != expectedErr {
+	if !errors.Is(err, expectedErr) {
 		t.Errorf("expected error %v, got %v", expectedErr, err)
 	}
 
@@ -304,7 +306,7 @@ func TestMockAgentHandler(t *testing.T) {
 }
 
 func TestMockMessageQueue(t *testing.T) {
-	mock := NewMockMessageQueue()
+	mock := mocks.NewMockMessageQueue()
 
 	// Test enqueue
 	msg := signal.IncomingMessage{
@@ -348,13 +350,13 @@ func TestMockMessageQueue(t *testing.T) {
 	expectedErr := fmt.Errorf("queue error")
 	mock.SetError(expectedErr)
 	err = mock.Enqueue(msg)
-	if err != expectedErr {
+	if !errors.Is(err, expectedErr) {
 		t.Errorf("expected error %v, got %v", expectedErr, err)
 	}
 }
 
 func TestMockWorker(t *testing.T) {
-	mock := NewMockWorker("worker1")
+	mock := mocks.NewMockWorker("worker1")
 
 	// Test ID
 	if mock.ID() != "worker1" {
@@ -380,7 +382,7 @@ func TestMockWorker(t *testing.T) {
 }
 
 func TestMockStateMachine(t *testing.T) {
-	mock := NewMockStateMachine()
+	mock := mocks.NewMockStateMachine()
 	msg := queue.NewMessage("msg1", "conv1", "user1", "+1234567890", "test")
 
 	// Test valid transition
@@ -407,7 +409,7 @@ func TestMockStateMachine(t *testing.T) {
 }
 
 func TestMockStorageMessages(t *testing.T) {
-	mock := NewMockStorage()
+	mock := mocks.NewMockStorage()
 
 	// Test save and get message
 	msg := &storage.StoredMessage{
@@ -446,7 +448,7 @@ func TestMockStorageMessages(t *testing.T) {
 }
 
 func TestMockStorageQueue(t *testing.T) {
-	mock := NewMockStorage()
+	mock := mocks.NewMockStorage()
 
 	// Test queue item
 	queueItem := &queue.QueuedMessage{
@@ -469,7 +471,7 @@ func TestMockStorageQueue(t *testing.T) {
 }
 
 func TestMockStorageSessions(t *testing.T) {
-	mock := NewMockStorage()
+	mock := mocks.NewMockStorage()
 
 	// Test session
 	session := &storage.Session{
@@ -501,7 +503,7 @@ func TestMockStorageSessions(t *testing.T) {
 }
 
 func TestMockStorageOtherMethods(t *testing.T) {
-	mock := NewMockStorage()
+	mock := mocks.NewMockStorage()
 
 	// Test LLM methods
 	err := mock.SaveLLMCall(&storage.LLMCall{MessageID: "msg1"})
@@ -565,14 +567,14 @@ func TestMockStorageOtherMethods(t *testing.T) {
 
 func TestMockScheduler(t *testing.T) {
 	ctx := context.Background()
-	mock := NewMockScheduler()
+	mock := mocks.NewMockScheduler()
 
 	// Test schedule
 	job := scheduler.Job{
 		ID:       "job1",
 		Name:     "Test Job",
 		CronExpr: "* * * * *",
-		Handler:  NewMockJobHandler("handler1"),
+		Handler:  mocks.NewMockJobHandler("handler1"),
 	}
 	err := mock.Schedule(job)
 	if err != nil {
@@ -611,7 +613,7 @@ func TestMockScheduler(t *testing.T) {
 
 func TestMockJobHandler(t *testing.T) {
 	ctx := context.Background()
-	mock := NewMockJobHandler("test job")
+	mock := mocks.NewMockJobHandler("test job")
 
 	// Test name
 	if mock.Name() != "test job" {
@@ -628,7 +630,7 @@ func TestMockJobHandler(t *testing.T) {
 	expectedErr := fmt.Errorf("execute error")
 	mock.SetExecuteError(expectedErr)
 	err = mock.Execute(ctx)
-	if err != expectedErr {
+	if !errors.Is(err, expectedErr) {
 		t.Errorf("expected error %v, got %v", expectedErr, err)
 	}
 

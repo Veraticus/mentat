@@ -8,6 +8,32 @@ import (
 	"github.com/Veraticus/mentat/internal/claude"
 )
 
+const (
+	// DefaultConfidence is the default confidence level for validation results.
+	DefaultConfidence = 0.5
+
+	// MinResponseLength is the minimum length for a valid response.
+	MinResponseLength = 10
+
+	// HighConfidence represents high confidence in validation results.
+	HighConfidence = 0.8
+
+	// MediumHighConfidence represents medium-high confidence.
+	MediumHighConfidence = 0.7
+
+	// MediumConfidence represents medium confidence.
+	MediumConfidence = 0.6
+
+	// LowConfidence represents low confidence.
+	LowConfidence = 0.4
+
+	// QuestionConfidencePenalty is the multiplier applied when response contains questions.
+	QuestionConfidencePenalty = 0.8
+
+	// QuestionConfidenceResult is the confidence after question penalty (0.8 * 0.8).
+	QuestionConfidenceResult = 0.64
+)
+
 // MultiAgentValidator implements a thorough validation strategy where Claude validates Claude's responses.
 // This provides the highest quality validation but requires additional LLM calls.
 type MultiAgentValidator struct {
@@ -42,7 +68,11 @@ Be specific about any issues or missing elements.`,
 }
 
 // Validate uses Claude to validate another Claude response.
-func (v *MultiAgentValidator) Validate(ctx context.Context, request, response string, llm claude.LLM) ValidationResult {
+func (v *MultiAgentValidator) Validate(
+	ctx context.Context,
+	request, response string,
+	llm claude.LLM,
+) ValidationResult {
 	// Create validation prompt
 	prompt := fmt.Sprintf(v.validationPromptTemplate, request, response)
 
@@ -69,16 +99,25 @@ func (v *MultiAgentValidator) ShouldRetry(result ValidationResult) bool {
 }
 
 // GenerateRecovery creates a natural recovery message for validation failures.
-func (v *MultiAgentValidator) GenerateRecovery(ctx context.Context, request, response string, result ValidationResult, llm claude.LLM) string {
+func (v *MultiAgentValidator) GenerateRecovery(
+	ctx context.Context,
+	request, response string,
+	result ValidationResult,
+	llm claude.LLM,
+) string {
 	// For partial success, acknowledge what worked
 	if result.Status == ValidationStatusPartial {
-		prompt := fmt.Sprintf(`Generate a brief, natural message acknowledging partial completion of this request.
+		prompt := fmt.Sprintf(
+			`Generate a brief, natural message acknowledging partial completion of this request.
 Request: %s
 What was completed: %s
 Issues: %s
 
 Respond conversationally, mentioning what was done and what couldn't be completed.`,
-			request, response, strings.Join(result.Issues, ", "))
+			request,
+			response,
+			strings.Join(result.Issues, ", "),
+		)
 
 		llmResponse, err := llm.Query(ctx, prompt, "")
 		if err != nil {
@@ -93,7 +132,10 @@ Respond conversationally, mentioning what was done and what couldn't be complete
 		if len(result.Issues) > 0 {
 			issueList = strings.Join(result.Issues, " and ")
 		}
-		return fmt.Sprintf("I encountered %s with your request. Let me know if you'd like me to try a different approach.", issueList)
+		return fmt.Sprintf(
+			"I encountered %s with your request. Let me know if you'd like me to try a different approach.",
+			issueList,
+		)
 	}
 
 	// Default message
@@ -104,7 +146,7 @@ Respond conversationally, mentioning what was done and what couldn't be complete
 func (v *MultiAgentValidator) parseValidationResponse(response string) ValidationResult {
 	result := ValidationResult{
 		Status:      ValidationStatusUnclear,
-		Confidence:  0.5,
+		Confidence:  DefaultConfidence,
 		Issues:      []string{},
 		Suggestions: []string{},
 		Metadata:    map[string]string{"raw_response": response},
@@ -118,8 +160,9 @@ func (v *MultiAgentValidator) parseValidationResponse(response string) Validatio
 		}
 
 		// Split only on the first colon to handle values with colons
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
+		const colonSeparatorParts = 2
+		parts := strings.SplitN(line, ":", colonSeparatorParts)
+		if len(parts) != colonSeparatorParts {
 			continue
 		}
 
@@ -190,7 +233,7 @@ func (v *MultiAgentValidator) parseConfidence(value string) (float64, error) {
 
 	// Check if there are trailing characters (like %)
 	var trailing string
-	if _, err := fmt.Sscanf(value, "%f%s", &confidence, &trailing); err == nil && trailing != "" {
+	if _, scanErr := fmt.Sscanf(value, "%f%s", &confidence, &trailing); scanErr == nil && trailing != "" {
 		return 0, fmt.Errorf("invalid confidence format: %s", value)
 	}
 
@@ -243,7 +286,7 @@ type SimpleValidator struct {
 // NewSimpleValidator creates a new simple validation strategy.
 func NewSimpleValidator() *SimpleValidator {
 	return &SimpleValidator{
-		minResponseLength: 10,
+		minResponseLength: MinResponseLength,
 		errorKeywords: []string{
 			"error", "failed", "unable", "cannot", "couldn't",
 			"sorry", "apologize", "not sure", "don't know",
@@ -255,11 +298,46 @@ func NewSimpleValidator() *SimpleValidator {
 	}
 }
 
+// countKeywords counts how many keywords from the list appear in the text.
+func (v *SimpleValidator) countKeywords(text string, keywords []string) int {
+	count := 0
+	for _, keyword := range keywords {
+		if strings.Contains(text, keyword) {
+			count++
+		}
+	}
+	return count
+}
+
+// analyzeKeywords determines validation status based on keyword counts.
+func (v *SimpleValidator) analyzeKeywords(
+	errorCount, successCount int,
+) (ValidationStatus, float64) {
+	switch {
+	case errorCount > successCount && errorCount >= 2:
+		return ValidationStatusFailed, MediumHighConfidence
+	case successCount > 0 && errorCount == 0:
+		return ValidationStatusSuccess, HighConfidence
+	case successCount > 0 && errorCount > 0:
+		// Both success and error indicators = partial
+		return ValidationStatusPartial, MediumConfidence
+	case errorCount == 1:
+		// Single error indicator = partial
+		return ValidationStatusPartial, MediumConfidence
+	default:
+		return ValidationStatusUnclear, LowConfidence
+	}
+}
+
 // Validate performs basic validation without LLM calls.
-func (v *SimpleValidator) Validate(_ context.Context, request, response string, _ claude.LLM) ValidationResult {
+func (v *SimpleValidator) Validate(
+	_ context.Context,
+	request, response string,
+	_ claude.LLM,
+) ValidationResult {
 	result := ValidationResult{
 		Status:      ValidationStatusSuccess,
-		Confidence:  0.8,
+		Confidence:  HighConfidence,
 		Issues:      []string{},
 		Suggestions: []string{},
 		Metadata:    map[string]string{"validator": "simple"},
@@ -273,43 +351,16 @@ func (v *SimpleValidator) Validate(_ context.Context, request, response string, 
 		return result
 	}
 
-	// Check for error indicators
+	// Count keywords
 	lowerResponse := strings.ToLower(response)
-	errorCount := 0
-	for _, keyword := range v.errorKeywords {
-		if strings.Contains(lowerResponse, keyword) {
-			errorCount++
-		}
-	}
-
-	// Check for success indicators
-	successCount := 0
-	for _, keyword := range v.successKeywords {
-		if strings.Contains(lowerResponse, keyword) {
-			successCount++
-		}
-	}
+	errorCount := v.countKeywords(lowerResponse, v.errorKeywords)
+	successCount := v.countKeywords(lowerResponse, v.successKeywords)
 
 	// Determine status based on keyword analysis
-	switch {
-	case errorCount > successCount && errorCount >= 2:
-		result.Status = ValidationStatusFailed
+	result.Status, result.Confidence = v.analyzeKeywords(errorCount, successCount)
+
+	if result.Status == ValidationStatusFailed {
 		result.Issues = append(result.Issues, "response contains error indicators")
-		result.Confidence = 0.7
-	case successCount > 0 && errorCount == 0:
-		result.Status = ValidationStatusSuccess
-		result.Confidence = 0.8
-	case successCount > 0 && errorCount > 0:
-		// Both success and error indicators = partial
-		result.Status = ValidationStatusPartial
-		result.Confidence = 0.6
-	case errorCount == 1:
-		// Single error indicator = partial
-		result.Status = ValidationStatusPartial
-		result.Confidence = 0.6
-	default:
-		result.Status = ValidationStatusUnclear
-		result.Confidence = 0.4
 	}
 
 	// Check for questions in response (might indicate incomplete processing)
@@ -319,10 +370,10 @@ func (v *SimpleValidator) Validate(_ context.Context, request, response string, 
 		switch result.Status {
 		case ValidationStatusSuccess:
 			result.Status = ValidationStatusPartial
-			result.Confidence = 0.64 // 0.8 * 0.8
-		default:
+			result.Confidence = QuestionConfidenceResult
+		case ValidationStatusPartial, ValidationStatusFailed, ValidationStatusUnclear, ValidationStatusIncompleteSearch:
 			// For all other statuses, reduce confidence
-			result.Confidence *= 0.8
+			result.Confidence *= QuestionConfidencePenalty
 		}
 	}
 
@@ -335,7 +386,12 @@ func (v *SimpleValidator) ShouldRetry(_ ValidationResult) bool {
 }
 
 // GenerateRecovery provides simple recovery messages without LLM calls.
-func (v *SimpleValidator) GenerateRecovery(_ context.Context, _, _ string, result ValidationResult, _ claude.LLM) string {
+func (v *SimpleValidator) GenerateRecovery(
+	_ context.Context,
+	_, _ string,
+	result ValidationResult,
+	_ claude.LLM,
+) string {
 	switch result.Status {
 	case ValidationStatusFailed:
 		return "I encountered an issue with that request. Please try again or rephrase your question."
@@ -343,9 +399,11 @@ func (v *SimpleValidator) GenerateRecovery(_ context.Context, _, _ string, resul
 		return "I was able to partially complete your request. Let me know if you need anything else."
 	case ValidationStatusUnclear:
 		return "I'm not certain I fully addressed your request. Could you clarify what you need?"
-	default:
+	case ValidationStatusSuccess, ValidationStatusIncompleteSearch:
 		return ""
 	}
+	// This should never be reached as all cases are handled
+	return ""
 }
 
 // NoopValidator is a pass-through validator that always returns success.
@@ -374,6 +432,11 @@ func (v *NoopValidator) ShouldRetry(_ ValidationResult) bool {
 }
 
 // GenerateRecovery always returns empty string.
-func (v *NoopValidator) GenerateRecovery(_ context.Context, _, _ string, _ ValidationResult, _ claude.LLM) string {
+func (v *NoopValidator) GenerateRecovery(
+	_ context.Context,
+	_, _ string,
+	_ ValidationResult,
+	_ claude.LLM,
+) string {
 	return ""
 }

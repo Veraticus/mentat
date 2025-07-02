@@ -113,7 +113,7 @@ func TestWorkerSetsNextRetryAt(t *testing.T) {
 	rateLimiter := NewRateLimiter(10, 1, time.Minute)
 
 	// Start queue manager
-	go manager.Start()
+	go manager.Start(ctx)
 	defer func() {
 		if err := manager.Shutdown(time.Second); err != nil {
 			t.Logf("Shutdown error: %v", err)

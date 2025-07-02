@@ -203,7 +203,7 @@ func TestStateMachine_ConcurrentTransitions(t *testing.T) {
 	done := make(chan bool, 10)
 	successCount := int32(0)
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			defer func() { done <- true }()
 
@@ -220,7 +220,7 @@ func TestStateMachine_ConcurrentTransitions(t *testing.T) {
 	}
 
 	// Wait for all goroutines
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		<-done
 	}
 
@@ -261,8 +261,8 @@ func TestStateMachine_StateHistory(t *testing.T) {
 			MessageStateQueued, MessageStateProcessing, history[0].From, history[0].To)
 	}
 
-	if history[0].Reason != "starting processing" {
-		t.Errorf("Expected reason 'starting processing', got '%s'", history[0].Reason)
+	if history[0].Reason != StartingProcessingReason {
+		t.Errorf("Expected reason '%s', got '%s'", StartingProcessingReason, history[0].Reason)
 	}
 
 	// Set response before validating

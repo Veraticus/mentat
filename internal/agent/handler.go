@@ -10,6 +10,14 @@ import (
 	"github.com/Veraticus/mentat/internal/signal"
 )
 
+const (
+	// DefaultMaxRetries is the default number of retry attempts for validation.
+	DefaultMaxRetries = 2
+
+	// DefaultValidationThreshold is the default confidence threshold for validation success.
+	DefaultValidationThreshold = 0.8
+)
+
 // handler implements the Handler interface for processing messages.
 type handler struct {
 	llm                claude.LLM
@@ -36,9 +44,9 @@ func NewHandler(llm claude.LLM, opts ...HandlerOption) (Handler, error) {
 		llm:    llm,
 		logger: slog.Default(),
 		config: Config{
-			MaxRetries:              2,
+			MaxRetries:              DefaultMaxRetries,
 			EnableIntentEnhancement: true,
-			ValidationThreshold:     0.8,
+			ValidationThreshold:     DefaultValidationThreshold,
 		},
 	}
 
@@ -137,17 +145,21 @@ func WithSessionManager(manager conversation.SessionManager) HandlerOption {
 // It manages sessions, queries the LLM, and handles errors gracefully.
 func (h *handler) Process(ctx context.Context, msg signal.IncomingMessage) error {
 	// Log the incoming message
-	h.logger.Debug("processing message",
-		"from", msg.From,
-		"textLength", len(msg.Text))
+	h.logger.DebugContext(ctx, "processing message",
+		slog.String("from", msg.From),
+		slog.Int("text_length", len(msg.Text)))
 
 	// Get or create session for conversation continuity
 	sessionID := h.sessionManager.GetOrCreateSession(msg.From)
-	h.logger.Debug("session determined", "sessionID", sessionID, "from", msg.From)
+	h.logger.DebugContext(ctx, "session determined",
+		slog.String("session_id", sessionID),
+		slog.String("from", msg.From))
 
 	// Get session history for context
 	history := h.sessionManager.GetSessionHistory(sessionID)
-	h.logger.Debug("retrieved session history", "sessionID", sessionID, "historyLength", len(history))
+	h.logger.DebugContext(ctx, "retrieved session history",
+		slog.String("session_id", sessionID),
+		slog.Int("history_length", len(history)))
 
 	// Build context from history for multi-turn conversations
 	// Currently using single message context for simplicity
@@ -155,31 +167,31 @@ func (h *handler) Process(ctx context.Context, msg signal.IncomingMessage) error
 	// Query Claude with the message
 	response, err := h.llm.Query(ctx, msg.Text, sessionID)
 	if err != nil {
-		h.logger.Error("LLM query failed",
-			"error", err,
-			"sessionID", sessionID,
-			"from", msg.From)
+		h.logger.ErrorContext(ctx, "LLM query failed",
+			slog.Any("error", err),
+			slog.String("session_id", sessionID),
+			slog.String("from", msg.From))
 		return fmt.Errorf("processing message from %s: LLM query failed: %w", msg.From, err)
 	}
 
-	h.logger.Debug("received LLM response",
-		"sessionID", sessionID,
-		"responseLength", len(response.Message))
+	h.logger.DebugContext(ctx, "received LLM response",
+		slog.String("session_id", sessionID),
+		slog.Int("response_length", len(response.Message)))
 
 	// Validation can be added here in future iterations
 	// Currently trusting LLM responses without additional validation
 
 	// Send the response back via messenger
-	if err := h.messenger.Send(ctx, msg.From, response.Message); err != nil {
-		h.logger.Error("failed to send response",
-			"error", err,
-			"to", msg.From)
-		return fmt.Errorf("processing message from %s: failed to send response: %w", msg.From, err)
+	if sendErr := h.messenger.Send(ctx, msg.From, response.Message); sendErr != nil {
+		h.logger.ErrorContext(ctx, "failed to send response",
+			slog.Any("error", sendErr),
+			slog.String("to", msg.From))
+		return fmt.Errorf("processing message from %s: failed to send response: %w", msg.From, sendErr)
 	}
 
-	h.logger.Info("successfully processed message",
-		"sessionID", sessionID,
-		"to", msg.From)
+	h.logger.InfoContext(ctx, "successfully processed message",
+		slog.String("session_id", sessionID),
+		slog.String("to", msg.From))
 
 	return nil
 }

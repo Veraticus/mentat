@@ -17,7 +17,8 @@ func TestDynamicWorkerPool_PanicHandling(t *testing.T) {
 		mockLLM := &mockLLM{
 			queryFunc: func(_ context.Context, _, _ string) (*claude.LLMResponse, error) {
 				if panicCount.Add(1) == 1 {
-					panic("first worker panic")
+					// Intentionally panic to test panic recovery mechanism
+					panic("first worker panic") //nolint:forbidigo // Testing panic recovery
 				}
 				return &claude.LLMResponse{Message: "Response"}, nil
 			},
@@ -27,7 +28,7 @@ func TestDynamicWorkerPool_PanicHandling(t *testing.T) {
 		defer cancel()
 
 		queueMgr := NewManager(ctx)
-		go queueMgr.Start()
+		go queueMgr.Start(ctx)
 		defer func() {
 			_ = queueMgr.Shutdown(time.Second)
 		}()
@@ -43,11 +44,11 @@ func TestDynamicWorkerPool_PanicHandling(t *testing.T) {
 			// Uses default panic handler
 		}
 
-		pool, err := NewDynamicWorkerPool(config)
+		pool, err := NewDynamicWorkerPool(context.Background(), config)
 		if err != nil {
 			t.Fatalf("Failed to create pool: %v", err)
 		}
-		defer pool.Stop()
+		defer pool.Stop(context.Background())
 
 		err = pool.Start(ctx)
 		if err != nil {
@@ -109,7 +110,8 @@ func TestDynamicWorkerPool_PanicHandling(t *testing.T) {
 			queryFunc: func(_ context.Context, _, _ string) (*claude.LLMResponse, error) {
 				count := callCount.Add(1)
 				if count <= 2 {
-					panic("metrics test panic")
+					// Intentionally panic to test metrics tracking of panics
+					panic("metrics test panic") //nolint:forbidigo // Testing panic metrics
 				}
 				return &claude.LLMResponse{Message: "Response"}, nil
 			},
@@ -119,7 +121,7 @@ func TestDynamicWorkerPool_PanicHandling(t *testing.T) {
 		defer cancel()
 
 		queueMgr := NewManager(ctx)
-		go queueMgr.Start()
+		go queueMgr.Start(ctx)
 		defer func() {
 			_ = queueMgr.Shutdown(time.Second)
 		}()
@@ -133,11 +135,11 @@ func TestDynamicWorkerPool_PanicHandling(t *testing.T) {
 			PanicHandler: customHandler,
 		}
 
-		pool, err := NewDynamicWorkerPool(config)
+		pool, err := NewDynamicWorkerPool(context.Background(), config)
 		if err != nil {
 			t.Fatalf("Failed to create pool: %v", err)
 		}
-		defer pool.Stop()
+		defer pool.Stop(context.Background())
 
 		err = pool.Start(ctx)
 		if err != nil {
@@ -145,7 +147,7 @@ func TestDynamicWorkerPool_PanicHandling(t *testing.T) {
 		}
 
 		// Submit messages that will cause panics
-		for i := 0; i < 2; i++ {
+		for i := range 2 {
 			msg := &Message{
 				ID:             "test-" + string(rune('0'+i)),
 				ConversationID: "conv-" + string(rune('0'+i)),
@@ -197,7 +199,8 @@ func TestDynamicWorkerPool_PanicHandling(t *testing.T) {
 
 		mockLLM := &mockLLM{
 			queryFunc: func(_ context.Context, _, _ string) (*claude.LLMResponse, error) {
-				panic("test panic - should propagate")
+				// Intentionally panic to test NoPanicHandler propagation
+				panic("test panic - should propagate") //nolint:forbidigo // Testing panic propagation
 			},
 		}
 
@@ -205,7 +208,7 @@ func TestDynamicWorkerPool_PanicHandling(t *testing.T) {
 		defer cancel()
 
 		queueMgr := NewManager(ctx)
-		go queueMgr.Start()
+		go queueMgr.Start(ctx)
 		defer func() {
 			_ = queueMgr.Shutdown(time.Second)
 		}()
@@ -219,7 +222,7 @@ func TestDynamicWorkerPool_PanicHandling(t *testing.T) {
 			PanicHandler: NewNoPanicHandler(), // Disables recovery
 		}
 
-		pool, err := NewDynamicWorkerPool(config)
+		pool, err := NewDynamicWorkerPool(context.Background(), config)
 		if err != nil {
 			t.Fatalf("Failed to create pool: %v", err)
 		}
@@ -241,7 +244,7 @@ func TestDynamicWorkerPool_PanicHandling(t *testing.T) {
 
 		// Allow panic to propagate
 		<-time.After(100 * time.Millisecond)
-		pool.Stop()
+		pool.Stop(context.Background())
 		pool.Wait()
 	})
 }

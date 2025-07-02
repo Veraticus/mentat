@@ -74,6 +74,11 @@ issues:
       - text: 'package comment should be of the form ".+"'
         source: '// ?(nolint|TODO)'
         linters: [ revive ]
+        
+      # Allow new context for shutdown in main.go
+      - path: cmd/mentat/main\.go
+        text: "Non-inherited new context"
+        linters: [ contextcheck ]
 
 # Formatters - automatically fix style issues
 formatters:
@@ -532,8 +537,8 @@ linters:
       context: "scope"
       # Static log messages
       static-msg: true
-      # No raw keys
-      no-raw-keys: true
+      # No raw keys - disabled as it's overly strict requiring constants for every key
+      no-raw-keys: false
       # Snake case keys
       key-naming-case: snake
       
@@ -541,8 +546,8 @@ linters:
     perfsprint:
       # String format optimization
       string-format: true
-      # Error string optimization
-      err-error: true
+      # Error string optimization - disabled due to conflict with forbidigo
+      err-error: false
       # Don't optimize concatenation (readability)
       strconcat: false
       

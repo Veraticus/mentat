@@ -2,13 +2,23 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"log"
+	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/Veraticus/mentat/internal/claude"
 	"github.com/Veraticus/mentat/internal/signal"
+)
+
+// Worker constants.
+const (
+	// messageRequestTimeout is the timeout for requesting messages from queue.
+	messageRequestTimeout = 30 * time.Second
+	// typingIndicatorInterval is how often to send typing indicators.
+	typingIndicatorInterval = 10 * time.Second
 )
 
 // WorkerConfig holds configuration for a worker.
@@ -38,12 +48,12 @@ func NewWorker(config WorkerConfig) Worker {
 
 // requestMessage requests a message from the queue manager.
 func (w *worker) requestMessage(ctx context.Context) (*Message, error) {
-	reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, messageRequestTimeout)
 	defer cancel()
 
 	msg, err := w.config.QueueManager.RequestMessage(reqCtx)
 	if err != nil {
-		if err == context.DeadlineExceeded {
+		if errors.Is(err, context.DeadlineExceeded) {
 			// No messages available, return nil message with no error
 			// The caller will check for nil message
 			return nil, err
@@ -59,22 +69,36 @@ func (w *worker) handleRetryMessage(ctx context.Context, msg *Message) {
 	// Check if we're shutting down before trying to re-submit
 	select {
 	case <-ctx.Done():
-		log.Printf("Worker %d: Shutting down, not re-submitting message %s",
-			w.config.ID, msg.ID)
+		logger := slog.Default()
+		logger.InfoContext(ctx,
+			"Worker shutting down, not re-submitting message",
+			slog.Int("worker_id", w.config.ID),
+			slog.String("message_id", msg.ID),
+		)
 		return
 	default:
 	}
 
 	// Complete current processing
 	if err := w.config.QueueManager.CompleteMessage(msg); err != nil {
-		log.Printf("Worker %d: Failed to complete message %s: %v",
-			w.config.ID, msg.ID, err)
+		logger := slog.Default()
+		logger.ErrorContext(ctx,
+			"Worker failed to complete message",
+			slog.Int("worker_id", w.config.ID),
+			slog.String("message_id", msg.ID),
+			slog.Any("error", err),
+		)
 	}
 
 	// Re-submit for retry
 	if err := w.config.QueueManager.Submit(msg); err != nil {
-		log.Printf("Worker %d: Failed to re-submit message %s for retry: %v",
-			w.config.ID, msg.ID, err)
+		logger := slog.Default()
+		logger.ErrorContext(ctx,
+			"Worker failed to re-submit message for retry",
+			slog.Int("worker_id", w.config.ID),
+			slog.String("message_id", msg.ID),
+			slog.Any("error", err),
+		)
 	}
 }
 
@@ -82,7 +106,7 @@ func (w *worker) handleRetryMessage(ctx context.Context, msg *Message) {
 func (w *worker) processNextMessage(ctx context.Context) error {
 	msg, err := w.requestMessage(ctx)
 	if err != nil {
-		if err == context.DeadlineExceeded {
+		if errors.Is(err, context.DeadlineExceeded) {
 			// No messages available, continue
 			return nil
 		}
@@ -95,10 +119,17 @@ func (w *worker) processNextMessage(ctx context.Context) error {
 	}
 
 	// Process the message (message is already in processing state from Manager)
-	log.Printf("Worker %d: Processing message %s", w.config.ID, msg.ID)
-	if err := w.Process(ctx, msg); err != nil {
-		log.Printf("Worker %d error processing message %s: %v",
-			w.config.ID, msg.ID, err)
+	logger := slog.Default()
+	logger.InfoContext(ctx, "Worker processing message",
+		slog.Int("worker_id", w.config.ID),
+		slog.String("message_id", msg.ID))
+	if processErr := w.Process(ctx, msg); processErr != nil {
+		logger.ErrorContext(ctx,
+			"Worker error processing message",
+			slog.Int("worker_id", w.config.ID),
+			slog.String("message_id", msg.ID),
+			slog.Any("error", processErr),
+		)
 
 		// If message is in retry state, we need to complete current processing and re-submit
 		if msg.GetState() == StateRetrying {
@@ -111,13 +142,14 @@ func (w *worker) processNextMessage(ctx context.Context) error {
 
 // Start begins processing messages. Blocks until context is canceled.
 func (w *worker) Start(ctx context.Context) error {
-	log.Printf("Worker %d starting", w.config.ID)
+	logger := slog.Default()
+	logger.InfoContext(ctx, "Worker starting", slog.Int("worker_id", w.config.ID))
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("Worker %d shutting down", w.config.ID)
-			return ctx.Err()
+			logger.InfoContext(ctx, "Worker shutting down", slog.Int("worker_id", w.config.ID))
+			return fmt.Errorf("worker context cancelled: %w", ctx.Err())
 		default:
 			if err := w.processNextMessage(ctx); err != nil {
 				return err
@@ -127,7 +159,7 @@ func (w *worker) Start(ctx context.Context) error {
 }
 
 // handleRateLimitCheck checks rate limiting and handles rate limited messages.
-func (w *worker) handleRateLimitCheck(msg *Message) error {
+func (w *worker) handleRateLimitCheck(ctx context.Context, msg *Message) error {
 	if w.config.RateLimiter.Allow(msg.ConversationID) {
 		w.config.RateLimiter.Record(msg.ConversationID)
 		return nil
@@ -139,41 +171,47 @@ func (w *worker) handleRateLimitCheck(msg *Message) error {
 	msg.IncrementAttempts()
 
 	if msg.CanRetry() {
-		w.handleRateLimitRetry(msg, "Rate limited by local rate limiter")
+		w.handleRateLimitRetry(ctx, msg, "Rate limited by local rate limiter")
 	} else {
-		log.Printf("Worker %d: Message %s exceeded max retries on local rate limit",
-			w.config.ID, msg.ID)
+		logger := slog.Default()
+		logger.WarnContext(ctx, "Worker: Message exceeded max retries on local rate limit", slog.Int("worker_id", w.config.ID), slog.String("message_id", msg.ID))
 		msg.SetState(StateFailed)
 	}
 
-	w.updateMessageState(msg)
+	w.updateMessageState(ctx, msg)
 	return err
 }
 
 // handleRateLimitRetry sets up a rate-limited message for retry.
-func (w *worker) handleRateLimitRetry(msg *Message, reason string) {
+func (w *worker) handleRateLimitRetry(ctx context.Context, msg *Message, reason string) {
 	retryDelay := calculateRateLimitRetryDelay(msg.Attempts)
 	retryTime := time.Now().Add(retryDelay)
 	msg.SetNextRetryAt(retryTime)
 
-	log.Printf("Worker %d: Message %s rate limited, will retry at %v (delay: %v)",
-		w.config.ID, msg.ID, retryTime.Format(time.RFC3339), retryDelay)
+	logger := slog.Default()
+	logger.InfoContext(ctx,
+		"Worker: Message rate limited, will retry",
+		slog.Int("worker_id", w.config.ID),
+		slog.String("message_id", msg.ID),
+		slog.String("retryAt", retryTime.Format(time.RFC3339)),
+		slog.Duration("delay", retryDelay),
+	)
 
 	msg.AddStateTransition(msg.GetState(), StateRetrying, reason)
 	msg.SetState(StateRetrying)
 }
 
 // updateMessageState updates the message state through the appropriate interface.
-func (w *worker) updateMessageState(msg *Message) {
+func (w *worker) updateMessageState(ctx context.Context, msg *Message) {
 	if w.config.MessageQueue != nil {
-		w.updateStateViaQueue(msg)
+		w.updateStateViaQueue(ctx, msg)
 	} else if w.config.QueueManager != nil {
-		w.updateStateViaManager(msg)
+		w.updateStateViaManager(ctx, msg)
 	}
 }
 
 // updateStateViaQueue updates state through MessageQueue interface.
-func (w *worker) updateStateViaQueue(msg *Message) {
+func (w *worker) updateStateViaQueue(ctx context.Context, msg *Message) {
 	var state MessageState
 	var reason string
 
@@ -187,65 +225,89 @@ func (w *worker) updateStateViaQueue(msg *Message) {
 	case StateCompleted:
 		state = MessageStateCompleted
 		reason = "Successfully processed"
-	default:
+	case StateQueued, StateProcessing, StateValidating:
+		// These states are not updated via this method
 		return
 	}
 
 	if err := w.config.MessageQueue.UpdateState(msg.ID, state, reason); err != nil {
-		log.Printf("Failed to update state for message %s: %v", msg.ID, err)
+		logger := slog.Default()
+		logger.ErrorContext(ctx, "Failed to update state for message",
+			slog.String("message_id", msg.ID),
+			slog.Any("error", err))
 	}
 }
 
 // updateStateViaManager updates state through QueueManager interface.
-func (w *worker) updateStateViaManager(msg *Message) {
+func (w *worker) updateStateViaManager(ctx context.Context, msg *Message) {
 	if err := w.config.QueueManager.CompleteMessage(msg); err != nil {
-		log.Printf("Failed to complete message %s: %v", msg.ID, err)
+		logger := slog.Default()
+		logger.ErrorContext(ctx, "Failed to complete message", slog.String("message_id", msg.ID), slog.Any("error", err))
 	}
 
 	if msg.GetState() == StateRetrying {
 		if err := w.config.QueueManager.Submit(msg); err != nil {
-			log.Printf("Failed to re-submit message %s: %v", msg.ID, err)
+			logger := slog.Default()
+			logger.ErrorContext(
+				ctx,
+				"Failed to re-submit message",
+				slog.String("message_id", msg.ID),
+				slog.Any("error", err),
+			)
 		}
 	}
 }
 
 // handleProcessingError handles errors from message processing.
-func (w *worker) handleProcessingError(msg *Message, err error) error {
+func (w *worker) handleProcessingError(ctx context.Context, msg *Message, err error) error {
 	msg.SetError(err)
 	msg.IncrementAttempts()
 
 	if IsRateLimitError(err) {
-		return w.handleRateLimitError(msg, err)
+		return w.handleRateLimitError(ctx, msg, err)
 	}
 
-	return w.handleGeneralError(msg, err)
+	return w.handleGeneralError(ctx, msg, err)
 }
 
 // handleRateLimitError handles rate limit errors from LLM provider.
-func (w *worker) handleRateLimitError(msg *Message, err error) error {
-	log.Printf("Worker %d: Message %s rate limited by LLM provider",
-		w.config.ID, msg.ID)
+func (w *worker) handleRateLimitError(ctx context.Context, msg *Message, err error) error {
+	logger := slog.Default()
+	logger.InfoContext(ctx,
+		"Worker: Message rate limited by LLM provider",
+		slog.Int("worker_id", w.config.ID),
+		slog.String("message_id", msg.ID),
+	)
 
 	if msg.CanRetry() {
-		w.handleRateLimitRetry(msg, "Rate limited by LLM provider")
+		w.handleRateLimitRetry(ctx, msg, "Rate limited by LLM provider")
 		return err
 	}
 
-	log.Printf("Worker %d: Message %s exceeded max retries on rate limit",
-		w.config.ID, msg.ID)
+	logger.WarnContext(ctx,
+		"Worker: Message exceeded max retries on rate limit",
+		slog.Int("worker_id", w.config.ID),
+		slog.String("message_id", msg.ID),
+	)
 	msg.SetState(StateFailed)
 	return err
 }
 
 // handleGeneralError handles non-rate-limit errors.
-func (w *worker) handleGeneralError(msg *Message, err error) error {
+func (w *worker) handleGeneralError(ctx context.Context, msg *Message, err error) error {
 	if msg.CanRetry() {
 		retryDelay := CalculateRetryDelay(msg.Attempts)
 		retryTime := time.Now().Add(retryDelay)
 		msg.SetNextRetryAt(retryTime)
 
-		log.Printf("Worker %d: Message %s will retry at %v (delay: %v)",
-			w.config.ID, msg.ID, retryTime.Format(time.RFC3339), retryDelay)
+		logger := slog.Default()
+		logger.InfoContext(ctx,
+			"Worker: Message will retry",
+			slog.Int("worker_id", w.config.ID),
+			slog.String("message_id", msg.ID),
+			slog.String("retryAt", retryTime.Format(time.RFC3339)),
+			slog.Duration("delay", retryDelay),
+		)
 
 		msg.AddStateTransition(msg.GetState(), StateRetrying, fmt.Sprintf("Error: %v", err))
 		msg.SetState(StateRetrying)
@@ -260,7 +322,8 @@ func (w *worker) handleGeneralError(msg *Message, err error) error {
 func (w *worker) startTypingIndicator(ctx context.Context, recipient string) func() {
 	if w.config.TypingIndicatorMgr != nil {
 		if err := w.config.TypingIndicatorMgr.Start(ctx, recipient); err != nil {
-			log.Printf("Failed to start typing indicator: %v", err)
+			logger := slog.Default()
+			logger.ErrorContext(ctx, "Failed to start typing indicator", slog.Any("error", err))
 		}
 		return func() { w.config.TypingIndicatorMgr.Stop(recipient) }
 	}
@@ -273,11 +336,17 @@ func (w *worker) startTypingIndicator(ctx context.Context, recipient string) fun
 
 // Process handles a single message through its lifecycle.
 func (w *worker) Process(ctx context.Context, msg *Message) error {
-	log.Printf("Worker %d: In Process for message %s", w.config.ID, msg.ID)
+	logger := slog.Default()
+	logger.DebugContext(
+		ctx,
+		"Worker: In Process for message",
+		slog.Int("worker_id", w.config.ID),
+		slog.String("message_id", msg.ID),
+	)
 
 	// Apply rate limiting
-	if err := w.handleRateLimitCheck(msg); err != nil {
-		w.updateMessageState(msg)
+	if err := w.handleRateLimitCheck(ctx, msg); err != nil {
+		w.updateMessageState(ctx, msg)
 		return err
 	}
 
@@ -286,12 +355,22 @@ func (w *worker) Process(ctx context.Context, msg *Message) error {
 	defer stopTyping()
 
 	// Process the message
-	log.Printf("Worker %d: Calling processMessage for %s", w.config.ID, msg.ID)
+	logger.DebugContext(
+		ctx,
+		"Worker: Calling processMessage",
+		slog.Int("worker_id", w.config.ID),
+		slog.String("message_id", msg.ID),
+	)
 	response, err := w.processMessage(ctx, msg)
-	log.Printf("Worker %d: processMessage returned for %s, err=%v", w.config.ID, msg.ID, err)
+	logger.DebugContext(ctx,
+		"Worker: processMessage returned",
+		slog.Int("worker_id", w.config.ID),
+		slog.String("message_id", msg.ID),
+		slog.Any("error", err),
+	)
 
 	if err != nil {
-		return w.handleProcessingError(msg, err)
+		return w.handleProcessingError(ctx, msg, err)
 	}
 
 	// Success - save response and send
@@ -299,19 +378,19 @@ func (w *worker) Process(ctx context.Context, msg *Message) error {
 	msg.SetState(StateCompleted)
 
 	// Send response to user
-	if err := w.config.Messenger.Send(ctx, msg.SenderNumber, response); err != nil {
-		return fmt.Errorf("failed to send response: %w", err)
+	if sendErr := w.config.Messenger.Send(ctx, msg.SenderNumber, response); sendErr != nil {
+		return fmt.Errorf("failed to send response: %w", sendErr)
 	}
 
 	// Update state
-	w.updateMessageState(msg)
+	w.updateMessageState(ctx, msg)
 	return nil
 }
 
 // processMessage queries the LLM and returns the response.
 func (w *worker) processMessage(ctx context.Context, msg *Message) (string, error) {
 	// Create a session ID based on conversation
-	sessionID := fmt.Sprintf("signal-%s", msg.ConversationID)
+	sessionID := "signal-" + msg.ConversationID
 
 	// Query the LLM
 	llmResp, err := w.config.LLM.Query(ctx, msg.Text, sessionID)
@@ -331,12 +410,18 @@ func (w *worker) processMessage(ctx context.Context, msg *Message) (string, erro
 
 // sendTypingIndicator sends typing indicators periodically.
 func (w *worker) sendTypingIndicator(ctx context.Context, recipient string) {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(typingIndicatorInterval)
 	defer ticker.Stop()
 
 	// Send initial typing indicator
 	if err := w.config.Messenger.SendTypingIndicator(ctx, recipient); err != nil {
-		log.Printf("Failed to send initial typing indicator to %s: %v", recipient, err)
+		logger := slog.Default()
+		logger.ErrorContext(
+			ctx,
+			"Failed to send initial typing indicator",
+			slog.String("recipient", recipient),
+			slog.Any("error", err),
+		)
 	}
 
 	for {
@@ -345,7 +430,13 @@ func (w *worker) sendTypingIndicator(ctx context.Context, recipient string) {
 			return
 		case <-ticker.C:
 			if err := w.config.Messenger.SendTypingIndicator(ctx, recipient); err != nil {
-				log.Printf("Failed to send typing indicator to %s: %v", recipient, err)
+				logger := slog.Default()
+				logger.ErrorContext(
+					ctx,
+					"Failed to send typing indicator",
+					slog.String("recipient", recipient),
+					slog.Any("error", err),
+				)
 				return
 			}
 		}
@@ -354,13 +445,14 @@ func (w *worker) sendTypingIndicator(ctx context.Context, recipient string) {
 
 // Stop gracefully stops the worker.
 func (w *worker) Stop() error {
-	log.Printf("Worker %d stopping", w.config.ID)
+	logger := slog.Default()
+	logger.InfoContext(context.Background(), "Worker stopping", slog.Int("worker_id", w.config.ID))
 	return nil
 }
 
 // ID returns the worker's unique identifier.
 func (w *worker) ID() string {
-	return fmt.Sprintf("worker-%d", w.config.ID)
+	return "worker-" + strconv.Itoa(w.config.ID)
 }
 
 // WorkerPool manages multiple workers.
@@ -374,13 +466,19 @@ type WorkerPool struct {
 }
 
 // NewWorkerPool creates a new worker pool.
-func NewWorkerPool(size int, llm claude.LLM, messenger signal.Messenger, queueMgr *Manager, rateLimiter RateLimiter) *WorkerPool {
+func NewWorkerPool(
+	size int,
+	llm claude.LLM,
+	messenger signal.Messenger,
+	queueMgr *Manager,
+	rateLimiter RateLimiter,
+) *WorkerPool {
 	workers := make([]Worker, size)
 
 	// Create a shared typing indicator manager
 	typingMgr := signal.NewTypingIndicatorManager(messenger)
 
-	for i := 0; i < size; i++ {
+	for i := range size {
 		config := WorkerConfig{
 			ID:                 i + 1,
 			LLM:                llm,
@@ -409,8 +507,9 @@ func (wp *WorkerPool) Start(ctx context.Context) error {
 		wp.wg.Add(1)
 		go func(w Worker, id int) {
 			defer wp.wg.Done()
-			if err := w.Start(ctx); err != nil && err != context.Canceled {
-				log.Printf("Worker %d stopped with error: %v", id, err)
+			if err := w.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				logger := slog.Default()
+				logger.ErrorContext(ctx, "Worker stopped with error", slog.Int("workerID", id), slog.Any("error", err))
 			}
 		}(worker, i+1)
 	}

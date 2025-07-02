@@ -18,7 +18,7 @@ func TestQueueSystemIntegration(t *testing.T) {
 	t.Run("ErrorHandlingAndRetry", testErrorHandlingAndRetry)
 }
 
-// testSimpleMessageFlow tests basic message enqueue and processing
+// testSimpleMessageFlow tests basic message enqueue and processing.
 func testSimpleMessageFlow(t *testing.T) {
 	system := setupTestSystem(t)
 
@@ -38,7 +38,7 @@ func testSimpleMessageFlow(t *testing.T) {
 	waitForCompletion(t, system, 1, 5*time.Second)
 }
 
-// testConversationOrdering verifies messages from same conversation are processed in order
+// testConversationOrdering verifies messages from same conversation are processed in order.
 func testConversationOrdering(t *testing.T) {
 	system := setupTestSystem(t)
 
@@ -59,7 +59,7 @@ func testConversationOrdering(t *testing.T) {
 	waitForCompletion(t, system, 3, 5*time.Second)
 }
 
-// testRateLimiting verifies rate limiting works correctly
+// testRateLimiting verifies rate limiting works correctly.
 func testRateLimiting(t *testing.T) {
 	system := setupTestSystem(t)
 	user := "rate-limit-test-user"
@@ -83,7 +83,7 @@ func testRateLimiting(t *testing.T) {
 		stats.TotalQueued, stats.TotalProcessing, stats.TotalCompleted, stats.TotalFailed)
 }
 
-// testWorkerScaling verifies dynamic worker pool scaling
+// testWorkerScaling verifies dynamic worker pool scaling.
 func testWorkerScaling(t *testing.T) {
 	system := setupTestSystem(t)
 	initialWorkers := system.WorkerPool.Size()
@@ -109,7 +109,7 @@ func testWorkerScaling(t *testing.T) {
 	}
 }
 
-// testErrorHandlingAndRetry verifies retry logic works correctly
+// testErrorHandlingAndRetry verifies retry logic works correctly.
 func testErrorHandlingAndRetry(t *testing.T) {
 	system := setupTestSystem(t)
 
@@ -130,7 +130,7 @@ func testErrorHandlingAndRetry(t *testing.T) {
 
 // Helper functions
 
-// setupTestSystem creates and starts a queue system for testing
+// setupTestSystem creates and starts a queue system for testing.
 func setupTestSystem(t *testing.T) *System {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -164,20 +164,20 @@ func setupTestSystem(t *testing.T) *System {
 	}
 
 	t.Cleanup(func() {
-		if err := system.Stop(); err != nil {
-			t.Errorf("Failed to stop system: %v", err)
+		if stopErr := system.Stop(); stopErr != nil {
+			t.Errorf("Failed to stop system: %v", stopErr)
 		}
 	})
 
 	// Start the system
-	if err := system.Start(); err != nil {
-		t.Fatalf("Failed to start queue system: %v", err)
+	if startErr := system.Start(ctx); startErr != nil {
+		t.Fatalf("Failed to start queue system: %v", startErr)
 	}
 
 	return system
 }
 
-// waitForCompletion waits for a specific number of messages to be completed
+// waitForCompletion waits for a specific number of messages to be completed.
 func waitForCompletion(t *testing.T, system *System, expectedCompleted int, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -198,7 +198,7 @@ func waitForCompletion(t *testing.T, system *System, expectedCompleted int, time
 		expectedCompleted, stats.TotalCompleted, stats.TotalQueued, stats.TotalProcessing, stats.TotalFailed)
 }
 
-// enqueueMessages enqueues multiple test messages
+// enqueueMessages enqueues multiple test messages.
 func enqueueMessages(t *testing.T, system *System, user string, count int) {
 	t.Helper()
 	for i := 1; i <= count; i++ {

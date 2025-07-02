@@ -1,9 +1,11 @@
-package config
+package config_test
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Veraticus/mentat/internal/config"
 )
 
 func TestLoadSystemPrompt(t *testing.T) {
@@ -172,7 +174,7 @@ type systemPromptTest struct {
 func runLoadSystemPromptTest(t *testing.T, tt systemPromptTest) {
 	t.Helper()
 	promptPath := tt.setup(t)
-	prompt, err := LoadSystemPrompt(promptPath)
+	prompt, err := config.LoadSystemPrompt(promptPath)
 
 	if tt.wantErr {
 		verifyError(t, err, tt.errContains)
@@ -231,7 +233,7 @@ func TestValidateSystemPrompt(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateSystemPrompt(tt.prompt)
+			err := config.ValidateSystemPrompt(tt.prompt)
 
 			if tt.wantErr {
 				if err == nil {
@@ -252,5 +254,6 @@ func TestValidateSystemPrompt(t *testing.T) {
 
 // contains is a helper function to check if a string contains a substring.
 func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || substr == "" || s[:len(substr)] == substr || contains(s[1:], substr))
+	return len(s) >= len(substr) &&
+		(s == substr || substr == "" || s[:len(substr)] == substr || contains(s[1:], substr))
 }

@@ -25,8 +25,8 @@ func LoadSystemPrompt(path string) (string, error) {
 	prompt := string(content)
 
 	// Validate the prompt
-	if err := ValidateSystemPrompt(prompt); err != nil {
-		return "", err
+	if validateErr := ValidateSystemPrompt(prompt); validateErr != nil {
+		return "", validateErr
 	}
 
 	return prompt, nil

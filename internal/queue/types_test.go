@@ -244,7 +244,7 @@ func TestMessageThreadSafety(_ *testing.T) {
 	done := make(chan bool, 3)
 
 	go func() {
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			msg.SetState(StateProcessing)
 			msg.SetState(StateQueued)
 		}
@@ -252,7 +252,7 @@ func TestMessageThreadSafety(_ *testing.T) {
 	}()
 
 	go func() {
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			msg.SetError(fmt.Errorf("error"))
 			msg.SetResponse("response")
 		}
@@ -260,7 +260,7 @@ func TestMessageThreadSafety(_ *testing.T) {
 	}()
 
 	go func() {
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			_ = msg.GetState()
 			// Note: No thread-safe getters for Error and Response
 			// This test verifies that concurrent writes don't panic
@@ -269,7 +269,7 @@ func TestMessageThreadSafety(_ *testing.T) {
 	}()
 
 	// Wait for all goroutines to complete
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		<-done
 	}
 
@@ -286,7 +286,7 @@ func TestMessageStateHistory(t *testing.T) {
 	}
 
 	// Add a state transition
-	msg.AddStateTransition(StateQueued, StateProcessing, "starting processing")
+	msg.AddStateTransition(StateQueued, StateProcessing, StartingProcessingReason)
 
 	history = msg.GetStateHistory()
 	if len(history) != 1 {
@@ -297,8 +297,8 @@ func TestMessageStateHistory(t *testing.T) {
 		t.Error("State transition not recorded correctly")
 	}
 
-	if history[0].Reason != "starting processing" {
-		t.Errorf("Expected reason 'starting processing', got '%s'", history[0].Reason)
+	if history[0].Reason != StartingProcessingReason {
+		t.Errorf("Expected reason '%s', got '%s'", StartingProcessingReason, history[0].Reason)
 	}
 
 	// Verify timestamp is recent

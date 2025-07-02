@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -14,7 +15,7 @@ func TestTokenBucket_Allow(t *testing.T) {
 	tb := NewTokenBucket(3, 1, 100*time.Millisecond)
 
 	// Should allow 3 requests immediately (full bucket)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if !tb.Allow() {
 			t.Errorf("Expected Allow() to return true for request %d", i+1)
 		}
@@ -86,7 +87,7 @@ func TestTokenBucket_WaitCancel(t *testing.T) {
 	// Should return context error
 	select {
 	case err := <-done:
-		if err != context.Canceled {
+		if !errors.Is(err, context.Canceled) {
 			t.Errorf("Expected context.Canceled, got %v", err)
 		}
 	case <-time.After(100 * time.Millisecond):
@@ -107,7 +108,7 @@ func TestTokenBucket_RefillCap(t *testing.T) {
 
 	// Should only have 2 tokens (capped at capacity)
 	count := 0
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		if tb.Allow() {
 			count++
 		}
@@ -209,13 +210,13 @@ func TestRateLimiter_Concurrent(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Run 10 goroutines trying to consume tokens
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
 
 			// Each goroutine tries 3 times quickly
-			for j := 0; j < 3; j++ {
+			for range 3 {
 				convID := fmt.Sprintf("conv%d", id%2) // 2 conversations
 
 				if rl.Allow(convID) {
@@ -285,7 +286,7 @@ func TestDefaultRateLimiter(t *testing.T) {
 	rl := DefaultRateLimiter()
 
 	// Should allow burst of 5
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		if !rl.Allow("test") {
 			t.Errorf("Expected Allow() to return true for request %d", i+1)
 		}

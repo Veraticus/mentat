@@ -3,6 +3,7 @@ package signal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -142,8 +143,8 @@ func TestMockTransport_Subscribe(t *testing.T) {
 				Source string `json:"source"`
 			} `json:"envelope"`
 		}
-		if err := json.Unmarshal(notif.Params, &params); err != nil {
-			t.Errorf("Failed to unmarshal params: %v", err)
+		if unmarshalErr := json.Unmarshal(notif.Params, &params); unmarshalErr != nil {
+			t.Errorf("Failed to unmarshal params: %v", unmarshalErr)
 		}
 		if params.Envelope.Source != "+1234567890" {
 			t.Errorf("Expected source '+1234567890', got %s", params.Envelope.Source)
@@ -203,7 +204,7 @@ func TestMockTransport_ConcurrentCalls(t *testing.T) {
 	errors := make(chan error, 10)
 
 	// Make 10 concurrent calls
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		go func(id int) {
 			defer func() { done <- struct{}{} }()
 
@@ -217,7 +218,7 @@ func TestMockTransport_ConcurrentCalls(t *testing.T) {
 	}
 
 	// Wait for all goroutines
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		<-done
 	}
 	close(errors)
@@ -251,7 +252,7 @@ func TestMockTransport_ContextCancellation(t *testing.T) {
 	if err == nil {
 		t.Error("Expected context cancellation error")
 	}
-	if err != context.DeadlineExceeded {
+	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("Expected DeadlineExceeded, got %v", err)
 	}
 }

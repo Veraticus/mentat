@@ -73,7 +73,7 @@ func (h *Handler) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to subscribe to messages: %w", err)
 	}
 
-	h.logger.Info("signal handler started")
+	h.logger.InfoContext(ctx, "signal handler started")
 
 	// Start the message processing goroutine
 	h.wg.Add(1)
@@ -82,7 +82,7 @@ func (h *Handler) Start(ctx context.Context) error {
 	// Wait for context cancellation
 	<-ctx.Done()
 
-	h.logger.Info("signal handler stopping")
+	h.logger.InfoContext(ctx, "signal handler stopping")
 
 	// Mark as not running
 	h.mu.Lock()
@@ -92,7 +92,7 @@ func (h *Handler) Start(ctx context.Context) error {
 	// Wait for message processor to finish
 	h.wg.Wait()
 
-	h.logger.Info("signal handler stopped")
+	h.logger.InfoContext(ctx, "signal handler stopped")
 	return nil
 }
 
@@ -103,41 +103,41 @@ func (h *Handler) processMessages(ctx context.Context, messages <-chan IncomingM
 	for {
 		select {
 		case <-ctx.Done():
-			h.logger.Debug("message processor stopping due to context cancellation")
+			h.logger.DebugContext(ctx, "message processor stopping due to context cancellation")
 			return
 
 		case msg, ok := <-messages:
 			if !ok {
-				h.logger.Debug("message channel closed")
+				h.logger.DebugContext(ctx, "message channel closed")
 				return
 			}
 
 			// Process message without blocking
-			h.handleMessage(msg)
+			h.handleMessage(ctx, msg)
 		}
 	}
 }
 
 // handleMessage enqueues a single message without blocking.
-func (h *Handler) handleMessage(msg IncomingMessage) {
-	h.logger.Debug("received message",
-		"from", msg.From,
-		"timestamp", msg.Timestamp,
-		"text_length", len(msg.Text))
+func (h *Handler) handleMessage(ctx context.Context, msg IncomingMessage) {
+	h.logger.DebugContext(ctx, "received message",
+		slog.String("from", msg.From),
+		slog.Time("timestamp", msg.Timestamp),
+		slog.Int("text_length", len(msg.Text)))
 
 	// Enqueue the message
 	if err := h.queue.Enqueue(msg); err != nil {
-		h.logger.Error("failed to enqueue message",
-			"error", err,
-			"from", msg.From,
-			"timestamp", msg.Timestamp)
+		h.logger.ErrorContext(ctx, "failed to enqueue message",
+			slog.Any("error", err),
+			slog.String("from", msg.From),
+			slog.Time("timestamp", msg.Timestamp))
 		// Continue processing other messages
 		return
 	}
 
-	h.logger.Debug("message enqueued successfully",
-		"from", msg.From,
-		"timestamp", msg.Timestamp)
+	h.logger.DebugContext(ctx, "message enqueued successfully",
+		slog.String("from", msg.From),
+		slog.Time("timestamp", msg.Timestamp))
 }
 
 // IsRunning returns whether the handler is currently running.

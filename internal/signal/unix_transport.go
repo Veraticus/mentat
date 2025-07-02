@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strconv"
 	"sync"
 	"sync/atomic"
 )
@@ -24,29 +25,28 @@ type UnixSocketTransport struct {
 	notifications chan *Notification
 
 	// Lifecycle
-	ctx    context.Context
 	cancel context.CancelFunc
 	done   chan struct{}
+	stopCh chan struct{}
 }
 
 // NewUnixSocketTransport creates a new UNIX socket transport.
 func NewUnixSocketTransport(socketPath string) (*UnixSocketTransport, error) {
-
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to signal-cli socket: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	_, cancel := context.WithCancel(context.Background())
 
 	t := &UnixSocketTransport{
 		socketPath:    socketPath,
 		conn:          conn,
 		pending:       make(map[string]chan *rpcResponse),
 		notifications: make(chan *Notification, 100),
-		ctx:           ctx,
 		cancel:        cancel,
 		done:          make(chan struct{}),
+		stopCh:        make(chan struct{}),
 	}
 
 	// Start reading loop
@@ -58,7 +58,7 @@ func NewUnixSocketTransport(socketPath string) (*UnixSocketTransport, error) {
 // Call implements Transport.Call.
 func (t *UnixSocketTransport) Call(ctx context.Context, method string, params any) (*json.RawMessage, error) {
 	// Generate unique ID
-	id := fmt.Sprintf("req-%d", t.requestID.Add(1))
+	id := "req-" + strconv.FormatUint(t.requestID.Add(1), 10)
 
 	// Create request
 	req := &rpcRequest{
@@ -88,14 +88,14 @@ func (t *UnixSocketTransport) Call(ctx context.Context, method string, params an
 	}()
 
 	// Send request
-	if _, err := fmt.Fprintf(t.conn, "%s\n", data); err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
+	if _, writeErr := fmt.Fprintf(t.conn, "%s\n", data); writeErr != nil {
+		return nil, fmt.Errorf("failed to send request: %w", writeErr)
 	}
 
 	// Wait for response
 	select {
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, fmt.Errorf("context cancelled while waiting for response: %w", ctx.Err())
 	case resp := <-respChan:
 		if resp.Error != nil {
 			return nil, &RPCError{
@@ -117,7 +117,7 @@ func (t *UnixSocketTransport) readLoop() {
 
 	for scanner.Scan() {
 		select {
-		case <-t.ctx.Done():
+		case <-t.stopCh:
 			return
 		default:
 		}
@@ -141,7 +141,7 @@ func (t *UnixSocketTransport) readLoop() {
 		if err := json.Unmarshal(line, &notif); err == nil && notif.Method != "" {
 			select {
 			case t.notifications <- &notif:
-			case <-t.ctx.Done():
+			case <-t.stopCh:
 				return
 			}
 		}
@@ -157,10 +157,15 @@ func (t *UnixSocketTransport) Subscribe(_ context.Context) (<-chan *Notification
 
 // Close implements Transport.Close.
 func (t *UnixSocketTransport) Close() error {
+	// Close stop channel to signal shutdown
+	close(t.stopCh)
 	t.cancel()
 	err := t.conn.Close()
 	<-t.done
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to close connection: %w", err)
+	}
+	return nil
 }
 
 // Internal types.
@@ -193,5 +198,5 @@ type RPCError struct {
 
 // Error implements the error interface for RPCError.
 func (e *RPCError) Error() string {
-	return fmt.Sprintf("RPC error %d: %s", e.Code, e.Message)
+	return "RPC error " + strconv.Itoa(e.Code) + ": " + e.Message
 }

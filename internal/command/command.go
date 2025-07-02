@@ -6,6 +6,7 @@ package command
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -38,7 +39,8 @@ func RunCommandContext(ctx context.Context, name string, args ...string) (string
 
 	if err != nil {
 		// Provide more context in error messages
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			return "", fmt.Errorf("command failed: %s %s (exit code %d): %s",
 				name, strings.Join(args, " "), exitErr.ExitCode(), string(output))
 		}
@@ -85,7 +87,8 @@ func RunCommandWithInputContext(ctx context.Context, input, name string, args ..
 
 	if err != nil {
 		// Provide more context in error messages
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			return output, fmt.Errorf("command failed: %s %s (exit code %d): %s",
 				name, strings.Join(args, " "), exitErr.ExitCode(), output)
 		}
@@ -103,7 +106,6 @@ type Builder struct {
 	args    []string
 	input   string
 	timeout time.Duration
-	ctx     context.Context
 }
 
 // NewCommand creates a new Builder for the given command.
@@ -112,7 +114,6 @@ func NewCommand(name string, args ...string) *Builder {
 		name:    name,
 		args:    args,
 		timeout: DefaultTimeout,
-		ctx:     context.Background(),
 	}
 }
 
@@ -128,15 +129,21 @@ func (cb *Builder) WithTimeout(timeout time.Duration) *Builder {
 	return cb
 }
 
-// WithContext sets the context for the command execution.
-func (cb *Builder) WithContext(ctx context.Context) *Builder {
-	cb.ctx = ctx
+// WithContext is deprecated and does nothing. Pass context to Run() or RunContext() instead.
+// Deprecated: Use RunContext instead of Run after calling WithContext.
+func (cb *Builder) WithContext(_ context.Context) *Builder {
+	// This method is kept for backward compatibility but does nothing.
+	// The context should be passed to RunContext() instead.
 	return cb
 }
 
 // Run executes the command and returns the output.
 func (cb *Builder) Run() (string, error) {
-	ctx := cb.ctx
+	return cb.RunContext(context.Background())
+}
+
+// RunContext executes the command with the given context and returns the output.
+func (cb *Builder) RunContext(ctx context.Context) (string, error) {
 	if cb.timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, cb.timeout)

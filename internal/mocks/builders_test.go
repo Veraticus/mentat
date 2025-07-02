@@ -1,4 +1,4 @@
-package mocks
+package mocks_test
 
 import (
 	"fmt"
@@ -8,46 +8,51 @@ import (
 	"github.com/Veraticus/mentat/internal/agent"
 	"github.com/Veraticus/mentat/internal/claude"
 	"github.com/Veraticus/mentat/internal/conversation"
+	"github.com/Veraticus/mentat/internal/mocks"
 	"github.com/Veraticus/mentat/internal/queue"
 	"github.com/Veraticus/mentat/internal/signal"
 	"github.com/Veraticus/mentat/internal/storage"
+)
+
+const (
+	mentatRecipient = "mentat"
 )
 
 func TestMessageBuilder(t *testing.T) {
 	tests := []struct {
 		validate func(t *testing.T, msg *queue.Message)
 		name     string
-		options  []MessageOption
+		options  []mocks.MessageOption
 	}{
 		{
 			name:     "default message",
-			options:  []MessageOption{},
+			options:  []mocks.MessageOption{},
 			validate: validateDefaultMessage,
 		},
 		{
 			name: "custom message",
-			options: []MessageOption{
-				WithID("custom-123"),
-				WithText("Custom content"),
-				WithState(queue.StateProcessing),
-				WithSender("+15559999999"),
-				WithAttempts(2),
+			options: []mocks.MessageOption{
+				mocks.WithID("custom-123"),
+				mocks.WithText("Custom content"),
+				mocks.WithState(queue.StateProcessing),
+				mocks.WithSender("+15559999999"),
+				mocks.WithAttempts(2),
 			},
 			validate: validateCustomMessage,
 		},
 		{
 			name: "message with error",
-			options: []MessageOption{
-				WithState(queue.StateFailed),
-				WithError(fmt.Errorf("Connection timeout")),
+			options: []mocks.MessageOption{
+				mocks.WithState(queue.StateFailed),
+				mocks.WithError(fmt.Errorf("Connection timeout")),
 			},
 			validate: validateMessageWithError,
 		},
 		{
 			name: "message with response",
-			options: []MessageOption{
-				WithState(queue.StateCompleted),
-				WithResponse("Task completed successfully"),
+			options: []mocks.MessageOption{
+				mocks.WithState(queue.StateCompleted),
+				mocks.WithResponse("Task completed successfully"),
 			},
 			validate: validateMessageWithResponse,
 		},
@@ -55,7 +60,7 @@ func TestMessageBuilder(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg := NewMessageBuilder().Build(tt.options...)
+			msg := mocks.NewMessageBuilder().Build(tt.options...)
 			tt.validate(t, msg)
 		})
 	}
@@ -127,29 +132,29 @@ func TestQueuedMessageBuilder(t *testing.T) {
 	tests := []struct {
 		validate func(t *testing.T, msg *queue.QueuedMessage)
 		name     string
-		options  []QueuedMessageOption
+		options  []mocks.QueuedMessageOption
 	}{
 		{
 			name:     "default queued message",
-			options:  []QueuedMessageOption{},
+			options:  []mocks.QueuedMessageOption{},
 			validate: validateDefaultQueuedMessage,
 		},
 		{
 			name: "custom queued message",
-			options: []QueuedMessageOption{
-				WithQueuedMessageID("custom-queued-123"),
-				WithQueuedText("Custom queued text"),
-				WithQueuedState(queue.MessageStateProcessing),
-				WithQueuedPriority(queue.PriorityHigh),
-				WithQueuedAttempts(2),
+			options: []mocks.QueuedMessageOption{
+				mocks.WithQueuedMessageID("custom-queued-123"),
+				mocks.WithQueuedText("Custom queued text"),
+				mocks.WithQueuedState(queue.MessageStateProcessing),
+				mocks.WithQueuedPriority(queue.PriorityHigh),
+				mocks.WithQueuedAttempts(2),
 			},
 			validate: validateCustomQueuedMessage,
 		},
 		{
 			name: "queued message with error",
-			options: []QueuedMessageOption{
-				WithQueuedState(queue.MessageStateFailed),
-				WithQueuedError(fmt.Errorf("queue processing failed")),
+			options: []mocks.QueuedMessageOption{
+				mocks.WithQueuedState(queue.MessageStateFailed),
+				mocks.WithQueuedError(fmt.Errorf("queue processing failed")),
 			},
 			validate: validateQueuedMessageWithError,
 		},
@@ -157,7 +162,7 @@ func TestQueuedMessageBuilder(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg := NewQueuedMessageBuilder().Build(tt.options...)
+			msg := mocks.NewQueuedMessageBuilder().Build(tt.options...)
 			tt.validate(t, msg)
 		})
 	}
@@ -212,11 +217,11 @@ func TestLLMResponseBuilder(t *testing.T) {
 	tests := []struct {
 		validate func(t *testing.T, resp *claude.LLMResponse)
 		name     string
-		options  []LLMResponseOption
+		options  []mocks.LLMResponseOption
 	}{
 		{
 			name:    "default response",
-			options: []LLMResponseOption{},
+			options: []mocks.LLMResponseOption{},
 			validate: func(t *testing.T, resp *claude.LLMResponse) {
 				t.Helper()
 				if resp.Message != "I can help you with that." {
@@ -232,9 +237,9 @@ func TestLLMResponseBuilder(t *testing.T) {
 		},
 		{
 			name: "response with tool calls",
-			options: []LLMResponseOption{
-				WithMessage("Checking your calendar..."),
-				WithToolCalls(
+			options: []mocks.LLMResponseOption{
+				mocks.WithMessage("Checking your calendar..."),
+				mocks.WithToolCalls(
 					claude.ToolCall{
 						Tool: "calendar_search",
 						Parameters: map[string]claude.ToolParameter{
@@ -258,8 +263,8 @@ func TestLLMResponseBuilder(t *testing.T) {
 		},
 		{
 			name: "response with error message",
-			options: []LLMResponseOption{
-				WithMessage("Error: Rate limit exceeded"),
+			options: []mocks.LLMResponseOption{
+				mocks.WithMessage("Error: Rate limit exceeded"),
 			},
 			validate: func(t *testing.T, resp *claude.LLMResponse) {
 				t.Helper()
@@ -270,9 +275,9 @@ func TestLLMResponseBuilder(t *testing.T) {
 		},
 		{
 			name: "response with metrics",
-			options: []LLMResponseOption{
-				WithLatency(2500 * time.Millisecond),
-				WithTokensUsed(350),
+			options: []mocks.LLMResponseOption{
+				mocks.WithLatency(2500 * time.Millisecond),
+				mocks.WithTokensUsed(350),
 			},
 			validate: func(t *testing.T, resp *claude.LLMResponse) {
 				t.Helper()
@@ -288,7 +293,7 @@ func TestLLMResponseBuilder(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp := NewLLMResponseBuilder().Build(tt.options...)
+			resp := mocks.NewLLMResponseBuilder().Build(tt.options...)
 			tt.validate(t, resp)
 		})
 	}
@@ -298,11 +303,11 @@ func TestValidationResultBuilder(t *testing.T) {
 	tests := []struct {
 		validate func(t *testing.T, result *agent.ValidationResult)
 		name     string
-		options  []ValidationResultOption
+		options  []mocks.ValidationResultOption
 	}{
 		{
 			name:    "default valid result",
-			options: []ValidationResultOption{},
+			options: []mocks.ValidationResultOption{},
 			validate: func(t *testing.T, result *agent.ValidationResult) {
 				t.Helper()
 				if result.Status != agent.ValidationStatusSuccess {
@@ -315,11 +320,11 @@ func TestValidationResultBuilder(t *testing.T) {
 		},
 		{
 			name: "incomplete search result",
-			options: []ValidationResultOption{
-				WithStatus(agent.ValidationStatusIncompleteSearch),
-				WithConfidence(0.6),
-				WithIssues("Did not check memory", "Did not use calendar tool"),
-				WithMetadata(map[string]string{
+			options: []mocks.ValidationResultOption{
+				mocks.WithStatus(agent.ValidationStatusIncompleteSearch),
+				mocks.WithConfidence(0.6),
+				mocks.WithIssues("Did not check memory", "Did not use calendar tool"),
+				mocks.WithMetadata(map[string]string{
 					"requires_retry":   "true",
 					"generated_prompt": "Please check memory and calendar tools",
 				}),
@@ -345,11 +350,11 @@ func TestValidationResultBuilder(t *testing.T) {
 		},
 		{
 			name: "failed result with suggestions",
-			options: []ValidationResultOption{
-				WithStatus(agent.ValidationStatusFailed),
-				WithConfidence(0.2),
-				WithIssues("Response contains incorrect information"),
-				WithSuggestions("Verify data sources", "Cross-check with memory"),
+			options: []mocks.ValidationResultOption{
+				mocks.WithStatus(agent.ValidationStatusFailed),
+				mocks.WithConfidence(0.2),
+				mocks.WithIssues("Response contains incorrect information"),
+				mocks.WithSuggestions("Verify data sources", "Cross-check with memory"),
 			},
 			validate: func(t *testing.T, result *agent.ValidationResult) {
 				t.Helper()
@@ -365,7 +370,7 @@ func TestValidationResultBuilder(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := NewValidationResultBuilder().Build(tt.options...)
+			result := mocks.NewValidationResultBuilder().Build(tt.options...)
 			tt.validate(t, result)
 		})
 	}
@@ -377,22 +382,22 @@ func TestSignalMessageBuilder(t *testing.T) {
 	tests := []struct {
 		validate func(t *testing.T, msg *signal.Message)
 		name     string
-		options  []SignalMessageOption
+		options  []mocks.SignalMessageOption
 	}{
 		{
 			name:     "default signal message",
-			options:  []SignalMessageOption{},
+			options:  []mocks.SignalMessageOption{},
 			validate: validateDefaultSignalMessage,
 		},
 		{
 			name: "custom signal message",
-			options: []SignalMessageOption{
-				WithSignalID("custom-signal-456"),
-				WithSignalSender("+15559876543"),
-				WithRecipient("+15551111111"),
-				WithSignalText("Custom message"),
-				WithSignalTimestamp(now),
-				WithDeliveryStatus(true, false),
+			options: []mocks.SignalMessageOption{
+				mocks.WithSignalID("custom-signal-456"),
+				mocks.WithSignalSender("+15559876543"),
+				mocks.WithRecipient("+15551111111"),
+				mocks.WithSignalText("Custom message"),
+				mocks.WithSignalTimestamp(now),
+				mocks.WithDeliveryStatus(true, false),
 			},
 			validate: createCustomSignalValidator(now),
 		},
@@ -400,7 +405,7 @@ func TestSignalMessageBuilder(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg := NewSignalMessageBuilder().Build(tt.options...)
+			msg := mocks.NewSignalMessageBuilder().Build(tt.options...)
 			tt.validate(t, msg)
 		})
 	}
@@ -415,7 +420,7 @@ func validateDefaultSignalMessage(t *testing.T, msg *signal.Message) {
 	if msg.Sender != "+15551234567" {
 		t.Errorf("expected sender +15551234567, got %s", msg.Sender)
 	}
-	if msg.Recipient != "mentat" {
+	if msg.Recipient != mentatRecipient {
 		t.Errorf("expected recipient mentat, got %s", msg.Recipient)
 	}
 	if msg.Text != "Hello from Signal" {
@@ -476,7 +481,7 @@ func TestScenarioBuilder(t *testing.T) {
 
 // testSimpleConversationScenario tests a simple conversation scenario.
 func testSimpleConversationScenario(t *testing.T) {
-	scenario := CreateSimpleConversation("What's the weather?", "It's sunny and 72°F today.")
+	scenario := mocks.CreateSimpleConversation("What's the weather?", "It's sunny and 72°F today.")
 
 	verifyScenarioBasics(t, scenario, "Simple Conversation", 1, 1)
 
@@ -491,7 +496,7 @@ func testSimpleConversationScenario(t *testing.T) {
 
 // testFailureScenario tests a failure scenario.
 func testFailureScenario(t *testing.T) {
-	scenario := CreateFailureScenario()
+	scenario := mocks.CreateFailureScenario()
 
 	if len(scenario.Messages) != 1 {
 		t.Errorf("expected 1 message, got %d", len(scenario.Messages))
@@ -508,7 +513,7 @@ func testFailureScenario(t *testing.T) {
 
 // testRetryScenario tests a retry scenario.
 func testRetryScenario(t *testing.T) {
-	scenario := CreateRetryScenario()
+	scenario := mocks.CreateRetryScenario()
 
 	verifyRetryScenarioStructure(t, scenario)
 
@@ -520,7 +525,7 @@ func testRetryScenario(t *testing.T) {
 
 // testComplexMultiMessageScenario tests a complex multi-message scenario.
 func testComplexMultiMessageScenario(t *testing.T) {
-	scenario := CreateComplexScenario()
+	scenario := mocks.CreateComplexScenario()
 
 	verifyScenarioBasics(t, scenario, "", 2, 2)
 	verifyComplexScenarioMessages(t, scenario)
@@ -528,16 +533,16 @@ func testComplexMultiMessageScenario(t *testing.T) {
 
 // testCustomScenarioBuilder tests a custom scenario builder.
 func testCustomScenarioBuilder(t *testing.T) {
-	msg1 := NewMessageBuilder().Build(WithID("custom-1"))
-	msg2 := NewMessageBuilder().Build(WithID("custom-2"))
-	resp := NewLLMResponseBuilder().Build()
-	validation := NewValidationResultBuilder().Build()
+	msg1 := mocks.NewMessageBuilder().Build(mocks.WithID("custom-1"))
+	msg2 := mocks.NewMessageBuilder().Build(mocks.WithID("custom-2"))
+	resp := mocks.NewLLMResponseBuilder().Build()
+	validation := mocks.NewValidationResultBuilder().Build()
 
-	scenario := NewScenarioBuilder("Custom Test").Build(
-		WithMessages(msg1, msg2),
-		WithLLMResponse("custom-1", resp),
-		WithValidation("custom-1", validation),
-		WithExpectation(Expectation{
+	scenario := mocks.NewScenarioBuilder("Custom Test").Build(
+		mocks.WithMessages(msg1, msg2),
+		mocks.WithLLMResponse("custom-1", resp),
+		mocks.WithValidation("custom-1", validation),
+		mocks.WithExpectation(mocks.Expectation{
 			MessageID:  "custom-1",
 			FinalState: queue.StateCompleted,
 		}),
@@ -552,7 +557,12 @@ func testCustomScenarioBuilder(t *testing.T) {
 }
 
 // verifyScenarioBasics verifies basic scenario properties.
-func verifyScenarioBasics(t *testing.T, scenario *Scenario, expectedName string, expectedMessages, expectedExpectations int) {
+func verifyScenarioBasics(
+	t *testing.T,
+	scenario *mocks.Scenario,
+	expectedName string,
+	expectedMessages, expectedExpectations int,
+) {
 	t.Helper()
 	if expectedName != "" && scenario.Name != expectedName {
 		t.Errorf("unexpected scenario name: %s", scenario.Name)
@@ -561,12 +571,16 @@ func verifyScenarioBasics(t *testing.T, scenario *Scenario, expectedName string,
 		t.Errorf("expected %d message(s), got %d", expectedMessages, len(scenario.Messages))
 	}
 	if len(scenario.Expectations) != expectedExpectations {
-		t.Errorf("expected %d expectation(s), got %d", expectedExpectations, len(scenario.Expectations))
+		t.Errorf(
+			"expected %d expectation(s), got %d",
+			expectedExpectations,
+			len(scenario.Expectations),
+		)
 	}
 }
 
 // verifyRetryScenarioStructure verifies retry scenario structure.
-func verifyRetryScenarioStructure(t *testing.T, scenario *Scenario) {
+func verifyRetryScenarioStructure(t *testing.T, scenario *mocks.Scenario) {
 	t.Helper()
 	if len(scenario.Messages) != 1 {
 		t.Errorf("expected 1 message, got %d", len(scenario.Messages))
@@ -582,7 +596,7 @@ func verifyRetryScenarioStructure(t *testing.T, scenario *Scenario) {
 }
 
 // verifyComplexScenarioMessages verifies complex scenario messages.
-func verifyComplexScenarioMessages(t *testing.T, scenario *Scenario) {
+func verifyComplexScenarioMessages(t *testing.T, scenario *mocks.Scenario) {
 	t.Helper()
 	// Verify messages are in same conversation
 	if scenario.Messages[0].ConversationID != scenario.Messages[1].ConversationID {
@@ -601,11 +615,11 @@ func TestConversationMessageBuilder(t *testing.T) {
 	tests := []struct {
 		validate func(t *testing.T, msg *conversation.Message)
 		name     string
-		options  []ConversationMessageOption
+		options  []mocks.ConversationMessageOption
 	}{
 		{
 			name:    "default conversation message",
-			options: []ConversationMessageOption{},
+			options: []mocks.ConversationMessageOption{},
 			validate: func(t *testing.T, msg *conversation.Message) {
 				t.Helper()
 				if msg.ID != "conv-msg-123" {
@@ -624,19 +638,19 @@ func TestConversationMessageBuilder(t *testing.T) {
 		},
 		{
 			name: "message with response",
-			options: []ConversationMessageOption{
-				WithConversationMessageID("conv-msg-456"),
-				WithConversationFrom("mentat"),
-				WithConversationText("What's the weather?"),
-				WithConversationResponse("It's sunny and 72°F."),
-				WithConversationSessionID("session-456"),
+			options: []mocks.ConversationMessageOption{
+				mocks.WithConversationMessageID("conv-msg-456"),
+				mocks.WithConversationFrom(mentatRecipient),
+				mocks.WithConversationText("What's the weather?"),
+				mocks.WithConversationResponse("It's sunny and 72°F."),
+				mocks.WithConversationSessionID("session-456"),
 			},
 			validate: func(t *testing.T, msg *conversation.Message) {
 				t.Helper()
 				if msg.ID != "conv-msg-456" {
 					t.Errorf("expected ID conv-msg-456, got %s", msg.ID)
 				}
-				if msg.From != "mentat" {
+				if msg.From != mentatRecipient {
 					t.Errorf("expected from mentat, got %s", msg.From)
 				}
 				if msg.Text != "What's the weather?" {
@@ -654,7 +668,7 @@ func TestConversationMessageBuilder(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg := NewConversationMessageBuilder().Build(tt.options...)
+			msg := mocks.NewConversationMessageBuilder().Build(tt.options...)
 			tt.validate(t, msg)
 		})
 	}
@@ -664,22 +678,22 @@ func TestStoredMessageBuilder(t *testing.T) {
 	tests := []struct {
 		validate func(t *testing.T, msg *storage.StoredMessage)
 		name     string
-		options  []StoredMessageOption
+		options  []mocks.StoredMessageOption
 	}{
 		{
 			name:     "default stored message",
-			options:  []StoredMessageOption{},
+			options:  []mocks.StoredMessageOption{},
 			validate: validateDefaultStoredMessage,
 		},
 		{
 			name: "custom stored message",
-			options: []StoredMessageOption{
-				WithStoredMessageID("custom-stored-42"),
-				WithStoredContent("Custom stored content"),
-				WithStoredDirection(storage.OUTBOUND),
-				WithStoredProcessingState("failed"),
-				WithStoredFrom("mentat"),
-				WithStoredTo("+15559876543"),
+			options: []mocks.StoredMessageOption{
+				mocks.WithStoredMessageID("custom-stored-42"),
+				mocks.WithStoredContent("Custom stored content"),
+				mocks.WithStoredDirection(storage.OUTBOUND),
+				mocks.WithStoredProcessingState("failed"),
+				mocks.WithStoredFrom(mentatRecipient),
+				mocks.WithStoredTo("+15559876543"),
 			},
 			validate: validateCustomStoredMessage,
 		},
@@ -687,7 +701,7 @@ func TestStoredMessageBuilder(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg := NewStoredMessageBuilder().Build(tt.options...)
+			msg := mocks.NewStoredMessageBuilder().Build(tt.options...)
 			tt.validate(t, msg)
 		})
 	}
@@ -725,7 +739,7 @@ func validateCustomStoredMessage(t *testing.T, msg *storage.StoredMessage) {
 	if msg.ProcessingState != "failed" {
 		t.Errorf("expected processing state failed, got %s", msg.ProcessingState)
 	}
-	if msg.From != "mentat" {
+	if msg.From != mentatRecipient {
 		t.Errorf("expected from mentat, got %s", msg.From)
 	}
 	if msg.To != "+15559876543" {
@@ -738,11 +752,11 @@ func TestBuildersConcurrency(t *testing.T) {
 	t.Run("concurrent message building", func(t *testing.T) {
 		done := make(chan bool, 10)
 
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			go func(id int) {
-				msg := NewMessageBuilder().Build(
-					WithID(fmt.Sprintf("msg-%d", id)),
-					WithText("Concurrent message"),
+				msg := mocks.NewMessageBuilder().Build(
+					mocks.WithID(fmt.Sprintf("msg-%d", id)),
+					mocks.WithText("Concurrent message"),
 				)
 				if msg.Text != "Concurrent message" {
 					t.Errorf("unexpected text in goroutine %d", id)
@@ -751,7 +765,7 @@ func TestBuildersConcurrency(t *testing.T) {
 			}(i)
 		}
 
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			<-done
 		}
 	})
@@ -760,7 +774,7 @@ func TestBuildersConcurrency(t *testing.T) {
 func TestBuildersProduceUniqueInstances(t *testing.T) {
 	// Ensure builders create new instances each time
 	t.Run("message builder creates unique instances", func(t *testing.T) {
-		builder := NewMessageBuilder()
+		builder := mocks.NewMessageBuilder()
 		msg1 := builder.Build()
 		msg2 := builder.Build()
 
@@ -788,8 +802,8 @@ func TestToolParameterBuilding(t *testing.T) {
 			}),
 		}
 
-		resp := NewLLMResponseBuilder().Build(
-			WithToolCalls(claude.ToolCall{
+		resp := mocks.NewLLMResponseBuilder().Build(
+			mocks.WithToolCalls(claude.ToolCall{
 				Tool:       "schedule_meeting",
 				Parameters: params,
 			}),
@@ -814,8 +828,8 @@ func TestToolParameterBuilding(t *testing.T) {
 			claude.NewStringParam("item3"),
 		})
 
-		resp := NewLLMResponseBuilder().Build(
-			WithToolCalls(claude.ToolCall{
+		resp := mocks.NewLLMResponseBuilder().Build(
+			mocks.WithToolCalls(claude.ToolCall{
 				Tool: "process_items",
 				Parameters: map[string]claude.ToolParameter{
 					"items": arrayParam,
@@ -835,11 +849,11 @@ func TestToolParameterBuilding(t *testing.T) {
 func TestScenarioHelpers(t *testing.T) {
 	// Test that scenario helpers produce valid test data
 	t.Run("all scenario helpers produce valid data", func(t *testing.T) {
-		scenarios := []*Scenario{
-			CreateSimpleConversation("test", "response"),
-			CreateFailureScenario(),
-			CreateRetryScenario(),
-			CreateComplexScenario(),
+		scenarios := []*mocks.Scenario{
+			mocks.CreateSimpleConversation("test", "response"),
+			mocks.CreateFailureScenario(),
+			mocks.CreateRetryScenario(),
+			mocks.CreateComplexScenario(),
 		}
 
 		for i, scenario := range scenarios {
@@ -849,7 +863,7 @@ func TestScenarioHelpers(t *testing.T) {
 }
 
 // validateScenario validates a single scenario.
-func validateScenario(t *testing.T, index int, scenario *Scenario) {
+func validateScenario(t *testing.T, index int, scenario *mocks.Scenario) {
 	t.Helper()
 
 	validateScenarioBasicProperties(t, index, scenario)
@@ -857,7 +871,7 @@ func validateScenario(t *testing.T, index int, scenario *Scenario) {
 }
 
 // validateScenarioBasicProperties validates basic properties of a scenario.
-func validateScenarioBasicProperties(t *testing.T, index int, scenario *Scenario) {
+func validateScenarioBasicProperties(t *testing.T, index int, scenario *mocks.Scenario) {
 	t.Helper()
 
 	if scenario.Name == "" {
@@ -872,18 +886,22 @@ func validateScenarioBasicProperties(t *testing.T, index int, scenario *Scenario
 }
 
 // validateScenarioExpectations validates that all expectations reference existing messages.
-func validateScenarioExpectations(t *testing.T, index int, scenario *Scenario) {
+func validateScenarioExpectations(t *testing.T, index int, scenario *mocks.Scenario) {
 	t.Helper()
 
 	for _, exp := range scenario.Expectations {
 		if !messageExistsInScenario(scenario, exp.MessageID) {
-			t.Errorf("scenario %d: expectation references non-existent message %s", index, exp.MessageID)
+			t.Errorf(
+				"scenario %d: expectation references non-existent message %s",
+				index,
+				exp.MessageID,
+			)
 		}
 	}
 }
 
 // messageExistsInScenario checks if a message ID exists in the scenario.
-func messageExistsInScenario(scenario *Scenario, messageID string) bool {
+func messageExistsInScenario(scenario *mocks.Scenario, messageID string) bool {
 	for _, msg := range scenario.Messages {
 		if msg.ID == messageID {
 			return true
@@ -895,14 +913,14 @@ func messageExistsInScenario(scenario *Scenario, messageID string) bool {
 func TestBuilderChaining(t *testing.T) {
 	// Test that options can be chained fluently
 	t.Run("fluent option chaining", func(t *testing.T) {
-		msg := NewMessageBuilder().Build(
-			WithID("chain-1"),
-			WithText("Chained content"),
-			WithState(queue.StateProcessing),
-			WithSender("+15551234567"),
-			WithAttempts(1),
-			WithMaxAttempts(5),
-			WithError(fmt.Errorf("Test error")),
+		msg := mocks.NewMessageBuilder().Build(
+			mocks.WithID("chain-1"),
+			mocks.WithText("Chained content"),
+			mocks.WithState(queue.StateProcessing),
+			mocks.WithSender("+15551234567"),
+			mocks.WithAttempts(1),
+			mocks.WithMaxAttempts(5),
+			mocks.WithError(fmt.Errorf("Test error")),
 		)
 
 		// Verify all options were applied
@@ -933,10 +951,10 @@ func TestBuilderChaining(t *testing.T) {
 func TestZeroValues(t *testing.T) {
 	// Ensure builders handle zero values correctly
 	t.Run("zero values are handled properly", func(t *testing.T) {
-		msg := NewMessageBuilder().Build(
-			WithText(""),
-			WithAttempts(0),
-			WithError(nil),
+		msg := mocks.NewMessageBuilder().Build(
+			mocks.WithText(""),
+			mocks.WithAttempts(0),
+			mocks.WithError(nil),
 		)
 
 		if msg.Text != "" {
@@ -953,18 +971,18 @@ func TestZeroValues(t *testing.T) {
 
 // Benchmark to ensure builders are performant.
 func BenchmarkMessageBuilder(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		_ = NewMessageBuilder().Build(
-			WithID("bench-id"),
-			WithText("Benchmark content"),
-			WithState(queue.StateProcessing),
-			WithSender("+15551234567"),
+	for range b.N {
+		_ = mocks.NewMessageBuilder().Build(
+			mocks.WithID("bench-id"),
+			mocks.WithText("Benchmark content"),
+			mocks.WithState(queue.StateProcessing),
+			mocks.WithSender("+15551234567"),
 		)
 	}
 }
 
 func BenchmarkScenarioCreation(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		_ = CreateComplexScenario()
+	for range b.N {
+		_ = mocks.CreateComplexScenario()
 	}
 }

@@ -3,7 +3,7 @@ package signal
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -94,7 +94,8 @@ func (m *typingManager) StopAll() {
 func (m *typingManager) runIndicator(ctx context.Context, recipient string) {
 	// Send initial typing indicator
 	if err := m.messenger.SendTypingIndicator(ctx, recipient); err != nil {
-		log.Printf("Failed to send initial typing indicator to %s: %v", recipient, err)
+		logger := slog.Default()
+		logger.ErrorContext(ctx, "Failed to send initial typing indicator", slog.String("recipient", recipient), slog.Any("error", err))
 		// Continue anyway - don't fail the whole operation
 	}
 
@@ -112,7 +113,8 @@ func (m *typingManager) runIndicator(ctx context.Context, recipient string) {
 		case <-ticker.C:
 			// Send periodic typing indicator
 			if err := m.messenger.SendTypingIndicator(ctx, recipient); err != nil {
-				log.Printf("Failed to send typing indicator to %s: %v", recipient, err)
+				logger := slog.Default()
+				logger.ErrorContext(ctx, "Failed to send typing indicator", slog.String("recipient", recipient), slog.Any("error", err))
 				// Don't stop on error - the recipient might come back online
 			}
 		}

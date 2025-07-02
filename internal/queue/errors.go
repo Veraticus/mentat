@@ -10,13 +10,13 @@ import (
 // Common queue errors.
 var (
 	// ErrRateLimited indicates the request was rate limited by the LLM provider.
-	ErrRateLimited = errors.New("rate limited by LLM provider")
+	ErrRateLimited = fmt.Errorf("rate limited by LLM provider")
 
 	// ErrQueueStopped indicates the queue has been stopped.
-	ErrQueueStopped = errors.New("queue stopped")
+	ErrQueueStopped = fmt.Errorf("queue stopped")
 
 	// ErrMessageNotFound indicates the message was not found.
-	ErrMessageNotFound = errors.New("message not found")
+	ErrMessageNotFound = fmt.Errorf("message not found")
 )
 
 // RateLimitError represents a rate limit error from the LLM provider.
@@ -26,12 +26,21 @@ type RateLimitError struct {
 	Err        error         // Underlying error
 }
 
+// NewRateLimitError creates a new RateLimitError.
+func NewRateLimitError(message string, retryAfter time.Duration, err error) *RateLimitError {
+	return &RateLimitError{
+		Message:    message,
+		RetryAfter: retryAfter,
+		Err:        err,
+	}
+}
+
 // Error implements the error interface.
 func (e *RateLimitError) Error() string {
 	if e.RetryAfter > 0 {
 		return fmt.Sprintf("rate limited: retry after %v: %s", e.RetryAfter, e.Message)
 	}
-	return fmt.Sprintf("rate limited: %s", e.Message)
+	return "rate limited: " + e.Message
 }
 
 // Unwrap returns the underlying error.
@@ -77,15 +86,6 @@ func IsRateLimitError(err error) bool {
 	}
 
 	return false
-}
-
-// NewRateLimitError creates a new RateLimitError.
-func NewRateLimitError(message string, retryAfter time.Duration, err error) *RateLimitError {
-	return &RateLimitError{
-		Message:    message,
-		RetryAfter: retryAfter,
-		Err:        err,
-	}
 }
 
 // ExtractRetryAfter attempts to extract retry-after duration from an error.

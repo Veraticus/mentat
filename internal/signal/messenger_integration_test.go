@@ -224,7 +224,7 @@ func TestMessengerIntegrationConcurrentMessages(t *testing.T) {
 	var sendWg sync.WaitGroup
 	sendWg.Add(messageCount)
 
-	for i := 0; i < messageCount; i++ {
+	for i := range messageCount {
 		go func(_ int) {
 			defer sendWg.Done()
 			clientCh <- &Envelope{
@@ -353,7 +353,7 @@ func TestMessengerIntegrationSubscriptionReplacement(t *testing.T) {
 	subscriptionCount := 5
 	var channels []<-chan IncomingMessage
 
-	for i := 0; i < subscriptionCount; i++ {
+	for i := range subscriptionCount {
 		ctx := context.Background()
 		ch, err := m.Subscribe(ctx)
 		if err != nil {

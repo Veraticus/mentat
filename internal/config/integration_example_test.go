@@ -21,8 +21,8 @@ func Example_integrationWithClaude() {
 	// Generate and write MCP config to a file
 	mcpConfig := config.GenerateMCPConfig()
 	mcpConfigPath := filepath.Join(tmpDir, "mcp-config.json")
-	if err := config.WriteMCPConfig(mcpConfig, mcpConfigPath); err != nil {
-		fmt.Println("Error writing MCP config:", err)
+	if writeErr := config.WriteMCPConfig(mcpConfig, mcpConfigPath); writeErr != nil {
+		fmt.Println("Error writing MCP config:", writeErr)
 		return
 	}
 

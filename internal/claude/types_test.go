@@ -1,12 +1,14 @@
-package claude
+package claude_test
 
 import (
 	"testing"
 	"time"
+
+	"github.com/Veraticus/mentat/internal/claude"
 )
 
 func TestConfigZeroValue(t *testing.T) {
-	var cfg Config
+	var cfg claude.Config
 
 	// Zero value should be identifiable as uninitialized
 	if cfg.MCPConfigPath != "" {
@@ -27,7 +29,7 @@ func TestConfigZeroValue(t *testing.T) {
 }
 
 func TestLLMResponseZeroValue(t *testing.T) {
-	var resp LLMResponse
+	var resp claude.LLMResponse
 
 	// Zero value should be identifiable as uninitialized
 	if resp.ToolCalls != nil {
@@ -48,7 +50,7 @@ func TestLLMResponseZeroValue(t *testing.T) {
 }
 
 func TestToolCallZeroValue(t *testing.T) {
-	var tc ToolCall
+	var tc claude.ToolCall
 
 	// Zero value should be identifiable as uninitialized
 	if tc.Tool != "" {
@@ -63,10 +65,10 @@ func TestToolCallZeroValue(t *testing.T) {
 }
 
 func TestToolParameterZeroValue(t *testing.T) {
-	var tp ToolParameter
+	var tp claude.ToolParameter
 
 	// Zero value should default to ToolParamString type with empty string
-	if tp.Type != ToolParamString {
+	if tp.Type != claude.ToolParamString {
 		t.Error("Expected ToolParamString as default Type")
 	}
 	if tp.StringValue != "" {
@@ -91,45 +93,45 @@ func TestToolParameterZeroValue(t *testing.T) {
 
 func TestToolParameterConstructors(t *testing.T) {
 	t.Run("NewStringParam", func(t *testing.T) {
-		tp := NewStringParam("test")
+		tp := claude.NewStringParam("test")
 		validateStringParam(t, tp, "test")
 	})
 
 	t.Run("NewIntParam", func(t *testing.T) {
-		tp := NewIntParam(42)
+		tp := claude.NewIntParam(42)
 		validateIntParam(t, tp, 42)
 	})
 
 	t.Run("NewBoolParam", func(t *testing.T) {
-		tp := NewBoolParam(true)
+		tp := claude.NewBoolParam(true)
 		validateBoolParam(t, tp, true)
 	})
 
 	t.Run("NewFloatParam", func(t *testing.T) {
-		tp := NewFloatParam(3.14)
+		tp := claude.NewFloatParam(3.14)
 		validateFloatParam(t, tp, 3.14)
 	})
 
 	t.Run("NewArrayParam", func(t *testing.T) {
-		tp := NewArrayParam([]ToolParameter{
-			NewStringParam("item1"),
-			NewIntParam(2),
+		tp := claude.NewArrayParam([]claude.ToolParameter{
+			claude.NewStringParam("item1"),
+			claude.NewIntParam(2),
 		})
 		validateArrayParam(t, tp, 2)
 	})
 
 	t.Run("NewObjectParam", func(t *testing.T) {
-		tp := NewObjectParam(map[string]ToolParameter{
-			"key1": NewStringParam("value1"),
-			"key2": NewIntParam(2),
+		tp := claude.NewObjectParam(map[string]claude.ToolParameter{
+			"key1": claude.NewStringParam("value1"),
+			"key2": claude.NewIntParam(2),
 		})
 		validateObjectParam(t, tp, 2)
 	})
 }
 
-func validateStringParam(t *testing.T, tp ToolParameter, expected string) {
+func validateStringParam(t *testing.T, tp claude.ToolParameter, expected string) {
 	t.Helper()
-	if tp.Type != ToolParamString {
+	if tp.Type != claude.ToolParamString {
 		t.Error("Expected ToolParamString type")
 	}
 	if tp.StringValue != expected {
@@ -137,9 +139,9 @@ func validateStringParam(t *testing.T, tp ToolParameter, expected string) {
 	}
 }
 
-func validateIntParam(t *testing.T, tp ToolParameter, expected int) {
+func validateIntParam(t *testing.T, tp claude.ToolParameter, expected int) {
 	t.Helper()
-	if tp.Type != ToolParamInt {
+	if tp.Type != claude.ToolParamInt {
 		t.Error("Expected ToolParamInt type")
 	}
 	if tp.IntValue != expected {
@@ -147,9 +149,9 @@ func validateIntParam(t *testing.T, tp ToolParameter, expected int) {
 	}
 }
 
-func validateBoolParam(t *testing.T, tp ToolParameter, expected bool) {
+func validateBoolParam(t *testing.T, tp claude.ToolParameter, expected bool) {
 	t.Helper()
-	if tp.Type != ToolParamBool {
+	if tp.Type != claude.ToolParamBool {
 		t.Error("Expected ToolParamBool type")
 	}
 	if tp.BoolValue != expected {
@@ -157,9 +159,9 @@ func validateBoolParam(t *testing.T, tp ToolParameter, expected bool) {
 	}
 }
 
-func validateFloatParam(t *testing.T, tp ToolParameter, expected float64) {
+func validateFloatParam(t *testing.T, tp claude.ToolParameter, expected float64) {
 	t.Helper()
-	if tp.Type != ToolParamFloat {
+	if tp.Type != claude.ToolParamFloat {
 		t.Error("Expected ToolParamFloat type")
 	}
 	if tp.FloatValue != expected {
@@ -167,9 +169,9 @@ func validateFloatParam(t *testing.T, tp ToolParameter, expected float64) {
 	}
 }
 
-func validateArrayParam(t *testing.T, tp ToolParameter, expectedLen int) {
+func validateArrayParam(t *testing.T, tp claude.ToolParameter, expectedLen int) {
 	t.Helper()
-	if tp.Type != ToolParamArray {
+	if tp.Type != claude.ToolParamArray {
 		t.Error("Expected ToolParamArray type")
 	}
 	if len(tp.ArrayValue) != expectedLen {
@@ -177,9 +179,9 @@ func validateArrayParam(t *testing.T, tp ToolParameter, expectedLen int) {
 	}
 }
 
-func validateObjectParam(t *testing.T, tp ToolParameter, expectedLen int) {
+func validateObjectParam(t *testing.T, tp claude.ToolParameter, expectedLen int) {
 	t.Helper()
-	if tp.Type != ToolParamObject {
+	if tp.Type != claude.ToolParamObject {
 		t.Error("Expected ToolParamObject type")
 	}
 	if len(tp.ObjectValue) != expectedLen {
@@ -188,7 +190,7 @@ func validateObjectParam(t *testing.T, tp ToolParameter, expectedLen int) {
 }
 
 func TestResponseMetadataZeroValue(t *testing.T) {
-	var meta ResponseMetadata
+	var meta claude.ResponseMetadata
 
 	// Zero value should be identifiable as uninitialized
 	if meta.ModelVersion != "" {
@@ -203,18 +205,18 @@ func TestResponseMetadataZeroValue(t *testing.T) {
 }
 
 func TestLLMResponseCreation(t *testing.T) {
-	resp := LLMResponse{
+	resp := claude.LLMResponse{
 		Message: "Test response",
-		ToolCalls: []ToolCall{
+		ToolCalls: []claude.ToolCall{
 			{
 				Tool: "test_tool",
-				Parameters: map[string]ToolParameter{
-					"param1": NewStringParam("value1"),
+				Parameters: map[string]claude.ToolParameter{
+					"param1": claude.NewStringParam("value1"),
 				},
 				Result: "Success",
 			},
 		},
-		Metadata: ResponseMetadata{
+		Metadata: claude.ResponseMetadata{
 			ModelVersion: "claude-3.5",
 			Latency:      100 * time.Millisecond,
 			TokensUsed:   42,

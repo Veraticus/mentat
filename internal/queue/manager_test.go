@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -13,7 +14,7 @@ func TestManager_SubmitAndRequest(t *testing.T) {
 	defer cancel()
 
 	manager := NewManager(ctx)
-	go manager.Start()
+	go manager.Start(ctx)
 
 	// Submit messages
 	msg1 := NewMessage("msg-1", "conv-1", "sender1", "+1234567890", "hello")
@@ -70,7 +71,7 @@ func TestManager_FairScheduling(t *testing.T) {
 	defer cancel()
 
 	manager := NewManager(ctx)
-	go manager.Start()
+	go manager.Start(ctx)
 
 	// Manager starts immediately
 
@@ -79,7 +80,7 @@ func TestManager_FairScheduling(t *testing.T) {
 	messagesPerConv := 3
 
 	for _, convID := range conversations {
-		for i := 0; i < messagesPerConv; i++ {
+		for i := range messagesPerConv {
 			msg := NewMessage(
 				fmt.Sprintf("%s-msg-%d", convID, i),
 				convID,
@@ -101,14 +102,14 @@ func TestManager_FairScheduling(t *testing.T) {
 	defer reqCancel()
 
 	// First round - should get one from each conversation
-	for i := 0; i < len(conversations); i++ {
+	for i := range conversations {
 		msg, err := manager.RequestMessage(reqCtx)
 		if err != nil || msg == nil {
 			t.Fatalf("Failed to get message %d: %v", i, err)
 		}
 		convCounts[msg.ConversationID]++
-		if err := manager.CompleteMessage(msg); err != nil {
-			t.Errorf("Failed to complete message: %v", err)
+		if completeErr := manager.CompleteMessage(msg); completeErr != nil {
+			t.Errorf("Failed to complete message: %v", completeErr)
 		}
 
 		// Continue immediately
@@ -128,7 +129,7 @@ func TestManager_Shutdown(t *testing.T) {
 	defer cancel()
 
 	manager := NewManager(ctx)
-	go manager.Start()
+	go manager.Start(ctx)
 
 	// Submit a message
 	msg := NewMessage("msg-1", "conv-1", "sender", "+1234567890", "test")
@@ -154,7 +155,7 @@ func TestManager_Stats(t *testing.T) {
 	defer cancel()
 
 	manager := NewManager(ctx)
-	go manager.Start()
+	go manager.Start(ctx)
 
 	// Initial stats
 	stats := manager.Stats()
@@ -204,18 +205,18 @@ func TestManager_ConcurrentSubmit(t *testing.T) {
 	defer cancel()
 
 	manager := NewManager(ctx)
-	go manager.Start()
+	go manager.Start(ctx)
 
 	var wg sync.WaitGroup
 	numGoroutines := 10
 	messagesPerGoroutine := 5
 
 	// Concurrent submits
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		wg.Add(1)
 		go func(goroutineID int) {
 			defer wg.Done()
-			for j := 0; j < messagesPerGoroutine; j++ {
+			for j := range messagesPerGoroutine {
 				msg := NewMessage(
 					fmt.Sprintf("g%d-m%d", goroutineID, j),
 					fmt.Sprintf("conv-%d", goroutineID%3), // 3 conversations
@@ -246,7 +247,7 @@ func TestManager_CompleteNonExistentMessage(t *testing.T) {
 	defer cancel()
 
 	manager := NewManager(ctx)
-	go manager.Start()
+	go manager.Start(ctx)
 
 	// Try to complete a message that was never submitted
 	msg := NewMessage("fake", "fake-conv", "sender", "+1234567890", "test")
@@ -261,7 +262,7 @@ func TestManager_RequestTimeout(t *testing.T) {
 	defer cancel()
 
 	manager := NewManager(ctx)
-	go manager.Start()
+	go manager.Start(ctx)
 
 	// Manager starts immediately
 
@@ -277,7 +278,7 @@ func TestManager_RequestTimeout(t *testing.T) {
 		t.Error("Expected nil message on timeout")
 	}
 
-	if err != context.DeadlineExceeded {
+	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("Expected DeadlineExceeded error, got %v", err)
 	}
 

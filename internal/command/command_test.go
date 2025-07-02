@@ -1,4 +1,4 @@
-package command
+package command_test
 
 import (
 	"context"
@@ -6,6 +6,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Veraticus/mentat/internal/command"
+)
+
+const (
+	windowsOS = "windows"
 )
 
 func TestRunCommand(t *testing.T) {
@@ -41,7 +47,7 @@ func TestRunCommand(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			output, err := RunCommand(tt.command, tt.args...)
+			output, err := command.RunCommand(tt.command, tt.args...)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("RunCommand() error = %v, wantErr %v", err, tt.wantErr)
@@ -65,7 +71,7 @@ func TestRunCommandContext(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel() // Cancel immediately
 
-		_, err := RunCommandContext(ctx, "sleep", "5")
+		_, err := command.RunCommandContext(ctx, "sleep", "5")
 		if err == nil {
 			t.Error("RunCommandContext() expected error with canceled context")
 		}
@@ -79,7 +85,7 @@ func TestRunCommandContext(t *testing.T) {
 
 		// Use a command that would run forever
 		start := time.Now()
-		_, err := RunCommandContext(context.Background(), "sleep", "60")
+		_, err := command.RunCommandContext(context.Background(), "sleep", "60")
 		elapsed := time.Since(start)
 
 		if err == nil {
@@ -97,7 +103,7 @@ func TestRunCommandContext(t *testing.T) {
 		defer cancel()
 
 		start := time.Now()
-		_, err := RunCommandContext(ctx, "sleep", "5")
+		_, err := command.RunCommandContext(ctx, "sleep", "5")
 		elapsed := time.Since(start)
 
 		if err == nil {
@@ -114,7 +120,7 @@ func TestRunCommandContext(t *testing.T) {
 func TestRunCommandWithInput(t *testing.T) {
 	// Platform-specific cat command
 	catCmd := "cat"
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == windowsOS {
 		catCmd = "type"
 	}
 
@@ -147,11 +153,11 @@ func TestRunCommandWithInput(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Skip grep test on Windows
-			if runtime.GOOS == "windows" && tt.command == "grep" {
+			if runtime.GOOS == windowsOS && tt.command == "grep" {
 				t.Skip("grep not available on Windows")
 			}
 
-			output, err := RunCommandWithInput(tt.input, tt.command, tt.args...)
+			output, err := command.RunCommandWithInput(tt.input, tt.command, tt.args...)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("RunCommandWithInput() error = %v, wantErr %v", err, tt.wantErr)
@@ -168,7 +174,7 @@ func TestRunCommandWithInput(t *testing.T) {
 func TestRunCommandWithInputContext(t *testing.T) {
 	t.Run("handles stderr output", func(t *testing.T) {
 		// Command that writes to stderr
-		output, err := RunCommandWithInputContext(
+		output, err := command.RunCommandWithInputContext(
 			context.Background(),
 			"",
 			"sh",
@@ -192,7 +198,7 @@ func TestRunCommandWithInputContext(t *testing.T) {
 
 func TestCommandBuilder(t *testing.T) {
 	t.Run("basic command", func(t *testing.T) {
-		output, err := NewCommand("echo", "hello").Run()
+		output, err := command.NewCommand("echo", "hello").Run()
 		if err != nil {
 			t.Errorf("CommandBuilder.Run() error = %v", err)
 		}
@@ -203,11 +209,11 @@ func TestCommandBuilder(t *testing.T) {
 
 	t.Run("with input", func(t *testing.T) {
 		catCmd := "cat"
-		if runtime.GOOS == "windows" {
+		if runtime.GOOS == windowsOS {
 			catCmd = "type"
 		}
 
-		output, err := NewCommand(catCmd).
+		output, err := command.NewCommand(catCmd).
 			WithInput("test input").
 			Run()
 
@@ -221,7 +227,7 @@ func TestCommandBuilder(t *testing.T) {
 
 	t.Run("with custom timeout", func(t *testing.T) {
 		start := time.Now()
-		_, err := NewCommand("sleep", "5").
+		_, err := command.NewCommand("sleep", "5").
 			WithTimeout(1 * time.Second).
 			Run()
 		elapsed := time.Since(start)
@@ -239,19 +245,18 @@ func TestCommandBuilder(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		_, err := NewCommand("echo", "hello").
-			WithContext(ctx).
-			Run()
+		_, err := command.NewCommand("echo", "hello").
+			RunContext(ctx)
 
 		if err == nil {
-			t.Error("Builder.Run() expected error with canceled context")
+			t.Error("Builder.RunContext() expected error with canceled context")
 		}
 	})
 }
 
 func TestErrorMessages(t *testing.T) {
 	t.Run("includes command and args in error", func(t *testing.T) {
-		_, err := RunCommand("sh", "-c", "exit 42")
+		_, err := command.RunCommand("sh", "-c", "exit 42")
 		if err == nil {
 			t.Fatal("expected error")
 		}
@@ -266,7 +271,7 @@ func TestErrorMessages(t *testing.T) {
 	})
 
 	t.Run("includes output in error", func(t *testing.T) {
-		_, err := RunCommand("sh", "-c", "echo 'error output' && exit 1")
+		_, err := command.RunCommand("sh", "-c", "echo 'error output' && exit 1")
 		if err == nil {
 			t.Fatal("expected error")
 		}

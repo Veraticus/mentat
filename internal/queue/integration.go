@@ -9,6 +9,16 @@ import (
 	"github.com/Veraticus/mentat/internal/signal"
 )
 
+// Default configuration values.
+const (
+	// defaultHealthCheckPeriod is the default health check interval.
+	defaultHealthCheckPeriod = 30 * time.Second
+	// defaultUnhealthyThreshold is the default unhealthy threshold duration.
+	defaultUnhealthyThreshold = 2 * time.Minute
+	// defaultShutdownTimeout is the default shutdown timeout.
+	defaultShutdownTimeout = 30 * time.Second
+)
+
 // SystemConfig holds configuration for the entire queue system.
 type SystemConfig struct {
 	// Worker pool configuration
@@ -36,7 +46,6 @@ type System struct {
 	Coordinator *Coordinator
 	WorkerPool  *DynamicWorkerPool
 	RateLimiter RateLimiter
-	ctx         context.Context
 	cancel      context.CancelFunc
 }
 
@@ -88,7 +97,7 @@ func NewSystem(ctx context.Context, config SystemConfig) (*System, error) {
 	}
 
 	// Create the dynamic worker pool with a custom worker factory
-	workerPool, err := NewDynamicWorkerPool(poolConfig)
+	workerPool, err := NewDynamicWorkerPool(ctx, poolConfig)
 	if err != nil {
 		sysCancel()
 		return nil, fmt.Errorf("failed to create worker pool: %w", err)
@@ -99,7 +108,6 @@ func NewSystem(ctx context.Context, config SystemConfig) (*System, error) {
 		Coordinator: coordinator,
 		WorkerPool:  workerPool,
 		RateLimiter: rateLimiter,
-		ctx:         sysCtx,
 		cancel:      sysCancel,
 	}
 
@@ -131,9 +139,9 @@ func (qs *System) GetDetailedStats() DetailedStats {
 }
 
 // Start begins the queue system operation.
-func (qs *System) Start() error {
+func (qs *System) Start(ctx context.Context) error {
 	// Start the worker pool
-	if err := qs.WorkerPool.Start(qs.ctx); err != nil {
+	if err := qs.WorkerPool.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start worker pool: %w", err)
 	}
 
@@ -146,7 +154,7 @@ func (qs *System) Stop() error {
 	qs.cancel()
 
 	// Stop the worker pool first
-	qs.WorkerPool.Stop()
+	qs.WorkerPool.Stop(context.Background())
 
 	// Wait for workers to finish processing
 	qs.WorkerPool.Wait()
@@ -222,10 +230,10 @@ func validateSystemConfig(config *SystemConfig) error {
 		config.MaxWorkers = 10
 	}
 	if config.HealthCheckPeriod == 0 {
-		config.HealthCheckPeriod = 30 * time.Second
+		config.HealthCheckPeriod = defaultHealthCheckPeriod
 	}
 	if config.UnhealthyThreshold == 0 {
-		config.UnhealthyThreshold = 2 * time.Minute
+		config.UnhealthyThreshold = defaultUnhealthyThreshold
 	}
 	if config.RateLimitPerMinute == 0 {
 		config.RateLimitPerMinute = 10
@@ -237,7 +245,7 @@ func validateSystemConfig(config *SystemConfig) error {
 		config.RateLimitWindow = time.Minute
 	}
 	if config.ShutdownTimeout == 0 {
-		config.ShutdownTimeout = 30 * time.Second
+		config.ShutdownTimeout = defaultShutdownTimeout
 	}
 
 	// Validate required dependencies

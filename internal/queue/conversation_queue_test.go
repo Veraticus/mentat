@@ -1,17 +1,19 @@
-package queue
+package queue_test
 
 import (
 	"fmt"
 	"sync"
 	"testing"
+
+	"github.com/Veraticus/mentat/internal/queue"
 )
 
 func TestConversationQueue_EnqueueDequeue(t *testing.T) {
-	cq := NewConversationQueue("conv-1")
+	cq := queue.NewConversationQueue("conv-1")
 
 	// Test enqueue
-	msg1 := NewMessage("msg-1", "conv-1", "sender", "+1234567890", "hello")
-	msg2 := NewMessage("msg-2", "conv-1", "sender", "+1234567890", "world")
+	msg1 := queue.NewMessage("msg-1", "conv-1", "sender", "+1234567890", "hello")
+	msg2 := queue.NewMessage("msg-2", "conv-1", "sender", "+1234567890", "world")
 
 	if err := cq.Enqueue(msg1); err != nil {
 		t.Fatalf("Failed to enqueue msg1: %v", err)
@@ -50,7 +52,7 @@ func TestConversationQueue_EnqueueDequeue(t *testing.T) {
 }
 
 func TestConversationQueue_EnqueueErrors(t *testing.T) {
-	cq := NewConversationQueue("conv-1")
+	cq := queue.NewConversationQueue("conv-1")
 
 	// Test nil message
 	if err := cq.Enqueue(nil); err == nil {
@@ -58,14 +60,14 @@ func TestConversationQueue_EnqueueErrors(t *testing.T) {
 	}
 
 	// Test wrong conversation ID
-	wrongMsg := NewMessage("msg-1", "conv-2", "sender", "+1234567890", "wrong")
+	wrongMsg := queue.NewMessage("msg-1", "conv-2", "sender", "+1234567890", "wrong")
 	if err := cq.Enqueue(wrongMsg); err == nil {
 		t.Error("Expected error for wrong conversation ID")
 	}
 }
 
 func TestConversationQueue_EmptyDequeue(t *testing.T) {
-	cq := NewConversationQueue("conv-1")
+	cq := queue.NewConversationQueue("conv-1")
 
 	msg := cq.Dequeue()
 	if msg != nil {
@@ -74,8 +76,8 @@ func TestConversationQueue_EmptyDequeue(t *testing.T) {
 }
 
 func TestConversationQueue_IsProcessing(t *testing.T) {
-	cq := NewConversationQueue("conv-1")
-	msg := NewMessage("msg-1", "conv-1", "sender", "+1234567890", "test")
+	cq := queue.NewConversationQueue("conv-1")
+	msg := queue.NewMessage("msg-1", "conv-1", "sender", "+1234567890", "test")
 
 	if err := cq.Enqueue(msg); err != nil {
 		t.Fatalf("Enqueue failed: %v", err)
@@ -99,13 +101,13 @@ func TestConversationQueue_IsProcessing(t *testing.T) {
 }
 
 func TestConversationQueue_IsEmpty(t *testing.T) {
-	cq := NewConversationQueue("conv-1")
+	cq := queue.NewConversationQueue("conv-1")
 
 	if !cq.IsEmpty() {
 		t.Error("New queue should be empty")
 	}
 
-	msg := NewMessage("msg-1", "conv-1", "sender", "+1234567890", "test")
+	msg := queue.NewMessage("msg-1", "conv-1", "sender", "+1234567890", "test")
 	if err := cq.Enqueue(msg); err != nil {
 		t.Fatalf("Enqueue failed: %v", err)
 	}
@@ -128,15 +130,15 @@ func TestConversationQueue_IsEmpty(t *testing.T) {
 }
 
 func TestConversationQueue_ConcurrentOperations(t *testing.T) {
-	cq := NewConversationQueue("conv-1")
+	cq := queue.NewConversationQueue("conv-1")
 	var wg sync.WaitGroup
 
 	// Concurrent enqueuers
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			msg := NewMessage(fmt.Sprintf("msg-%d", id), "conv-1", "sender", "+1234567890", "test")
+			msg := queue.NewMessage(fmt.Sprintf("msg-%d", id), "conv-1", "sender", "+1234567890", "test")
 			if err := cq.Enqueue(msg); err != nil {
 				t.Errorf("Enqueue failed: %v", err)
 			}
@@ -144,7 +146,7 @@ func TestConversationQueue_ConcurrentOperations(t *testing.T) {
 	}
 
 	// Concurrent readers
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -165,15 +167,15 @@ func TestConversationQueue_ConcurrentOperations(t *testing.T) {
 func TestConversationQueue_DepthLimit(t *testing.T) {
 	// Test with custom depth limit
 	maxDepth := 3
-	cq := NewConversationQueueWithDepth("conv-1", maxDepth)
+	cq := queue.NewConversationQueueWithDepth("conv-1", maxDepth)
 
 	if cq.MaxDepth() != maxDepth {
 		t.Errorf("Expected max depth %d, got %d", maxDepth, cq.MaxDepth())
 	}
 
 	// Fill queue to limit
-	for i := 0; i < maxDepth; i++ {
-		msg := NewMessage(fmt.Sprintf("msg-%d", i), "conv-1", "sender", "+1234567890", "test")
+	for i := range maxDepth {
+		msg := queue.NewMessage(fmt.Sprintf("msg-%d", i), "conv-1", "sender", "+1234567890", "test")
 		if err := cq.Enqueue(msg); err != nil {
 			t.Fatalf("Failed to enqueue message %d: %v", i, err)
 		}
@@ -185,7 +187,7 @@ func TestConversationQueue_DepthLimit(t *testing.T) {
 	}
 
 	// Try to exceed limit
-	overflowMsg := NewMessage("overflow", "conv-1", "sender", "+1234567890", "test")
+	overflowMsg := queue.NewMessage("overflow", "conv-1", "sender", "+1234567890", "test")
 	err := cq.Enqueue(overflowMsg)
 	if err == nil {
 		t.Error("Expected error when exceeding depth limit")
@@ -205,11 +207,11 @@ func TestConversationQueue_DepthLimit(t *testing.T) {
 
 func TestConversationQueue_DepthLimitAfterDequeue(t *testing.T) {
 	maxDepth := 2
-	cq := NewConversationQueueWithDepth("conv-1", maxDepth)
+	cq := queue.NewConversationQueueWithDepth("conv-1", maxDepth)
 
 	// Fill queue
-	msg1 := NewMessage("msg-1", "conv-1", "sender", "+1234567890", "test1")
-	msg2 := NewMessage("msg-2", "conv-1", "sender", "+1234567890", "test2")
+	msg1 := queue.NewMessage("msg-1", "conv-1", "sender", "+1234567890", "test1")
+	msg2 := queue.NewMessage("msg-2", "conv-1", "sender", "+1234567890", "test2")
 
 	if err := cq.Enqueue(msg1); err != nil {
 		t.Fatalf("Failed to enqueue msg1: %v", err)
@@ -219,7 +221,7 @@ func TestConversationQueue_DepthLimitAfterDequeue(t *testing.T) {
 	}
 
 	// Queue should be full
-	msg3 := NewMessage("msg-3", "conv-1", "sender", "+1234567890", "test3")
+	msg3 := queue.NewMessage("msg-3", "conv-1", "sender", "+1234567890", "test3")
 	if err := cq.Enqueue(msg3); err == nil {
 		t.Error("Expected error when queue is full")
 	}
@@ -245,23 +247,23 @@ func TestConversationQueue_DepthLimitAfterDequeue(t *testing.T) {
 }
 
 func TestConversationQueue_DefaultDepthLimit(t *testing.T) {
-	cq := NewConversationQueue("conv-1")
+	cq := queue.NewConversationQueue("conv-1")
 
-	if cq.MaxDepth() != DefaultMaxDepth {
-		t.Errorf("Expected default max depth %d, got %d", DefaultMaxDepth, cq.MaxDepth())
+	if cq.MaxDepth() != queue.DefaultMaxDepth {
+		t.Errorf("Expected default max depth %d, got %d", queue.DefaultMaxDepth, cq.MaxDepth())
 	}
 }
 
 func TestConversationQueue_InvalidDepthLimit(t *testing.T) {
 	// Test with zero depth
-	cq := NewConversationQueueWithDepth("conv-1", 0)
-	if cq.MaxDepth() != DefaultMaxDepth {
+	cq := queue.NewConversationQueueWithDepth("conv-1", 0)
+	if cq.MaxDepth() != queue.DefaultMaxDepth {
 		t.Errorf("Expected default max depth for zero input, got %d", cq.MaxDepth())
 	}
 
 	// Test with negative depth
-	cq = NewConversationQueueWithDepth("conv-1", -10)
-	if cq.MaxDepth() != DefaultMaxDepth {
+	cq = queue.NewConversationQueueWithDepth("conv-1", -10)
+	if cq.MaxDepth() != queue.DefaultMaxDepth {
 		t.Errorf("Expected default max depth for negative input, got %d", cq.MaxDepth())
 	}
 }

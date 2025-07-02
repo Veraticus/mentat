@@ -35,7 +35,7 @@ func parseResponse(output string) (*jsonResponse, error) {
 func tryParseJSON(output string) (*jsonResponse, error) {
 	var jsonResp jsonResponse
 	if err := json.Unmarshal([]byte(output), &jsonResp); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to unmarshal JSON response: %w", err)
 	}
 
 	// Check for message in either Message or Result field (Claude Code uses Result)
@@ -147,7 +147,6 @@ func extractErrorMessage(output string) string {
 			strings.Contains(lowerLine, "permission denied") ||
 			strings.Contains(lowerLine, "timeout") ||
 			strings.Contains(lowerLine, "timed out") {
-
 			if msgBuilder.Len() > 0 {
 				msgBuilder.WriteString("; ")
 			}

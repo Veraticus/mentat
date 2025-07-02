@@ -60,7 +60,7 @@ func TestDynamicWorkerPool_Creation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pool, err := NewDynamicWorkerPool(tt.config)
+			pool, err := NewDynamicWorkerPool(context.Background(), tt.config)
 			if tt.wantError {
 				require.Error(t, err)
 				if tt.errorMsg != "" {
@@ -85,44 +85,57 @@ func TestDynamicWorkerPool_Creation(t *testing.T) {
 	}
 }
 
-func TestDynamicWorkerPool_ScaleUp(t *testing.T) {
+// setupPoolTest creates a test pool with the given configuration.
+func setupPoolTest(
+	t *testing.T,
+	initialSize, minSize, maxSize int,
+) (*DynamicWorkerPool, context.Context, context.CancelFunc) {
+	t.Helper()
 	// Set up mocks
 	mockLLM := &mockLLM{response: "test"}
 	mockMessenger := &mockMessenger{}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	queueMgr := NewManager(ctx)
-	go queueMgr.Start()
-	defer func() {
+	go queueMgr.Start(ctx)
+	t.Cleanup(func() {
 		if err := queueMgr.Shutdown(time.Second); err != nil {
 			t.Logf("Shutdown error: %v", err)
 		}
-	}()
+	})
 
 	config := PoolConfig{
-		InitialSize:  2,
-		MinSize:      1,
-		MaxSize:      5,
+		InitialSize:  initialSize,
+		MinSize:      minSize,
+		MaxSize:      maxSize,
 		LLM:          mockLLM,
 		Messenger:    mockMessenger,
 		QueueManager: queueMgr,
 		RateLimiter:  NewRateLimiter(10, 1, time.Second),
 	}
 
-	pool, err := NewDynamicWorkerPool(config)
+	pool, err := NewDynamicWorkerPool(context.Background(), config)
 	require.NoError(t, err)
-	defer pool.Stop()
+	t.Cleanup(func() {
+		pool.Stop(context.Background())
+	})
 
 	err = pool.Start(ctx)
 	require.NoError(t, err)
+
+	return pool, ctx, cancel
+}
+
+func TestDynamicWorkerPool_ScaleUp(t *testing.T) {
+	pool, _, cancel := setupPoolTest(t, 2, 1, 5)
+	defer cancel()
 
 	// Initial size should be 2
 	assert.Equal(t, 2, pool.Size())
 
 	// Scale up by 2
-	err = pool.ScaleUp(2)
+	err := pool.ScaleUp(2)
 	require.NoError(t, err)
 	assert.Equal(t, 4, pool.Size())
 
@@ -138,43 +151,14 @@ func TestDynamicWorkerPool_ScaleUp(t *testing.T) {
 }
 
 func TestDynamicWorkerPool_ScaleDown(t *testing.T) {
-	// Set up mocks
-	mockLLM := &mockLLM{response: "test"}
-	mockMessenger := &mockMessenger{}
-
-	ctx, cancel := context.WithCancel(context.Background())
+	pool, _, cancel := setupPoolTest(t, 5, 2, 10)
 	defer cancel()
-
-	queueMgr := NewManager(ctx)
-	go queueMgr.Start()
-	defer func() {
-		if err := queueMgr.Shutdown(time.Second); err != nil {
-			t.Logf("Shutdown error: %v", err)
-		}
-	}()
-
-	config := PoolConfig{
-		InitialSize:  5,
-		MinSize:      2,
-		MaxSize:      10,
-		LLM:          mockLLM,
-		Messenger:    mockMessenger,
-		QueueManager: queueMgr,
-		RateLimiter:  NewRateLimiter(10, 1, time.Second),
-	}
-
-	pool, err := NewDynamicWorkerPool(config)
-	require.NoError(t, err)
-	defer pool.Stop()
-
-	err = pool.Start(ctx)
-	require.NoError(t, err)
 
 	// Initial size should be 5
 	assert.Equal(t, 5, pool.Size())
 
 	// Scale down by 2
-	err = pool.ScaleDown(2)
+	err := pool.ScaleDown(2)
 	require.NoError(t, err)
 	assert.Equal(t, 3, pool.Size())
 
@@ -197,7 +181,8 @@ func TestDynamicWorkerPool_WorkerFailureHandling(t *testing.T) {
 			count := processedCount.Add(1)
 			if count == 2 {
 				// Simulate a worker crash on the second message
-				panic("simulated worker crash")
+				// Intentionally panic to test worker recovery mechanism
+				panic("simulated worker crash") //nolint:forbidigo // Testing worker recovery
 			}
 			return &claude.LLMResponse{Message: "Response"}, nil
 		},
@@ -213,7 +198,7 @@ func TestDynamicWorkerPool_WorkerFailureHandling(t *testing.T) {
 	defer cancel()
 
 	queueMgr := NewManager(ctx)
-	go queueMgr.Start()
+	go queueMgr.Start(ctx)
 	defer func() {
 		if err := queueMgr.Shutdown(time.Second); err != nil {
 			t.Logf("Shutdown error: %v", err)
@@ -230,15 +215,15 @@ func TestDynamicWorkerPool_WorkerFailureHandling(t *testing.T) {
 		RateLimiter:  NewRateLimiter(10, 1, time.Second),
 	}
 
-	pool, err := NewDynamicWorkerPool(config)
+	pool, err := NewDynamicWorkerPool(context.Background(), config)
 	require.NoError(t, err)
-	defer pool.Stop()
+	defer pool.Stop(context.Background())
 
 	err = pool.Start(ctx)
 	require.NoError(t, err)
 
 	// Submit multiple messages
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		msg := &Message{
 			ID:             fmt.Sprintf("test-%d", i),
 			ConversationID: fmt.Sprintf("conv-%d", i%2),
@@ -279,7 +264,7 @@ func TestDynamicWorkerPool_GracefulShutdown(t *testing.T) {
 	defer cancel()
 
 	queueMgr := NewManager(ctx)
-	go queueMgr.Start()
+	go queueMgr.Start(ctx)
 	defer func() {
 		if err := queueMgr.Shutdown(time.Second); err != nil {
 			t.Logf("Shutdown error: %v", err)
@@ -294,7 +279,7 @@ func TestDynamicWorkerPool_GracefulShutdown(t *testing.T) {
 		RateLimiter:  NewRateLimiter(10, 1, time.Second),
 	}
 
-	pool, err := NewDynamicWorkerPool(config)
+	pool, err := NewDynamicWorkerPool(context.Background(), config)
 	require.NoError(t, err)
 
 	err = pool.Start(ctx)
@@ -302,7 +287,7 @@ func TestDynamicWorkerPool_GracefulShutdown(t *testing.T) {
 
 	// Submit messages
 	wg.Add(2)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		msg := &Message{
 			ID:             fmt.Sprintf("test-%d", i),
 			ConversationID: fmt.Sprintf("conv-%d", i),
@@ -319,7 +304,7 @@ func TestDynamicWorkerPool_GracefulShutdown(t *testing.T) {
 
 	// Cancel context and stop pool
 	cancel()
-	pool.Stop()
+	pool.Stop(context.Background())
 
 	// Wait should complete without hanging
 	done := make(chan bool)
@@ -351,7 +336,7 @@ func TestDynamicWorkerPool_ConcurrentOperations(t *testing.T) {
 	defer cancel()
 
 	queueMgr := NewManager(ctx)
-	go queueMgr.Start()
+	go queueMgr.Start(ctx)
 	defer func() {
 		if err := queueMgr.Shutdown(time.Second); err != nil {
 			t.Logf("Shutdown error: %v", err)
@@ -368,9 +353,9 @@ func TestDynamicWorkerPool_ConcurrentOperations(t *testing.T) {
 		RateLimiter:  NewRateLimiter(10, 1, time.Second),
 	}
 
-	pool, err := NewDynamicWorkerPool(config)
+	pool, err := NewDynamicWorkerPool(context.Background(), config)
 	require.NoError(t, err)
-	defer pool.Stop()
+	defer pool.Stop(context.Background())
 
 	err = pool.Start(ctx)
 	require.NoError(t, err)
@@ -382,7 +367,7 @@ func TestDynamicWorkerPool_ConcurrentOperations(t *testing.T) {
 	// Concurrent scaling operations
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			_ = pool.ScaleUp(1)
 			<-time.After(10 * time.Millisecond)
 		}
@@ -390,7 +375,7 @@ func TestDynamicWorkerPool_ConcurrentOperations(t *testing.T) {
 
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			_ = pool.ScaleDown(1)
 			<-time.After(10 * time.Millisecond)
 		}
@@ -399,7 +384,7 @@ func TestDynamicWorkerPool_ConcurrentOperations(t *testing.T) {
 	// Concurrent size checks
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			size := pool.Size()
 			assert.GreaterOrEqual(t, size, config.MinSize)
 			assert.LessOrEqual(t, size, config.MaxSize)
@@ -410,7 +395,7 @@ func TestDynamicWorkerPool_ConcurrentOperations(t *testing.T) {
 	// Concurrent size checks
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			size := pool.Size()
 			assert.GreaterOrEqual(t, size, 0)
 			assert.LessOrEqual(t, size, pool.config.MaxSize)

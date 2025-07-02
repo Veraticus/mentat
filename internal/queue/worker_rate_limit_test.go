@@ -2,7 +2,6 @@ package queue
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -62,7 +61,7 @@ func TestRateLimitDetection(t *testing.T) {
 	}{
 		{
 			name:            "rate limit error with retries remaining",
-			llmError:        errors.New("HTTP 429: Too Many Requests"),
+			llmError:        fmt.Errorf("HTTP 429: Too Many Requests"),
 			maxAttempts:     3,
 			currentAttempts: 1,
 			expectRetry:     true,
@@ -70,7 +69,7 @@ func TestRateLimitDetection(t *testing.T) {
 		},
 		{
 			name:            "rate limit error at max attempts",
-			llmError:        errors.New("rate limit exceeded"),
+			llmError:        fmt.Errorf("rate limit exceeded"),
 			maxAttempts:     3,
 			currentAttempts: 3,
 			expectRetry:     false,
@@ -86,7 +85,7 @@ func TestRateLimitDetection(t *testing.T) {
 		},
 		{
 			name:            "non-rate-limit error with retries",
-			llmError:        errors.New("connection timeout"),
+			llmError:        fmt.Errorf("connection timeout"),
 			maxAttempts:     3,
 			currentAttempts: 1,
 			expectRetry:     true,
@@ -94,7 +93,7 @@ func TestRateLimitDetection(t *testing.T) {
 		},
 		{
 			name:            "non-rate-limit error at max attempts",
-			llmError:        errors.New("internal server error"),
+			llmError:        fmt.Errorf("internal server error"),
 			maxAttempts:     3,
 			currentAttempts: 3,
 			expectRetry:     false,

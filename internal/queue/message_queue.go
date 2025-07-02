@@ -10,6 +10,12 @@ import (
 	"github.com/Veraticus/mentat/internal/signal"
 )
 
+// MessageQueue constants.
+const (
+	// messageIDByteSize is the number of random bytes for message ID generation.
+	messageIDByteSize = 8
+)
+
 // simpleMessageQueue implements the MessageQueue interface.
 type simpleMessageQueue struct {
 	messages     map[string]*Message
@@ -133,9 +139,9 @@ func (q *simpleMessageQueue) UpdateState(msgID string, state MessageState, _ str
 
 // generateMessageID creates a unique message ID.
 func generateMessageID() (string, error) {
-	bytes := make([]byte, 8)
+	bytes := make([]byte, messageIDByteSize)
 	if _, err := rand.Read(bytes); err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to generate random bytes: %w", err)
 	}
 	return hex.EncodeToString(bytes), nil
 }
@@ -173,6 +179,8 @@ func (q *simpleMessageQueue) Stats() Stats {
 		case StateRetrying:
 			// Retrying messages aren't counted in any of the current stats fields
 			// They're technically still "in progress" but waiting for retry
+		case StateValidating:
+			// Validating messages are in progress but not separately counted
 		}
 	}
 
@@ -185,7 +193,7 @@ func (q *simpleMessageQueue) Stats() Stats {
 
 	// Calculate oldest message age
 	if oldestQueued != nil {
-		stats.OldestMessageAge = time.Since(*oldestQueued)
+		stats.LongestMessageAge = time.Since(*oldestQueued)
 	}
 
 	// Calculate averages

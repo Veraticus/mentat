@@ -2,7 +2,6 @@ package signal
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -58,7 +57,7 @@ func TestMessengerSend(t *testing.T) {
 			name:        "client error",
 			recipient:   "+0987654321",
 			message:     "Hello",
-			clientErr:   errors.New("network error"),
+			clientErr:   fmt.Errorf("network error"),
 			expectError: true,
 			errorMsg:    "failed to send message",
 		},
@@ -112,7 +111,7 @@ func TestMessengerSendTypingIndicator(t *testing.T) {
 		{
 			name:        "client error",
 			recipient:   "+0987654321",
-			clientErr:   errors.New("network error"),
+			clientErr:   fmt.Errorf("network error"),
 			expectError: true,
 			errorMsg:    "failed to send typing indicator",
 		},
@@ -239,7 +238,7 @@ func testSuccessfulSubscription(t *testing.T) {
 func testSubscriptionError(t *testing.T) {
 	client := &MockClient{
 		SubscribeFunc: func(_ context.Context) (<-chan *Envelope, error) {
-			return nil, errors.New("subscription failed")
+			return nil, fmt.Errorf("subscription failed")
 		},
 	}
 	m := NewMessenger(client, "+1234567890")
@@ -435,24 +434,27 @@ func TestMessengerConvertEnvelope(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := m.convertEnvelope(tt.envelope)
+
 			if tt.want == nil {
 				if got != nil {
 					t.Errorf("expected nil, got %+v", got)
 				}
-			} else {
-				if got == nil {
-					t.Errorf("expected %+v, got nil", tt.want)
-				} else {
-					if got.From != tt.want.From {
-						t.Errorf("From: expected %q, got %q", tt.want.From, got.From)
-					}
-					if got.Text != tt.want.Text {
-						t.Errorf("Text: expected %q, got %q", tt.want.Text, got.Text)
-					}
-					if !got.Timestamp.Equal(tt.want.Timestamp) {
-						t.Errorf("Timestamp: expected %v, got %v", tt.want.Timestamp, got.Timestamp)
-					}
-				}
+				return
+			}
+
+			if got == nil {
+				t.Errorf("expected %+v, got nil", tt.want)
+				return
+			}
+
+			if got.From != tt.want.From {
+				t.Errorf("From: expected %q, got %q", tt.want.From, got.From)
+			}
+			if got.Text != tt.want.Text {
+				t.Errorf("Text: expected %q, got %q", tt.want.Text, got.Text)
+			}
+			if !got.Timestamp.Equal(tt.want.Timestamp) {
+				t.Errorf("Timestamp: expected %v, got %v", tt.want.Timestamp, got.Timestamp)
 			}
 		})
 	}
@@ -484,7 +486,7 @@ func TestMessengerConcurrency(t *testing.T) {
 	defer cancel()
 
 	// Multiple sends
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -496,7 +498,7 @@ func TestMessengerConcurrency(t *testing.T) {
 	}
 
 	// Multiple typing indicators
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -508,7 +510,7 @@ func TestMessengerConcurrency(t *testing.T) {
 	}
 
 	// Multiple subscriptions
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

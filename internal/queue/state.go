@@ -5,6 +5,11 @@ import (
 	"sync"
 )
 
+const (
+	// StartingProcessingReason is the reason used when transitioning from queued to processing.
+	StartingProcessingReason = "starting processing"
+)
+
 // stateMachine implements the StateMachine interface.
 type stateMachine struct {
 	// transitions defines valid state transitions.
@@ -29,6 +34,58 @@ func NewStateMachine() StateMachine {
 	}
 }
 
+// determineTransitionDetails determines the final state and reason for a transition.
+func (sm *stateMachine) determineTransitionDetails(msg *Message, currentState, to State) (State, string, bool) {
+	finalState := to
+	reason := "state transition"
+	shouldIncrement := false
+
+	switch to {
+	case StateProcessing:
+		reason, shouldIncrement = sm.handleProcessingTransition(msg, currentState)
+	case StateFailed:
+		finalState, reason = sm.handleFailedTransition(msg, currentState)
+	case StateCompleted:
+		reason = "successfully completed"
+	case StateValidating:
+		reason = "starting validation"
+	case StateRetrying:
+		reason = fmt.Sprintf("scheduling retry (attempt %d/%d)", msg.Attempts, msg.MaxAttempts)
+	case StateQueued:
+		reason = "queuing message"
+	}
+
+	return finalState, reason, shouldIncrement
+}
+
+// handleProcessingTransition handles transitions to the processing state.
+func (sm *stateMachine) handleProcessingTransition(msg *Message, currentState State) (string, bool) {
+	switch currentState {
+	case StateRetrying:
+		return fmt.Sprintf("retry attempt %d", msg.Attempts+1), true
+	case StateQueued:
+		return StartingProcessingReason, false
+	case StateProcessing, StateValidating, StateCompleted, StateFailed:
+		return "state transition", false
+	}
+	// This should never be reached as all cases are handled
+	return "state transition", false
+}
+
+// handleFailedTransition handles transitions to the failed state.
+func (sm *stateMachine) handleFailedTransition(msg *Message, currentState State) (State, string) {
+	if msg.CanRetry() && currentState == StateProcessing {
+		// If we can retry, go to retrying instead
+		return StateRetrying, fmt.Sprintf("failed but retrying (attempt %d/%d)", msg.Attempts, msg.MaxAttempts)
+	}
+
+	reason := "permanently failed"
+	if msg.Error != nil {
+		reason = fmt.Sprintf("permanently failed: %v", msg.Error)
+	}
+	return StateFailed, reason
+}
+
 // Transition moves a message to a new state if the transition is valid.
 func (sm *stateMachine) Transition(msg *Message, to State) error {
 	if msg == nil {
@@ -51,37 +108,7 @@ func (sm *stateMachine) Transition(msg *Message, to State) error {
 	}
 
 	// Handle state-specific logic and determine final state
-	finalState := to
-	reason := "state transition"
-	shouldIncrement := false
-
-	switch to {
-	case StateProcessing:
-		switch currentState {
-		case StateRetrying:
-			shouldIncrement = true
-			reason = fmt.Sprintf("retry attempt %d", msg.Attempts+1)
-		case StateQueued:
-			reason = "starting processing"
-		}
-	case StateFailed:
-		if msg.CanRetry() && currentState == StateProcessing {
-			// If we can retry, go to retrying instead
-			finalState = StateRetrying
-			reason = fmt.Sprintf("failed but retrying (attempt %d/%d)", msg.Attempts, msg.MaxAttempts)
-		} else {
-			reason = "permanently failed"
-			if msg.Error != nil {
-				reason = fmt.Sprintf("permanently failed: %v", msg.Error)
-			}
-		}
-	case StateCompleted:
-		reason = "successfully completed"
-	case StateValidating:
-		reason = "starting validation"
-	case StateRetrying:
-		reason = fmt.Sprintf("scheduling retry (attempt %d/%d)", msg.Attempts, msg.MaxAttempts)
-	}
+	finalState, reason, shouldIncrement := sm.determineTransitionDetails(msg, currentState, to)
 
 	// Attempt atomic transition
 	if !msg.AtomicTransition(currentState, finalState) {

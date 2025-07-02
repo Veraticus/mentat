@@ -3,9 +3,22 @@ package queue
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
+)
+
+const (
+	// DefaultIncomingChannelSize is the default buffer size for incoming messages.
+	DefaultIncomingChannelSize = 100
+
+	// DefaultRequestChannelSize is the default buffer size for worker requests.
+	DefaultRequestChannelSize = 10
+
+	// submitTimeout is the timeout for submitting messages to the queue.
+	submitTimeout = 5 * time.Second
+	// shutdownCheckDelay is the delay to check if Start() was called.
+	shutdownCheckDelay = 100 * time.Millisecond
 )
 
 // Manager orchestrates multiple conversation queues with fair scheduling.
@@ -22,9 +35,7 @@ import (
 //  4. Within each conversation, messages are processed in FIFO order
 //  5. Empty conversations are automatically cleaned up
 type Manager struct {
-	ctx               context.Context
 	stateMachine      StateMachine
-	cancel            context.CancelFunc
 	queues            map[string]*ConversationQueue // conversation ID -> queue
 	incomingCh        chan *Message                 // channel for new messages
 	requestCh         chan chan *Message            // channel for worker requests
@@ -35,27 +46,25 @@ type Manager struct {
 	mu                sync.RWMutex                  // protects shared state
 	shutdown          bool                          // indicates shutdown in progress
 	started           chan struct{}                 // signals that Start() has begun
+	stopCh            chan struct{}                 // channel to signal shutdown
 }
 
 // NewManager creates a new queue manager.
 func NewManager(ctx context.Context) *Manager {
-	ctx, cancel := context.WithCancel(ctx)
-
 	return &Manager{
 		queues:            make(map[string]*ConversationQueue),
 		stateMachine:      NewStateMachine(),
-		incomingCh:        make(chan *Message, 100),
-		requestCh:         make(chan chan *Message, 10),
+		incomingCh:        make(chan *Message, DefaultIncomingChannelSize),
+		requestCh:         make(chan chan *Message, DefaultRequestChannelSize),
 		waitingWorkers:    make([]chan *Message, 0),
 		conversationOrder: make([]string, 0),
-		ctx:               ctx,
-		cancel:            cancel,
 		started:           make(chan struct{}),
+		stopCh:            make(chan struct{}),
 	}
 }
 
 // Start begins processing messages. This should be called in a goroutine.
-func (m *Manager) Start() {
+func (m *Manager) Start(ctx context.Context) {
 	m.wg.Add(1)
 	defer m.wg.Done()
 	defer m.cleanup()
@@ -65,7 +74,9 @@ func (m *Manager) Start() {
 
 	for {
 		select {
-		case <-m.ctx.Done():
+		case <-ctx.Done():
+			return
+		case <-m.stopCh:
 			return
 
 		case msg := <-m.incomingCh:
@@ -75,7 +86,7 @@ func (m *Manager) Start() {
 				msg.SetState(StateFailed)
 			} else {
 				// Try to dispatch to waiting worker
-				m.tryDispatch()
+				m.tryDispatch(ctx)
 			}
 
 		case workerCh := <-m.requestCh:
@@ -84,7 +95,10 @@ func (m *Manager) Start() {
 			if msg != nil {
 				// Transition to processing state
 				if err := m.stateMachine.Transition(msg, StateProcessing); err != nil {
-					log.Printf("Failed to transition message %s to processing: %v", msg.ID, err)
+					logger := slog.Default()
+					logger.ErrorContext(ctx, "Failed to transition message to processing",
+						slog.String("id", msg.ID),
+						slog.Any("error", err))
 				}
 				workerCh <- msg
 			} else {
@@ -128,16 +142,16 @@ func (m *Manager) Submit(msg *Message) error {
 		if err := m.stateMachine.Transition(msg, StateQueued); err != nil {
 			msg.SetState(StateQueued)
 		}
-	default:
+	case StateQueued, StateProcessing, StateValidating, StateCompleted, StateFailed:
 		// For other states, keep the current state
 	}
 
 	select {
 	case m.incomingCh <- msg:
 		return nil
-	case <-m.ctx.Done():
+	case <-m.stopCh:
 		return fmt.Errorf("queue manager shutting down")
-	case <-time.After(5 * time.Second):
+	case <-time.After(submitTimeout):
 		return fmt.Errorf("timeout submitting message")
 	}
 }
@@ -154,8 +168,8 @@ func (m *Manager) RequestMessage(ctx context.Context) (*Message, error) {
 	case m.requestCh <- respCh:
 		// Request sent
 	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-m.ctx.Done():
+		return nil, fmt.Errorf("context cancelled while sending request: %w", ctx.Err())
+	case <-m.stopCh:
 		return nil, fmt.Errorf("queue manager shutting down")
 	}
 
@@ -164,8 +178,8 @@ func (m *Manager) RequestMessage(ctx context.Context) (*Message, error) {
 		// Message state transition is handled by Start() method when dispatching
 		return msg, nil
 	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-m.ctx.Done():
+		return nil, fmt.Errorf("context cancelled while waiting for message: %w", ctx.Err())
+	case <-m.stopCh:
 		return nil, fmt.Errorf("queue manager shutting down")
 	}
 }
@@ -225,17 +239,21 @@ func (m *Manager) RetryMessage(msg *Message) error {
 func (m *Manager) Shutdown(timeout time.Duration) error {
 	// Mark as shutting down
 	m.mu.Lock()
+	if m.shutdown {
+		m.mu.Unlock()
+		return nil
+	}
 	m.shutdown = true
 	m.mu.Unlock()
 
-	// Cancel context to signal shutdown
-	m.cancel()
+	// Signal shutdown
+	close(m.stopCh)
 
 	// Wait for Start() to have been called
 	select {
 	case <-m.started:
 		// Start() was called, proceed with shutdown
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(shutdownCheckDelay):
 		// Start() was never called, nothing to shut down
 		return nil
 	}
@@ -296,7 +314,7 @@ func (m *Manager) getNextMessage() *Message {
 	}
 
 	// Try each conversation in round-robin order
-	for i := 0; i < len(snapshot); i++ {
+	for i := range snapshot {
 		// Calculate index with wraparound
 		idx := (startIndex + i) % len(snapshot)
 		convID := snapshot[idx]
@@ -312,7 +330,7 @@ func (m *Manager) getNextMessage() *Message {
 	return nil
 }
 
-// getConversationSnapshot creates a snapshot of conversation order
+// getConversationSnapshot creates a snapshot of conversation order.
 func (m *Manager) getConversationSnapshot() ([]string, int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -327,7 +345,7 @@ func (m *Manager) getConversationSnapshot() ([]string, int) {
 	return snapshot, m.currentIndex
 }
 
-// tryGetMessageFromConversation attempts to get a message from a specific conversation
+// tryGetMessageFromConversation attempts to get a message from a specific conversation.
 func (m *Manager) tryGetMessageFromConversation(convID string) *Message {
 	// Get queue reference
 	queue := m.getQueueForConversation(convID)
@@ -352,7 +370,7 @@ func (m *Manager) tryGetMessageFromConversation(convID string) *Message {
 	return nil
 }
 
-// getQueueForConversation gets the queue for a conversation, handling missing queues
+// getQueueForConversation gets the queue for a conversation, handling missing queues.
 func (m *Manager) getQueueForConversation(convID string) *ConversationQueue {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -366,7 +384,7 @@ func (m *Manager) getQueueForConversation(convID string) *ConversationQueue {
 	return queue
 }
 
-// updateIndexAfterDequeue updates the current index after successfully dequeuing
+// updateIndexAfterDequeue updates the current index after successfully dequeuing.
 func (m *Manager) updateIndexAfterDequeue(convID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -381,7 +399,7 @@ func (m *Manager) updateIndexAfterDequeue(convID string) {
 	}
 }
 
-// cleanupEmptyQueue removes empty queues that are not processing
+// cleanupEmptyQueue removes empty queues that are not processing.
 func (m *Manager) cleanupEmptyQueue(convID string, queue *ConversationQueue) {
 	if !queue.IsEmpty() || queue.IsProcessing() {
 		return
@@ -397,7 +415,7 @@ func (m *Manager) cleanupEmptyQueue(convID string, queue *ConversationQueue) {
 	}
 }
 
-// updateCurrentIndex updates the current index after a full round-robin cycle
+// updateCurrentIndex updates the current index after a full round-robin cycle.
 func (m *Manager) updateCurrentIndex(startIndex, snapshotLen int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -432,7 +450,7 @@ func (m *Manager) removeConversationFromOrder(convID string) {
 }
 
 // tryDispatch attempts to send a message to a waiting worker.
-func (m *Manager) tryDispatch() {
+func (m *Manager) tryDispatch(ctx context.Context) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -451,7 +469,13 @@ func (m *Manager) tryDispatch() {
 
 	// Transition to processing state
 	if err := m.stateMachine.Transition(msg, StateProcessing); err != nil {
-		log.Printf("Failed to transition message %s to processing: %v", msg.ID, err)
+		logger := slog.Default()
+		logger.ErrorContext(
+			ctx,
+			"Failed to transition message to processing",
+			slog.String("id", msg.ID),
+			slog.Any("error", err),
+		)
 	}
 
 	// Send message (non-blocking in case worker gave up)
@@ -463,7 +487,8 @@ func (m *Manager) tryDispatch() {
 		if queue, exists := m.queues[msg.ConversationID]; exists {
 			queue.Complete() // Reset processing state
 			if err := queue.Enqueue(msg); err != nil {
-				log.Printf("Failed to requeue message %s: %v", msg.ID, err)
+				logger := slog.Default()
+				logger.ErrorContext(ctx, "Failed to requeue message", slog.String("id", msg.ID), slog.Any("error", err))
 			}
 		}
 	}

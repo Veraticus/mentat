@@ -3,6 +3,7 @@ package signal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -240,21 +241,25 @@ func TestClient_SendTypingIndicator(t *testing.T) {
 			calls := transport.GetCalls("sendTyping")
 			if len(calls) != 1 {
 				t.Errorf("Expected 1 call to sendTyping, got %d", len(calls))
-			} else {
-				params, ok := calls[0].(map[string]any)
-				if !ok {
-					t.Fatal("Expected params to be map[string]any")
-				}
-				recipients, ok := params["recipient"].([]string)
-				if !ok {
-					t.Fatal("Expected recipient to be []string")
-				}
-				if len(recipients) != 1 || recipients[0] != tt.recipient {
-					t.Errorf("Expected recipient %s, got %v", tt.recipient, recipients)
-				}
-				if params["stop"] != tt.stop {
-					t.Errorf("Expected stop=%v, got %v", tt.stop, params["stop"])
-				}
+				return
+			}
+
+			params, ok := calls[0].(map[string]any)
+			if !ok {
+				t.Fatal("Expected params to be map[string]any")
+			}
+
+			recipients, ok := params["recipient"].([]string)
+			if !ok {
+				t.Fatal("Expected recipient to be []string")
+			}
+
+			if len(recipients) != 1 || recipients[0] != tt.recipient {
+				t.Errorf("Expected recipient %s, got %v", tt.recipient, recipients)
+			}
+
+			if params["stop"] != tt.stop {
+				t.Errorf("Expected stop=%v, got %v", tt.stop, params["stop"])
 			}
 		})
 	}
@@ -421,7 +426,7 @@ func TestClient_WithAccount(t *testing.T) {
 	if !ok {
 		t.Fatal("Expected params to be map[string]any")
 	}
-	if account, ok := params["account"]; !ok {
+	if account, accountOk := params["account"]; !accountOk {
 		t.Error("Expected 'account' in params")
 	} else if account != "+1111111111" {
 		t.Errorf("Expected account '+1111111111', got %v", account)
@@ -463,7 +468,7 @@ func TestClient_ContextCancellation(t *testing.T) {
 
 // containsError checks if the error or any wrapped error matches the target.
 func containsError(err, target error) bool {
-	if err == target {
+	if errors.Is(err, target) {
 		return true
 	}
 	// Check if error contains the target error string

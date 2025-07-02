@@ -16,6 +16,14 @@ import (
 	"github.com/Veraticus/mentat/internal/storage"
 )
 
+// Mock constants.
+const (
+	// defaultMockLatencyMS is the default latency for mock LLM responses.
+	defaultMockLatencyMS = 10
+	// incomingChannelSize is the buffer size for incoming message channels.
+	incomingChannelSize = 100
+)
+
 // Compile-time checks to ensure mocks implement their interfaces.
 var (
 	_ claude.LLM                  = (*MockLLM)(nil)
@@ -60,7 +68,11 @@ func NewMockLLM() *MockLLM {
 }
 
 // Query implements the LLM interface.
-func (m *MockLLM) Query(ctx context.Context, prompt string, sessionID string) (*claude.LLMResponse, error) {
+func (m *MockLLM) Query(
+	ctx context.Context,
+	prompt string,
+	sessionID string,
+) (*claude.LLMResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -99,7 +111,7 @@ func (m *MockLLM) Query(ctx context.Context, prompt string, sessionID string) (*
 	return &claude.LLMResponse{
 		Message: "Mock response for: " + prompt,
 		Metadata: claude.ResponseMetadata{
-			Latency: 10 * time.Millisecond,
+			Latency: defaultMockLatencyMS * time.Millisecond,
 		},
 	}, nil
 }
@@ -162,7 +174,7 @@ type TypingIndicator struct {
 func NewMockMessenger() *MockMessenger {
 	return &MockMessenger{
 		sentMessages:     make([]SentMessage, 0),
-		incomingChan:     make(chan signal.IncomingMessage, 100),
+		incomingChan:     make(chan signal.IncomingMessage, incomingChannelSize),
 		typingIndicators: make([]TypingIndicator, 0),
 	}
 }
@@ -356,7 +368,11 @@ func NewMockValidationStrategy() *MockValidationStrategy {
 }
 
 // Validate implements the ValidationStrategy interface.
-func (m *MockValidationStrategy) Validate(_ context.Context, _, _ string, _ claude.LLM) agent.ValidationResult {
+func (m *MockValidationStrategy) Validate(
+	_ context.Context,
+	_, _ string,
+	_ claude.LLM,
+) agent.ValidationResult {
 	return m.result
 }
 
@@ -366,7 +382,12 @@ func (m *MockValidationStrategy) ShouldRetry(_ agent.ValidationResult) bool {
 }
 
 // GenerateRecovery implements the ValidationStrategy interface.
-func (m *MockValidationStrategy) GenerateRecovery(_ context.Context, _, _ string, _ agent.ValidationResult, _ claude.LLM) string {
+func (m *MockValidationStrategy) GenerateRecovery(
+	_ context.Context,
+	_, _ string,
+	_ agent.ValidationResult,
+	_ claude.LLM,
+) string {
 	return m.recovery
 }
 
@@ -552,7 +573,10 @@ func NewMockWorker(id string) *MockWorker {
 func (m *MockWorker) Start(ctx context.Context) error {
 	m.started = true
 	<-ctx.Done()
-	return ctx.Err()
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context error: %w", err)
+	}
+	return nil
 }
 
 // Stop implements the Worker interface.
@@ -587,6 +611,8 @@ func NewMockStateMachine() *MockStateMachine {
 			queue.StateProcessing: {queue.StateValidating, queue.StateFailed, queue.StateRetrying},
 			queue.StateValidating: {queue.StateCompleted, queue.StateFailed},
 			queue.StateRetrying:   {queue.StateQueued},
+			queue.StateCompleted:  {}, // Terminal state
+			queue.StateFailed:     {}, // Terminal state
 		},
 		transitions: make([]StateTransition, 0),
 	}
@@ -683,7 +709,10 @@ func (m *MockStorage) GetMessage(messageID string) (*storage.StoredMessage, erro
 }
 
 // GetConversationHistory implements the Storage interface.
-func (m *MockStorage) GetConversationHistory(userID string, limit int) ([]*storage.StoredMessage, error) {
+func (m *MockStorage) GetConversationHistory(
+	userID string,
+	limit int,
+) ([]*storage.StoredMessage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -711,7 +740,11 @@ func (m *MockStorage) SaveQueueItem(item *queue.QueuedMessage) error {
 }
 
 // UpdateQueueItemState implements the Storage interface.
-func (m *MockStorage) UpdateQueueItemState(itemID string, state queue.MessageState, _ map[string]any) error {
+func (m *MockStorage) UpdateQueueItemState(
+	itemID string,
+	state queue.MessageState,
+	_ map[string]any,
+) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -761,7 +794,10 @@ func (m *MockStorage) GetLLMCallsForMessage(messageID string) ([]*storage.LLMCal
 }
 
 // GetLLMCostReport implements the Storage interface.
-func (m *MockStorage) GetLLMCostReport(userID string, start, end time.Time) (*storage.CostReport, error) {
+func (m *MockStorage) GetLLMCostReport(
+	userID string,
+	start, end time.Time,
+) (*storage.CostReport, error) {
 	return &storage.CostReport{
 		UserID:    userID,
 		StartTime: start,

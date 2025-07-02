@@ -9,6 +9,14 @@ import (
 	"path/filepath"
 )
 
+// File permission constants.
+const (
+	// dirPermissions is used for directory creation (rwxr-x---).
+	dirPermissions = 0750
+	// filePermissions is used for config files (rw-------).
+	filePermissions = 0600
+)
+
 // MCPConfig represents the top-level MCP configuration structure
 // that Claude expects. Uses JSON tags to match Claude's format.
 type MCPConfig struct {
@@ -82,7 +90,7 @@ func WriteMCPConfig(config MCPConfig, path string) error {
 
 	// Create parent directory if needed
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0750); err != nil {
+	if err := os.MkdirAll(dir, dirPermissions); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
@@ -93,8 +101,8 @@ func WriteMCPConfig(config MCPConfig, path string) error {
 	}
 
 	// Write to file with restricted permissions
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		return fmt.Errorf("failed to write file: %w", err)
+	if writeErr := os.WriteFile(path, data, filePermissions); writeErr != nil {
+		return fmt.Errorf("failed to write file: %w", writeErr)
 	}
 
 	return nil
@@ -112,13 +120,13 @@ func LoadMCPConfig(path string) (MCPConfig, error) {
 		return config, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	if err := json.Unmarshal(data, &config); err != nil {
-		return config, fmt.Errorf("failed to parse config: %w", err)
+	if unmarshalErr := json.Unmarshal(data, &config); unmarshalErr != nil {
+		return config, fmt.Errorf("failed to parse config: %w", unmarshalErr)
 	}
 
 	// Validate loaded config
-	if err := ValidateMCPConfig(config); err != nil {
-		return config, fmt.Errorf("loaded config is invalid: %w", err)
+	if validateErr := ValidateMCPConfig(config); validateErr != nil {
+		return config, fmt.Errorf("loaded config is invalid: %w", validateErr)
 	}
 
 	return config, nil

@@ -1,5 +1,7 @@
 package claude
 
+import "errors"
+
 // AuthenticationError represents an authentication failure with Claude Code.
 type AuthenticationError struct {
 	Message string
@@ -12,6 +14,6 @@ func (e *AuthenticationError) Error() string {
 
 // IsAuthenticationError checks if an error is an authentication error.
 func IsAuthenticationError(err error) bool {
-	_, ok := err.(*AuthenticationError)
-	return ok
+	var authErr *AuthenticationError
+	return errors.As(err, &authErr)
 }

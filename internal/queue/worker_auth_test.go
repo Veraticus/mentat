@@ -56,7 +56,7 @@ func TestWorkerHandlesAuthenticationError(t *testing.T) {
 	mockQueueMgr := NewManager(ctx)
 
 	// Start queue manager
-	go mockQueueMgr.Start()
+	go mockQueueMgr.Start(ctx)
 	<-time.After(100 * time.Millisecond)
 
 	// Create worker config
@@ -147,7 +147,7 @@ func TestWorkerAuthErrorNotRetried(t *testing.T) {
 	mockQueueMgr := NewManager(ctx)
 
 	// Start queue manager
-	go mockQueueMgr.Start()
+	go mockQueueMgr.Start(ctx)
 	<-time.After(100 * time.Millisecond)
 
 	// Create worker config

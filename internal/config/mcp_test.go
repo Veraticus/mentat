@@ -1,4 +1,4 @@
-package config
+package config_test
 
 import (
 	"encoding/json"
@@ -6,10 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Veraticus/mentat/internal/config"
 )
 
 func TestGenerateMCPConfig(t *testing.T) {
-	config := GenerateMCPConfig()
+	cfg := config.GenerateMCPConfig()
 
 	// Test that all required servers are present
 	requiredServers := []string{
@@ -21,13 +23,13 @@ func TestGenerateMCPConfig(t *testing.T) {
 		"expensify",
 	}
 
-	if len(config.MCPServers) != len(requiredServers) {
-		t.Errorf("expected %d servers, got %d", len(requiredServers), len(config.MCPServers))
+	if len(cfg.MCPServers) != len(requiredServers) {
+		t.Errorf("expected %d servers, got %d", len(requiredServers), len(cfg.MCPServers))
 	}
 
 	// Check each server configuration
 	for _, serverName := range requiredServers {
-		server, exists := config.MCPServers[serverName]
+		server, exists := cfg.MCPServers[serverName]
 		if !exists {
 			t.Errorf("missing required server: %s", serverName)
 			continue
@@ -55,7 +57,7 @@ func TestGenerateMCPConfig(t *testing.T) {
 	}
 
 	for serverName, expectedURL := range expectedPorts {
-		if server, exists := config.MCPServers[serverName]; exists {
+		if server, exists := cfg.MCPServers[serverName]; exists {
 			if server.Transport.URL != expectedURL {
 				t.Errorf("server %s: expected URL '%s', got '%s'", serverName, expectedURL, server.Transport.URL)
 			}
@@ -64,24 +66,24 @@ func TestGenerateMCPConfig(t *testing.T) {
 }
 
 func TestMCPConfigJSONSerialization(t *testing.T) {
-	config := GenerateMCPConfig()
+	cfg := config.GenerateMCPConfig()
 
 	// Test that it serializes to valid JSON
-	data, err := json.MarshalIndent(config, "", "  ")
+	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		t.Fatalf("failed to marshal config: %v", err)
 	}
 
 	// Test that it can be deserialized
-	var decoded MCPConfig
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("failed to unmarshal config: %v", err)
+	var decoded config.MCPConfig
+	if unmarshalErr := json.Unmarshal(data, &decoded); unmarshalErr != nil {
+		t.Fatalf("failed to unmarshal config: %v", unmarshalErr)
 	}
 
 	// Verify structure after round-trip
-	if len(decoded.MCPServers) != len(config.MCPServers) {
+	if len(decoded.MCPServers) != len(cfg.MCPServers) {
 		t.Errorf("server count changed after serialization: expected %d, got %d",
-			len(config.MCPServers), len(decoded.MCPServers))
+			len(cfg.MCPServers), len(decoded.MCPServers))
 	}
 
 	// Check JSON field names are correct (mcpServers not MCPServers)
@@ -96,10 +98,10 @@ func TestWriteMCPConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "test-mcp-config.json")
 
-	config := GenerateMCPConfig()
+	cfg := config.GenerateMCPConfig()
 
 	// Test writing config
-	err := WriteMCPConfig(config, configPath)
+	err := config.WriteMCPConfig(cfg, configPath)
 	if err != nil {
 		t.Fatalf("failed to write config: %v", err)
 	}
@@ -115,15 +117,15 @@ func TestWriteMCPConfig(t *testing.T) {
 		t.Fatalf("failed to read config file: %v", err)
 	}
 
-	var decoded MCPConfig
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("written file contains invalid JSON: %v", err)
+	var decoded config.MCPConfig
+	if unmarshalErr := json.Unmarshal(data, &decoded); unmarshalErr != nil {
+		t.Fatalf("written file contains invalid JSON: %v", unmarshalErr)
 	}
 
 	// Verify content matches
-	if len(decoded.MCPServers) != len(config.MCPServers) {
+	if len(decoded.MCPServers) != len(cfg.MCPServers) {
 		t.Errorf("written config has different server count: expected %d, got %d",
-			len(config.MCPServers), len(decoded.MCPServers))
+			len(cfg.MCPServers), len(decoded.MCPServers))
 	}
 }
 
@@ -132,15 +134,15 @@ func TestWriteMCPConfigCreatesDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "nested", "dir", "mcp-config.json")
 
-	config := GenerateMCPConfig()
+	cfg := config.GenerateMCPConfig()
 
-	err := WriteMCPConfig(config, configPath)
+	err := config.WriteMCPConfig(cfg, configPath)
 	if err != nil {
 		t.Fatalf("failed to write config with nested dirs: %v", err)
 	}
 
 	// Verify file exists
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+	if _, statErr := os.Stat(configPath); os.IsNotExist(statErr) {
 		t.Fatal("config file was not created in nested directory")
 	}
 }
@@ -151,13 +153,13 @@ func TestLoadMCPConfig(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "test-mcp-config.json")
 
 	// Write a test config
-	originalConfig := GenerateMCPConfig()
-	if err := WriteMCPConfig(originalConfig, configPath); err != nil {
+	originalConfig := config.GenerateMCPConfig()
+	if err := config.WriteMCPConfig(originalConfig, configPath); err != nil {
 		t.Fatalf("failed to write test config: %v", err)
 	}
 
 	// Test loading
-	loadedConfig, err := LoadMCPConfig(configPath)
+	loadedConfig, err := config.LoadMCPConfig(configPath)
 	if err != nil {
 		t.Fatalf("failed to load config: %v", err)
 	}
@@ -179,7 +181,7 @@ func TestLoadMCPConfig(t *testing.T) {
 }
 
 func TestLoadMCPConfigFileNotFound(t *testing.T) {
-	_, err := LoadMCPConfig("/non/existent/path/config.json")
+	_, err := config.LoadMCPConfig("/non/existent/path/config.json")
 	if err == nil {
 		t.Error("expected error when loading non-existent file")
 	}
@@ -195,7 +197,7 @@ func TestLoadMCPConfigInvalidJSON(t *testing.T) {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	_, err := LoadMCPConfig(configPath)
+	_, err := config.LoadMCPConfig(configPath)
 	if err == nil {
 		t.Error("expected error when loading invalid JSON")
 	}
@@ -206,10 +208,10 @@ func TestLoadMCPConfigInvalidJSON(t *testing.T) {
 
 func TestWriteMCPConfigInvalidConfig(t *testing.T) {
 	// Test writing an invalid config
-	invalidConfig := MCPConfig{
-		MCPServers: map[string]ServerConfig{
+	invalidConfig := config.MCPConfig{
+		MCPServers: map[string]config.ServerConfig{
 			"test": {
-				Transport: TransportConfig{
+				Transport: config.TransportConfig{
 					Type: "invalid",
 				},
 			},
@@ -219,7 +221,7 @@ func TestWriteMCPConfigInvalidConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "invalid-config.json")
 
-	err := WriteMCPConfig(invalidConfig, configPath)
+	err := config.WriteMCPConfig(invalidConfig, configPath)
 	if err == nil {
 		t.Error("expected error when writing invalid config")
 	}
@@ -231,29 +233,29 @@ func TestWriteMCPConfigInvalidConfig(t *testing.T) {
 func TestValidateMCPConfig(t *testing.T) {
 	tests := []struct {
 		name      string
-		config    MCPConfig
+		config    config.MCPConfig
 		wantError bool
 		errorMsg  string
 	}{
 		{
 			name:      "valid config",
-			config:    GenerateMCPConfig(),
+			config:    config.GenerateMCPConfig(),
 			wantError: false,
 		},
 		{
 			name: "empty servers",
-			config: MCPConfig{
-				MCPServers: map[string]ServerConfig{},
+			config: config.MCPConfig{
+				MCPServers: map[string]config.ServerConfig{},
 			},
 			wantError: true,
 			errorMsg:  "no MCP servers configured",
 		},
 		{
 			name: "invalid transport type",
-			config: MCPConfig{
-				MCPServers: map[string]ServerConfig{
+			config: config.MCPConfig{
+				MCPServers: map[string]config.ServerConfig{
 					"test": {
-						Transport: TransportConfig{
+						Transport: config.TransportConfig{
 							Type: "invalid",
 							URL:  "http://localhost:3000",
 						},
@@ -265,10 +267,10 @@ func TestValidateMCPConfig(t *testing.T) {
 		},
 		{
 			name: "missing URL for HTTP transport",
-			config: MCPConfig{
-				MCPServers: map[string]ServerConfig{
+			config: config.MCPConfig{
+				MCPServers: map[string]config.ServerConfig{
 					"test": {
-						Transport: TransportConfig{
+						Transport: config.TransportConfig{
 							Type: "http",
 							URL:  "",
 						},
@@ -282,7 +284,7 @@ func TestValidateMCPConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateMCPConfig(tt.config)
+			err := config.ValidateMCPConfig(tt.config)
 			if tt.wantError {
 				if err == nil {
 					t.Error("expected validation error but got none")

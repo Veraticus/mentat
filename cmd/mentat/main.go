@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	_ "embed"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -16,6 +17,11 @@ import (
 	"github.com/Veraticus/mentat/internal/config"
 	"github.com/Veraticus/mentat/internal/queue"
 	signalpkg "github.com/Veraticus/mentat/internal/signal"
+)
+
+const (
+	// ShutdownTimeout is the maximum time to wait for graceful shutdown.
+	ShutdownTimeout = 30 * time.Second
 )
 
 //go:embed system-prompt.md
@@ -77,8 +83,8 @@ func run(ctx context.Context) error {
 	}
 
 	// Start all components
-	if err := startComponents(ctx, components); err != nil {
-		return err
+	if startErr := startComponents(ctx, components); startErr != nil {
+		return startErr
 	}
 
 	log.Println("Mentat started successfully. Listening for messages.")
@@ -87,10 +93,17 @@ func run(ctx context.Context) error {
 	<-ctx.Done()
 
 	// Graceful shutdown with timeout
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Create a new context for shutdown since the parent context has been cancelled
+	// We must use a new root context here because the parent context is already done
+	//nolint:contextcheck // New context needed for shutdown after parent is canceled
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), ShutdownTimeout)
 	defer shutdownCancel()
 
-	return shutdown(shutdownCtx, components)
+	// Call shutdown with the new context
+	if err := shutdown(shutdownCtx, components); err != nil {
+		return err
+	}
+	return nil
 }
 
 // components holds all initialized components.
@@ -116,7 +129,10 @@ func (a *messageEnqueuerAdapter) Enqueue(msg signalpkg.IncomingMessage) error {
 		msg.Text,
 	)
 
-	return a.manager.Submit(queueMsg)
+	if err := a.manager.Submit(queueMsg); err != nil {
+		return fmt.Errorf("failed to submit message to queue: %w", err)
+	}
+	return nil
 }
 
 func generateMessageID(timestamp time.Time) string {
@@ -126,37 +142,39 @@ func generateMessageID(timestamp time.Time) string {
 // readPhoneNumber reads the bot's phone number from the config file.
 func readPhoneNumber() (string, error) {
 	data, err := os.ReadFile(phoneNumberFilePath)
-	if err != nil {
-		// If we can't read the system file, check for a local override
-		// This is useful for development/testing
-		if os.IsPermission(err) {
-			log.Printf("Permission denied reading %s, checking for local override", phoneNumberFilePath)
-
-			// Try reading from current directory
-			localData, localErr := os.ReadFile("phone-number")
-			if localErr == nil {
-				phoneNumber := strings.TrimSpace(string(localData))
-				if phoneNumber != "" {
-					log.Printf("Using phone number from local file")
-					return phoneNumber, nil
-				}
-			}
-
-			// Try environment variable as last resort
-			if envPhone := os.Getenv("SIGNAL_PHONE_NUMBER"); envPhone != "" {
-				log.Printf("Using phone number from environment variable")
-				return envPhone, nil
-			}
+	if err == nil {
+		phoneNumber := strings.TrimSpace(string(data))
+		if phoneNumber == "" {
+			return "", os.ErrNotExist
 		}
-		return "", err
+		return phoneNumber, nil
 	}
 
-	phoneNumber := strings.TrimSpace(string(data))
-	if phoneNumber == "" {
-		return "", os.ErrNotExist
+	// If we can't read the system file, check for a local override
+	// This is useful for development/testing
+	if !os.IsPermission(err) {
+		return "", fmt.Errorf("failed to read phone number file: %w", err)
 	}
 
-	return phoneNumber, nil
+	log.Printf("Permission denied reading %s, checking for local override", phoneNumberFilePath)
+
+	// Try reading from current directory
+	localData, localErr := os.ReadFile("phone-number")
+	if localErr == nil {
+		phoneNumber := strings.TrimSpace(string(localData))
+		if phoneNumber != "" {
+			log.Printf("Using phone number from local file")
+			return phoneNumber, nil
+		}
+	}
+
+	// Try environment variable as last resort
+	if envPhone := os.Getenv("SIGNAL_PHONE_NUMBER"); envPhone != "" {
+		log.Printf("Using phone number from environment variable")
+		return envPhone, nil
+	}
+
+	return "", fmt.Errorf("failed to read phone number file: %w", err)
 }
 
 func initializeComponents(ctx context.Context) (*components, error) {
@@ -168,7 +186,7 @@ func initializeComponents(ctx context.Context) (*components, error) {
 			log.Printf("  1. Run as sudo or signal-cli user")
 			log.Printf("  2. Create a 'phone-number' file in current directory")
 			log.Printf("  3. Set SIGNAL_PHONE_NUMBER environment variable")
-			return nil, err
+			return nil, fmt.Errorf("permission denied reading phone number: %w", err)
 		}
 		return nil, err
 	}
@@ -177,7 +195,7 @@ func initializeComponents(ctx context.Context) (*components, error) {
 	// 1. Initialize Signal transport and client
 	transport, err := signalpkg.NewUnixSocketTransport(signalSocketPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create unix socket transport: %w", err)
 	}
 
 	signalClient := signalpkg.NewClient(transport)
@@ -185,7 +203,7 @@ func initializeComponents(ctx context.Context) (*components, error) {
 
 	// 2. Validate embedded system prompt
 	if validateErr := config.ValidateSystemPrompt(embeddedSystemPrompt); validateErr != nil {
-		return nil, validateErr
+		return nil, fmt.Errorf("invalid system prompt: %w", validateErr)
 	}
 	log.Printf("Using embedded system prompt (%d characters)", len(embeddedSystemPrompt))
 
@@ -199,7 +217,7 @@ func initializeComponents(ctx context.Context) (*components, error) {
 
 	claudeClient, err := claude.NewClient(claudeConfig)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create Claude client: %w", err)
 	}
 
 	// 4. Initialize support services
@@ -222,16 +240,16 @@ func initializeComponents(ctx context.Context) (*components, error) {
 		PanicHandler: nil, // Use default panic handler
 	}
 
-	workerPool, err := queue.NewDynamicWorkerPool(poolConfig)
+	workerPool, err := queue.NewDynamicWorkerPool(ctx, poolConfig)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create worker pool: %w", err)
 	}
 
 	// 7. Initialize Signal handler
 	enqueuer := &messageEnqueuerAdapter{manager: queueManager}
 	signalHandler, err := signalpkg.NewHandler(messenger, enqueuer)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create signal handler: %w", err)
 	}
 
 	return &components{
@@ -247,7 +265,7 @@ func startComponents(ctx context.Context, c *components) error {
 	go func() {
 		defer c.wg.Done()
 		log.Println("Starting queue manager...")
-		c.queueManager.Start()
+		c.queueManager.Start(ctx)
 		log.Println("Queue manager stopped")
 	}()
 

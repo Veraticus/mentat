@@ -2,8 +2,17 @@ package queue
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
+)
+
+// Rate limiter constants.
+const (
+	// tickerCheckMultiplier is how many times to check per refill period.
+	tickerCheckMultiplier = 10
+	// defaultBurstSize is the default burst size for rate limiter.
+	defaultBurstSize = 5
 )
 
 // TokenBucket represents a token bucket for rate limiting.
@@ -50,13 +59,13 @@ func (tb *TokenBucket) Wait(ctx context.Context) error {
 	}
 
 	// Slow path - wait for token
-	ticker := time.NewTicker(tb.refillPeriod / 10) // Check 10x per refill period
+	ticker := time.NewTicker(tb.refillPeriod / tickerCheckMultiplier) // Check 10x per refill period
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("context cancelled while waiting for rate limit: %w", ctx.Err())
 		case <-ticker.C:
 			if tb.Allow() {
 				return nil
@@ -179,5 +188,5 @@ func (rl *rateLimiter) Stats() map[string]any {
 // DefaultRateLimiter creates a rate limiter with sensible defaults.
 // Allows burst of 5 messages, then 1 message per second.
 func DefaultRateLimiter() RateLimiter {
-	return NewRateLimiter(5, 1, time.Second)
+	return NewRateLimiter(defaultBurstSize, 1, time.Second)
 }

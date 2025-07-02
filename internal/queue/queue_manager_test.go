@@ -98,8 +98,8 @@ func TestQueueManager_UpdateState(t *testing.T) {
 	}
 
 	// Update state to completed
-	if err := qm.UpdateState(expectedID, MessageStateCompleted, "Processing completed"); err != nil {
-		t.Fatalf("Failed to update state: %v", err)
+	if updateErr := qm.UpdateState(expectedID, MessageStateCompleted, "Processing completed"); updateErr != nil {
+		t.Fatalf("Failed to update state: %v", updateErr)
 	}
 
 	// Verify stats reflect the state change
@@ -125,7 +125,7 @@ func TestQueueManager_Stats(t *testing.T) {
 	}
 
 	// Add messages from different conversations
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		msg := createIncomingMessage(fmt.Sprintf("sender-%d", i%3), "Test") // 3 conversations
 		if err := qm.Enqueue(msg); err != nil {
 			t.Fatalf("Failed to enqueue: %v", err)
@@ -169,7 +169,7 @@ func TestQueueManager_FairScheduling(t *testing.T) {
 
 	// Enqueue messages
 	for _, sender := range conversations {
-		for i := 0; i < messagesPerConv; i++ {
+		for i := range messagesPerConv {
 			msg := createIncomingMessage(sender, fmt.Sprintf("Test message %d", i))
 			if err := qm.Enqueue(msg); err != nil {
 				t.Fatalf("Failed to enqueue: %v", err)
@@ -183,7 +183,7 @@ func TestQueueManager_FairScheduling(t *testing.T) {
 
 	// First round - should get one from each conversation
 	// Get all messages first before completing any
-	for i := 0; i < len(conversations); i++ {
+	for i := range conversations {
 		msg, err := qm.GetNext(fmt.Sprintf("worker-%d", i))
 		if err != nil || msg == nil {
 			t.Fatalf("Failed to get message %d: %v", i, err)
@@ -203,7 +203,12 @@ func TestQueueManager_FairScheduling(t *testing.T) {
 	for _, sender := range conversations {
 		// ConversationID is the sender itself in the test helper
 		if convCounts[sender] != 1 {
-			t.Errorf("Conversation %s scheduled %d times, expected 1 (counts: %v)", sender, convCounts[sender], convCounts)
+			t.Errorf(
+				"Conversation %s scheduled %d times, expected 1 (counts: %v)",
+				sender,
+				convCounts[sender],
+				convCounts,
+			)
 		}
 	}
 }
@@ -212,17 +217,16 @@ func TestQueueManager_FairScheduling(t *testing.T) {
 type testWorker struct {
 	id       string
 	qm       MessageQueue
-	ctx      context.Context
 	t        *testing.T
 	procChan chan<- int32
 }
 
-func (w *testWorker) run(wg *sync.WaitGroup) {
+func (w *testWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	for {
 		select {
-		case <-w.ctx.Done():
+		case <-ctx.Done():
 			return
 		default:
 			if !w.processNextMessage() {
@@ -242,8 +246,8 @@ func (w *testWorker) processNextMessage() bool {
 	<-time.After(time.Millisecond)
 
 	// Mark as completed
-	if err := w.qm.UpdateState(msg.ID, MessageStateCompleted, "processed"); err != nil {
-		w.t.Errorf("Failed to update state: %v", err)
+	if updateErr := w.qm.UpdateState(msg.ID, MessageStateCompleted, "processed"); updateErr != nil {
+		w.t.Errorf("Failed to update state: %v", updateErr)
 		return false
 	}
 
@@ -263,7 +267,7 @@ type testConversationProducer struct {
 func (p *testConversationProducer) run(wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	for m := 0; m < p.messagesPerConv; m++ {
+	for m := range p.messagesPerConv {
 		msg := createIncomingMessage(
 			fmt.Sprintf("sender-%d", p.convNum),
 			fmt.Sprintf("Message %d from conversation %d", m, p.convNum),
@@ -320,27 +324,43 @@ func TestQueueManager_100ConcurrentConversations(t *testing.T) {
 	// Verify final stats
 	verifyFinalStats(t, qm, expectedTotal)
 
-	t.Logf("Successfully processed %d messages from %d concurrent conversations", expectedTotal, numConversations)
+	t.Logf(
+		"Successfully processed %d messages from %d concurrent conversations",
+		expectedTotal,
+		numConversations,
+	)
 }
 
-func startWorkers(ctx context.Context, t *testing.T, qm MessageQueue, numWorkers int, processChan chan<- int32, wg *sync.WaitGroup) {
+func startWorkers(
+	ctx context.Context,
+	t *testing.T,
+	qm MessageQueue,
+	numWorkers int,
+	processChan chan<- int32,
+	wg *sync.WaitGroup,
+) {
 	t.Helper()
-	for w := 0; w < numWorkers; w++ {
+	for w := range numWorkers {
 		wg.Add(1)
 		worker := &testWorker{
 			id:       fmt.Sprintf("worker-%d", w),
 			qm:       qm,
-			ctx:      ctx,
 			t:        t,
 			procChan: processChan,
 		}
-		go worker.run(wg)
+		go worker.run(ctx, wg)
 	}
 }
 
-func startProducers(t *testing.T, qm MessageQueue, numConversations, messagesPerConv int, enqueueChan chan<- int32, wg *sync.WaitGroup) {
+func startProducers(
+	t *testing.T,
+	qm MessageQueue,
+	numConversations, messagesPerConv int,
+	enqueueChan chan<- int32,
+	wg *sync.WaitGroup,
+) {
 	t.Helper()
-	for c := 0; c < numConversations; c++ {
+	for c := range numConversations {
 		wg.Add(1)
 		producer := &testConversationProducer{
 			convNum:         c,
@@ -368,7 +388,12 @@ func waitForCount(countChan <-chan int32, expected int, timeout time.Duration) i
 	return count
 }
 
-func waitForProcessingComplete(t *testing.T, processChan <-chan int32, expectedTotal int, timeout time.Duration) bool {
+func waitForProcessingComplete(
+	t *testing.T,
+	processChan <-chan int32,
+	expectedTotal int,
+	timeout time.Duration,
+) bool {
 	t.Helper()
 	processedCount := 0
 	deadline := time.After(timeout)
@@ -451,11 +476,11 @@ func TestQueueManager_ConcurrentEnqueue(t *testing.T) {
 	var wg sync.WaitGroup
 	var successCount int32
 
-	for g := 0; g < numGoroutines; g++ {
+	for g := range numGoroutines {
 		wg.Add(1)
 		go func(gID int) {
 			defer wg.Done()
-			for m := 0; m < messagesPerGoroutine; m++ {
+			for range messagesPerGoroutine {
 				msg := createIncomingMessage(
 					fmt.Sprintf("sender-%d", gID%10), // 10 conversations
 					"Test",
@@ -487,7 +512,7 @@ func TestQueueManager_StopGracefully(t *testing.T) {
 	qm := NewCoordinator(ctx)
 
 	// Enqueue some messages
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		msg := createIncomingMessage("sender", fmt.Sprintf("Test %d", i))
 		if err := qm.Enqueue(msg); err != nil {
 			t.Fatalf("Failed to enqueue: %v", err)

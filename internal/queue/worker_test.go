@@ -37,7 +37,7 @@ func (m *mockLLM) Query(ctx context.Context, prompt string, sessionID string) (*
 		select {
 		case <-time.After(m.delay):
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, fmt.Errorf("context cancelled during mock LLM delay: %w", ctx.Err())
 		}
 	}
 
@@ -104,7 +104,7 @@ func TestWorker_ProcessSuccess(t *testing.T) {
 	rateLimiter := NewRateLimiter(10, 1, time.Second)
 
 	// Start queue manager
-	go queueMgr.Start()
+	go queueMgr.Start(ctx)
 	defer func() {
 		if err := queueMgr.Shutdown(time.Second); err != nil {
 			t.Logf("Shutdown error: %v", err)
@@ -180,13 +180,13 @@ func TestWorker_ProcessLLMError(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup mocks with LLM error
-	llm := &mockLLM{err: errors.New("LLM unavailable")}
+	llm := &mockLLM{err: fmt.Errorf("LLM unavailable")}
 	messenger := &mockMessenger{}
 	queueMgr := NewManager(ctx)
 	rateLimiter := NewRateLimiter(10, 1, time.Second)
 
 	// Start queue manager
-	go queueMgr.Start()
+	go queueMgr.Start(ctx)
 	defer func() {
 		if err := queueMgr.Shutdown(time.Second); err != nil {
 			t.Logf("Shutdown error: %v", err)
@@ -240,13 +240,13 @@ func TestWorker_ProcessMaxRetries(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup mocks
-	llm := &mockLLM{err: errors.New("LLM error")}
+	llm := &mockLLM{err: fmt.Errorf("LLM error")}
 	messenger := &mockMessenger{}
 	queueMgr := NewManager(ctx)
 	rateLimiter := NewRateLimiter(10, 1, time.Second)
 
 	// Start queue manager
-	go queueMgr.Start()
+	go queueMgr.Start(ctx)
 	defer func() {
 		if err := queueMgr.Shutdown(time.Second); err != nil {
 			t.Logf("Shutdown error: %v", err)
@@ -302,7 +302,7 @@ func TestWorker_RateLimiting(t *testing.T) {
 	rateLimiter := NewRateLimiter(1, 1, 100*time.Millisecond)
 
 	// Start queue manager
-	go queueMgr.Start()
+	go queueMgr.Start(ctx)
 	defer func() {
 		if err := queueMgr.Shutdown(time.Second); err != nil {
 			t.Logf("Shutdown error: %v", err)
@@ -367,7 +367,7 @@ func TestWorkerPool_Start(t *testing.T) {
 	rateLimiter := NewRateLimiter(10, 1, time.Second)
 
 	// Start queue manager
-	go queueMgr.Start()
+	go queueMgr.Start(ctx)
 
 	// Create worker pool
 	pool := NewWorkerPool(3, llm, messenger, queueMgr, rateLimiter)
@@ -378,7 +378,7 @@ func TestWorkerPool_Start(t *testing.T) {
 	}
 
 	// Submit some messages
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		msg := NewMessage(
 			fmt.Sprintf("msg-%d", i),
 			fmt.Sprintf("conv-%d", i%2),
@@ -433,7 +433,7 @@ func TestWorker_TypingIndicator(t *testing.T) {
 	rateLimiter := NewRateLimiter(10, 1, time.Second)
 
 	// Start queue manager
-	go queueMgr.Start()
+	go queueMgr.Start(ctx)
 	defer func() {
 		if err := queueMgr.Shutdown(time.Second); err != nil {
 			t.Logf("Shutdown error: %v", err)
@@ -515,7 +515,7 @@ func TestWorker_ProcessesMessagesInOrder(t *testing.T) {
 	rateLimiter := NewRateLimiter(100, 10, time.Second) // High rate limit
 
 	// Start queue manager
-	go queueMgr.Start()
+	go queueMgr.Start(ctx)
 	defer func() {
 		if err := queueMgr.Shutdown(time.Second); err != nil {
 			t.Logf("Shutdown error: %v", err)
@@ -535,7 +535,7 @@ func TestWorker_ProcessesMessagesInOrder(t *testing.T) {
 	// Start worker
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	go func() {
-		if err := worker.Start(workerCtx); err != nil && err != context.Canceled {
+		if err := worker.Start(workerCtx); err != nil && !errors.Is(err, context.Canceled) {
 			t.Logf("Worker error: %v", err)
 		}
 	}()
@@ -606,7 +606,7 @@ func TestWorkerPool_GracefulShutdown(t *testing.T) {
 	rateLimiter := NewRateLimiter(100, 10, time.Second)
 
 	// Start queue manager
-	go queueMgr.Start()
+	go queueMgr.Start(ctx)
 
 	// Create worker pool
 	pool := NewWorkerPool(2, llm, messenger, queueMgr, rateLimiter)
@@ -618,7 +618,7 @@ func TestWorkerPool_GracefulShutdown(t *testing.T) {
 
 	// Submit messages
 	messageCount := 10
-	for i := 0; i < messageCount; i++ {
+	for i := range messageCount {
 		msg := NewMessage(
 			fmt.Sprintf("msg-%d", i),
 			fmt.Sprintf("conv-%d", i%2), // Two conversations
@@ -703,7 +703,7 @@ func TestWorker_MessageOrderWithinConversation(t *testing.T) {
 	rateLimiter := NewRateLimiter(100, 10, time.Second)
 
 	// Start queue manager
-	go queueMgr.Start()
+	go queueMgr.Start(ctx)
 	defer func() {
 		if err := queueMgr.Shutdown(time.Second); err != nil {
 			t.Logf("Shutdown error: %v", err)
@@ -724,7 +724,7 @@ func TestWorker_MessageOrderWithinConversation(t *testing.T) {
 	messagesPerConv := 5
 
 	for _, convID := range conversations {
-		for i := 0; i < messagesPerConv; i++ {
+		for i := range messagesPerConv {
 			msg := NewMessage(
 				fmt.Sprintf("msg-%s-%d", convID, i),
 				convID,
@@ -757,7 +757,7 @@ func TestWorker_MessageOrderWithinConversation(t *testing.T) {
 		}
 
 		// Check order
-		for i := 0; i < len(messages); i++ {
+		for i := range messages {
 			expected := fmt.Sprintf("%s-Message-%d", convID, i)
 			if messages[i] != expected {
 				t.Errorf("Conversation %s: message %d out of order. Expected '%s', got '%s'",

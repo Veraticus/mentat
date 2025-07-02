@@ -10,7 +10,7 @@ func TestStatsCollector_RecordEnqueue(t *testing.T) {
 	sc := NewStatsCollector()
 
 	// Record multiple enqueues
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		sc.RecordEnqueue()
 	}
 
@@ -135,7 +135,7 @@ func TestStatsCollector_RetryDistribution(t *testing.T) {
 	sc := NewStatsCollector()
 
 	// Record retry attempts
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		for j := 0; j <= i; j++ {
 			sc.RecordRetryAttempt(i)
 		}
@@ -147,7 +147,7 @@ func TestStatsCollector_RetryDistribution(t *testing.T) {
 	detailed := sc.GetDetailedStats()
 
 	// Check distribution
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		expected := int64(i + 1)
 		if detailed.RetryDistribution[i] != expected {
 			t.Errorf("expected %d retries at attempt %d, got %d", expected, i, detailed.RetryDistribution[i])
@@ -198,10 +198,10 @@ func TestStatsCollector_ConcurrentAccess(t *testing.T) {
 	goroutines := 10
 
 	wg.Add(goroutines)
-	for i := 0; i < goroutines; i++ {
+	for i := range goroutines {
 		go func(id int) {
 			defer wg.Done()
-			for j := 0; j < iterations; j++ {
+			for j := range iterations {
 				sc.RecordEnqueue()
 				sc.RecordStateTransition(StateQueued, StateProcessing)
 				sc.RecordProcessingTime(time.Duration(j) * time.Millisecond)
@@ -259,7 +259,7 @@ func TestThroughputTracker_MessagesPerSecond(t *testing.T) {
 	tt := NewThroughputTracker()
 
 	// Record messages
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tt.RecordMessage()
 	}
 
@@ -277,7 +277,7 @@ func TestStatsCollector_DetailedStats(t *testing.T) {
 	sc := NewStatsCollector()
 
 	// Set up a scenario
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		sc.RecordEnqueue()
 		sc.RecordStateTransition(StateQueued, StateProcessing)
 		sc.RecordProcessingTime(time.Duration(i) * time.Millisecond)
@@ -325,17 +325,17 @@ func TestStatsCollector_QueueDepthCalculation(t *testing.T) {
 	sc := NewStatsCollector()
 
 	// Enqueue 10 messages
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		sc.RecordEnqueue()
 	}
 
 	// Complete 3
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		sc.RecordStateTransition(StateProcessing, StateCompleted)
 	}
 
 	// Fail 2
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		sc.RecordStateTransition(StateProcessing, StateFailed)
 	}
 

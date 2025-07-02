@@ -370,7 +370,7 @@ func TestTypingIndicatorManager_ThreadSafety(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Concurrently start/stop many indicators
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
@@ -413,7 +413,7 @@ func BenchmarkTypingIndicatorManager_Start(b *testing.B) {
 
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		recipient := string(rune('A' + (i % 26)))
 		_ = manager.Start(ctx, recipient)
 		manager.Stop(recipient)

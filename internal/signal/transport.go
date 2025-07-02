@@ -103,7 +103,7 @@ func (m *MockTransport) Call(ctx context.Context, method string, params any) (*j
 	if delay > 0 {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, fmt.Errorf("context cancelled during mock delay: %w", ctx.Err())
 		case <-time.After(delay):
 		}
 	}
@@ -111,7 +111,7 @@ func (m *MockTransport) Call(ctx context.Context, method string, params any) (*j
 	// Check context before returning
 	select {
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, fmt.Errorf("context cancelled before returning response: %w", ctx.Err())
 	default:
 	}
 

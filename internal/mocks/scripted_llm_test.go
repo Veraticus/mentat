@@ -1,18 +1,20 @@
-package mocks
+package mocks_test
 
 import (
 	"context"
-	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/Veraticus/mentat/internal/claude"
+	"github.com/Veraticus/mentat/internal/mocks"
 )
 
 func TestScriptedLLM_SimpleSequence(t *testing.T) {
 	// Test that responses are returned in order
-	llm := NewScriptedLLM()
+	llm := mocks.NewScriptedLLM()
 
 	// Add a sequence of responses
 	llm.AddSimpleScript("First response").
@@ -55,7 +57,7 @@ func TestScriptedLLM_SimpleSequence(t *testing.T) {
 
 func TestScriptedLLM_PatternMatching(t *testing.T) {
 	tests := []struct {
-		scripts       []ScriptedResponse
+		scripts       []mocks.ScriptedResponse
 		name          string
 		prompt        string
 		sessionID     string
@@ -64,7 +66,7 @@ func TestScriptedLLM_PatternMatching(t *testing.T) {
 	}{
 		{
 			name: "exact pattern match",
-			scripts: []ScriptedResponse{
+			scripts: []mocks.ScriptedResponse{
 				{
 					PromptPattern: "^Hello.*",
 					Response: &claude.LLMResponse{
@@ -79,7 +81,7 @@ func TestScriptedLLM_PatternMatching(t *testing.T) {
 		},
 		{
 			name: "session pattern match",
-			scripts: []ScriptedResponse{
+			scripts: []mocks.ScriptedResponse{
 				{
 					SessionPattern: "^user-.*",
 					Response: &claude.LLMResponse{
@@ -94,7 +96,7 @@ func TestScriptedLLM_PatternMatching(t *testing.T) {
 		},
 		{
 			name: "both patterns must match",
-			scripts: []ScriptedResponse{
+			scripts: []mocks.ScriptedResponse{
 				{
 					PromptPattern:  "schedule",
 					SessionPattern: "^admin-.*",
@@ -110,7 +112,7 @@ func TestScriptedLLM_PatternMatching(t *testing.T) {
 		},
 		{
 			name: "no pattern match with fallback",
-			scripts: []ScriptedResponse{
+			scripts: []mocks.ScriptedResponse{
 				{
 					PromptPattern: "^specific.*",
 					Response: &claude.LLMResponse{
@@ -126,7 +128,7 @@ func TestScriptedLLM_PatternMatching(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			llm := NewScriptedLLM()
+			llm := mocks.NewScriptedLLM()
 			for _, script := range tt.scripts {
 				llm.AddScript(script)
 			}
@@ -153,9 +155,9 @@ func TestScriptedLLM_PatternMatching(t *testing.T) {
 }
 
 func TestScriptedLLM_ErrorInjection(t *testing.T) {
-	llm := NewScriptedLLM()
+	llm := mocks.NewScriptedLLM()
 
-	testErr := errors.New("simulated LLM error")
+	testErr := fmt.Errorf("simulated LLM error")
 
 	// Add mix of success and error responses
 	llm.AddSimpleScript("Success 1").
@@ -193,7 +195,7 @@ func TestScriptedLLM_ErrorInjection(t *testing.T) {
 }
 
 func TestScriptedLLM_Delays(t *testing.T) {
-	llm := NewScriptedLLM()
+	llm := mocks.NewScriptedLLM()
 
 	// Add response with 100ms delay
 	llm.AddDelayedScript(&claude.LLMResponse{
@@ -221,7 +223,7 @@ func TestScriptedLLM_Delays(t *testing.T) {
 }
 
 func TestScriptedLLM_ContextCancellation(t *testing.T) {
-	llm := NewScriptedLLM()
+	llm := mocks.NewScriptedLLM()
 
 	// Add response with long delay
 	llm.AddDelayedScript(&claude.LLMResponse{
@@ -247,10 +249,10 @@ func TestScriptedLLM_ContextCancellation(t *testing.T) {
 }
 
 func TestScriptedLLM_RepeatableScripts(t *testing.T) {
-	llm := NewScriptedLLM()
+	llm := mocks.NewScriptedLLM()
 
 	// Add repeatable pattern script
-	llm.AddScript(ScriptedResponse{
+	llm.AddScript(mocks.ScriptedResponse{
 		PromptPattern: "memory",
 		Response: &claude.LLMResponse{
 			Message: "Memory response",
@@ -259,7 +261,7 @@ func TestScriptedLLM_RepeatableScripts(t *testing.T) {
 	})
 
 	// Add non-repeatable script
-	llm.AddScript(ScriptedResponse{
+	llm.AddScript(mocks.ScriptedResponse{
 		Response: &claude.LLMResponse{
 			Message: "One-time response",
 		},
@@ -269,7 +271,7 @@ func TestScriptedLLM_RepeatableScripts(t *testing.T) {
 	ctx := context.Background()
 
 	// Pattern script can be used multiple times
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		resp, err := llm.Query(ctx, "check memory", "session")
 		if err != nil {
 			t.Fatalf("unexpected error on iteration %d: %v", i, err)
@@ -299,7 +301,7 @@ func TestScriptedLLM_RepeatableScripts(t *testing.T) {
 }
 
 func TestScriptedLLM_StrictMode(t *testing.T) {
-	llm := NewScriptedLLM(WithStrictMode())
+	llm := mocks.NewScriptedLLM(mocks.WithStrictMode())
 
 	// Add one script
 	llm.AddSimpleScript("Only response")
@@ -323,13 +325,13 @@ func TestScriptedLLM_StrictMode(t *testing.T) {
 }
 
 func TestScriptedLLM_Callbacks(t *testing.T) {
-	llm := NewScriptedLLM()
+	llm := mocks.NewScriptedLLM()
 
 	var callbackExecuted bool
 	var capturedPrompt string
 	var capturedSession string
 
-	llm.AddScript(ScriptedResponse{
+	llm.AddScript(mocks.ScriptedResponse{
 		Response: &claude.LLMResponse{
 			Message: "Response with callback",
 		},
@@ -366,10 +368,10 @@ func TestScriptedLLM_Callbacks(t *testing.T) {
 
 func TestScriptedLLM_MultiTurnConversation(t *testing.T) {
 	// Test a realistic multi-turn conversation scenario
-	llm := NewScriptedLLM()
+	llm := mocks.NewScriptedLLM()
 
 	// Script a conversation about scheduling
-	llm.AddScript(ScriptedResponse{
+	llm.AddScript(mocks.ScriptedResponse{
 		PromptPattern: ".*schedule.*meeting.*",
 		Response: &claude.LLMResponse{
 			Message: "I'll help you schedule a meeting. When would you like to meet?",
@@ -384,7 +386,7 @@ func TestScriptedLLM_MultiTurnConversation(t *testing.T) {
 			},
 		},
 		Repeatable: false,
-	}).AddScript(ScriptedResponse{
+	}).AddScript(mocks.ScriptedResponse{
 		PromptPattern: ".*2pm.*",
 		Response: &claude.LLMResponse{
 			Message: "I've scheduled the meeting for 2pm. I've sent calendar invites to all participants.",
@@ -444,11 +446,11 @@ func TestScriptedLLM_MultiTurnConversation(t *testing.T) {
 
 func TestScriptedLLM_ConcurrentAccess(t *testing.T) {
 	// Test thread safety
-	llm := NewScriptedLLM()
+	llm := mocks.NewScriptedLLM()
 
 	// Add many repeatable scripts
-	for i := 0; i < 10; i++ {
-		llm.AddScript(ScriptedResponse{
+	for range 10 {
+		llm.AddScript(mocks.ScriptedResponse{
 			Response: &claude.LLMResponse{
 				Message: "Concurrent response",
 			},
@@ -461,9 +463,9 @@ func TestScriptedLLM_ConcurrentAccess(t *testing.T) {
 	errors := make(chan error, 100)
 
 	// Launch many concurrent queries
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		wg.Add(1)
-		go func(_ int) {
+		go func() {
 			defer wg.Done()
 
 			resp, err := llm.Query(ctx, "concurrent prompt", "session")
@@ -475,7 +477,7 @@ func TestScriptedLLM_ConcurrentAccess(t *testing.T) {
 			if resp.Message != "Concurrent response" {
 				errors <- err
 			}
-		}(i)
+		}()
 	}
 
 	wg.Wait()
@@ -493,7 +495,7 @@ func TestScriptedLLM_ConcurrentAccess(t *testing.T) {
 }
 
 func TestScriptedLLM_HelperMethods(t *testing.T) {
-	llm := NewScriptedLLM()
+	llm := mocks.NewScriptedLLM()
 
 	ctx := context.Background()
 
@@ -529,14 +531,14 @@ func TestScriptedLLM_HelperMethods(t *testing.T) {
 
 func TestScriptedLLM_ComplexScenario(t *testing.T) {
 	// Test a complex scenario with validation and retries
-	llm := NewScriptedLLM()
+	llm := mocks.NewScriptedLLM()
 
 	// Initial response with incomplete search
-	llm.AddScript(ScriptedResponse{
+	llm.AddScript(mocks.ScriptedResponse{
 		PromptPattern: ".*find.*information.*Josh.*",
-		Response: NewLLMResponseBuilder().Build(
-			WithMessage("I found some information about Josh."),
-			WithToolCalls(claude.ToolCall{
+		Response: mocks.NewLLMResponseBuilder().Build(
+			mocks.WithMessage("I found some information about Josh."),
+			mocks.WithToolCalls(claude.ToolCall{
 				Tool: "search",
 				Parameters: map[string]claude.ToolParameter{
 					"query": claude.NewStringParam("Josh"),
@@ -548,20 +550,20 @@ func TestScriptedLLM_ComplexScenario(t *testing.T) {
 	})
 
 	// Validation response - incomplete
-	llm.AddScript(ScriptedResponse{
+	llm.AddScript(mocks.ScriptedResponse{
 		PromptPattern: ".*VALIDATION.*",
-		Response: NewLLMResponseBuilder().Build(
-			WithMessage("Status: INCOMPLETE_SEARCH\nThe search was incomplete. Memory was not checked."),
+		Response: mocks.NewLLMResponseBuilder().Build(
+			mocks.WithMessage("Status: INCOMPLETE_SEARCH\nThe search was incomplete. Memory was not checked."),
 		),
 		Repeatable: false,
 	})
 
 	// Retry with more thorough search
-	llm.AddScript(ScriptedResponse{
+	llm.AddScript(mocks.ScriptedResponse{
 		PromptPattern: ".*find.*information.*Josh.*memory.*",
-		Response: NewLLMResponseBuilder().Build(
-			WithMessage("I've done a thorough search including memory."),
-			WithToolCalls(
+		Response: mocks.NewLLMResponseBuilder().Build(
+			mocks.WithMessage("I've done a thorough search including memory."),
+			mocks.WithToolCalls(
 				claude.ToolCall{
 					Tool: "search",
 					Parameters: map[string]claude.ToolParameter{
@@ -582,10 +584,10 @@ func TestScriptedLLM_ComplexScenario(t *testing.T) {
 	})
 
 	// Final validation - success
-	llm.AddScript(ScriptedResponse{
+	llm.AddScript(mocks.ScriptedResponse{
 		PromptPattern: ".*VALIDATION.*",
-		Response: NewLLMResponseBuilder().Build(
-			WithMessage("Status: VALID\nThe response is complete and accurate."),
+		Response: mocks.NewLLMResponseBuilder().Build(
+			mocks.WithMessage("Status: VALID\nThe response is complete and accurate."),
 		),
 		Repeatable: false,
 	})
@@ -601,13 +603,13 @@ func TestScriptedLLM_ComplexScenario(t *testing.T) {
 
 	// 2. Validation finds it incomplete
 	resp2, _ := llm.Query(ctx, "VALIDATION: Check if the response was thorough", "validator")
-	if !contains(resp2.Message, "INCOMPLETE_SEARCH") {
+	if !strings.Contains(resp2.Message, "INCOMPLETE_SEARCH") {
 		t.Errorf("expected incomplete search status, got: %q", resp2.Message)
 	}
 
 	// 3. Retry with guidance
 	resp3, _ := llm.Query(ctx, "Can you find information about Josh? Make sure to check memory.", "session")
-	if !contains(resp3.Message, "thorough search") {
+	if !strings.Contains(resp3.Message, "thorough search") {
 		t.Errorf("unexpected retry response: %q", resp3.Message)
 	}
 	if len(resp3.ToolCalls) != 2 {
@@ -616,7 +618,7 @@ func TestScriptedLLM_ComplexScenario(t *testing.T) {
 
 	// 4. Final validation passes
 	resp4, _ := llm.Query(ctx, "VALIDATION: Check if the response was thorough", "validator")
-	if !contains(resp4.Message, "VALID") {
+	if !strings.Contains(resp4.Message, "VALID") {
 		t.Errorf("expected valid status, got: %q", resp4.Message)
 	}
 

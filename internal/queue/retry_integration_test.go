@@ -28,7 +28,7 @@ func TestRetryIntegration(t *testing.T) {
 	rateLimiter := NewRateLimiter(10, 1, time.Minute)
 
 	// Start manager
-	go manager.Start()
+	go manager.Start(ctx)
 	defer func() {
 		if err := manager.Shutdown(time.Second); err != nil {
 			t.Logf("Shutdown error: %v", err)
@@ -73,8 +73,8 @@ func TestRetryIntegration(t *testing.T) {
 		queue.mu.Lock()
 		if queue.messages.Len() > 0 {
 			if elem := queue.messages.Front(); elem != nil {
-				if msg, ok := elem.Value.(*Message); ok {
-					foundMsg = msg
+				if message, ok := elem.Value.(*Message); ok {
+					foundMsg = message
 				}
 			}
 		}

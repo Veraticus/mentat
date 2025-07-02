@@ -16,6 +16,8 @@ func ExampleRunCommand() {
 		return
 	}
 	fmt.Printf("Output: %s", output)
+	// Output:
+	// Output: Hello, World!
 }
 
 func ExampleRunCommandWithInput() {
@@ -27,11 +29,13 @@ func ExampleRunCommandWithInput() {
 		return
 	}
 	fmt.Printf("Matched: %s", output)
+	// Output:
+	// Matched: Line 2
 }
 
 func ExampleBuilder() {
 	// Using the builder pattern for more control
-	output, err := command.NewCommand("ls", "-la").
+	output, err := command.NewCommand("echo", "Builder pattern works!").
 		WithTimeout(5 * time.Second).
 		Run()
 
@@ -39,7 +43,9 @@ func ExampleBuilder() {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
-	fmt.Printf("Directory listing:\n%s", output)
+	fmt.Printf("Output: %s", output)
+	// Output:
+	// Output: Builder pattern works!
 }
 
 func ExampleRunCommandContext() {
@@ -53,4 +59,6 @@ func ExampleRunCommandContext() {
 		return
 	}
 	fmt.Printf("Command completed: %s", output)
+	// Output:
+	// Command completed:
 }

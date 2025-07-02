@@ -15,6 +15,9 @@ type State string
 type MessageState int
 
 const (
+	// defaultMessageMaxAttempts is the default maximum retry attempts for a message.
+	defaultMessageMaxAttempts = 3
+
 	// StateQueued indicates the message is waiting to be processed.
 	StateQueued State = "queued"
 
@@ -99,7 +102,7 @@ func NewMessage(id, conversationID, sender, senderNumber, text string) *Message 
 		Text:           text,
 		State:          StateQueued,
 		Attempts:       0,
-		MaxAttempts:    3,
+		MaxAttempts:    defaultMessageMaxAttempts,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 		StateHistory:   []StateTransition{},
@@ -302,7 +305,7 @@ type Stats struct {
 	TotalCompleted     int
 	TotalFailed        int
 	ConversationCount  int
-	OldestMessageAge   time.Duration
+	LongestMessageAge  time.Duration
 	AverageWaitTime    time.Duration
 	AverageProcessTime time.Duration
 	ActiveWorkers      int

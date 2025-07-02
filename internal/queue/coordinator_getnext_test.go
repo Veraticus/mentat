@@ -1,13 +1,15 @@
-package queue
+package queue_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/Veraticus/mentat/internal/queue"
 	"github.com/Veraticus/mentat/internal/signal"
 )
 
@@ -17,7 +19,7 @@ func TestCoordinator_GetNextOldestFirst(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	coordinator := NewCoordinator(ctx)
+	coordinator := queue.NewCoordinator(ctx)
 	defer func() {
 		if err := coordinator.Stop(); err != nil {
 			t.Errorf("Failed to stop coordinator: %v", err)
@@ -35,15 +37,20 @@ func TestCoordinator_GetNextOldestFirst(t *testing.T) {
 	verifyChronologicalOrder(t, processedOrder, messageTimestamps)
 }
 
-// enqueueTestMessages creates and enqueues test messages for the given conversations
-func enqueueTestMessages(t *testing.T, coordinator *Coordinator, conversations []string, messagesPerConv int) map[string][]time.Time {
+// enqueueTestMessages creates and enqueues test messages for the given conversations.
+func enqueueTestMessages(
+	t *testing.T,
+	coordinator *queue.Coordinator,
+	conversations []string,
+	messagesPerConv int,
+) map[string][]time.Time {
 	t.Helper()
 	messageTimestamps := make(map[string][]time.Time)
 
 	for _, from := range conversations {
 		messageTimestamps[from] = []time.Time{}
 
-		for i := 0; i < messagesPerConv; i++ {
+		for i := range messagesPerConv {
 			timestamp := time.Now().Add(time.Duration(i) * time.Minute)
 			msg := signal.IncomingMessage{
 				Timestamp: timestamp,
@@ -61,12 +68,18 @@ func enqueueTestMessages(t *testing.T, coordinator *Coordinator, conversations [
 	return messageTimestamps
 }
 
-// processAllMessages processes messages and tracks their order
-func processAllMessages(t *testing.T, coordinator *Coordinator, messageTimestamps map[string][]time.Time, workerID string, totalMessages int) map[string][]time.Time {
+// processAllMessages processes messages and tracks their order.
+func processAllMessages(
+	t *testing.T,
+	coordinator *queue.Coordinator,
+	messageTimestamps map[string][]time.Time,
+	workerID string,
+	totalMessages int,
+) map[string][]time.Time {
 	t.Helper()
 	processedOrder := make(map[string][]time.Time)
 
-	for i := 0; i < totalMessages; i++ {
+	for range totalMessages {
 		msg, err := coordinator.GetNext(workerID)
 		if err != nil {
 			t.Fatalf("Failed to get next message: %v", err)
@@ -82,16 +95,16 @@ func processAllMessages(t *testing.T, coordinator *Coordinator, messageTimestamp
 		processedOrder[msg.From] = append(processedOrder[msg.From], timestamp)
 
 		// Mark as completed to allow next message from same conversation
-		if err := coordinator.UpdateState(msg.ID, MessageStateCompleted, "test completed"); err != nil {
-			t.Fatalf("Failed to update state: %v", err)
+		if updateErr := coordinator.UpdateState(msg.ID, queue.MessageStateCompleted, "test completed"); updateErr != nil {
+			t.Fatalf("Failed to update state: %v", updateErr)
 		}
 	}
 
 	return processedOrder
 }
 
-// extractMessageTimestamp extracts the timestamp from a message ID
-func extractMessageTimestamp(msg *QueuedMessage, timestamps []time.Time) time.Time {
+// extractMessageTimestamp extracts the timestamp from a message ID.
+func extractMessageTimestamp(msg *queue.QueuedMessage, timestamps []time.Time) time.Time {
 	for _, ts := range timestamps {
 		if fmt.Sprintf("%d-%s", ts.UnixNano(), msg.From) == msg.ID {
 			return ts
@@ -100,8 +113,11 @@ func extractMessageTimestamp(msg *QueuedMessage, timestamps []time.Time) time.Ti
 	return time.Time{}
 }
 
-// verifyChronologicalOrder verifies messages were processed in chronological order
-func verifyChronologicalOrder(t *testing.T, processedOrder, messageTimestamps map[string][]time.Time) {
+// verifyChronologicalOrder verifies messages were processed in chronological order.
+func verifyChronologicalOrder(
+	t *testing.T,
+	processedOrder, messageTimestamps map[string][]time.Time,
+) {
 	t.Helper()
 	for from, timestamps := range processedOrder {
 		for i := 1; i < len(timestamps); i++ {
@@ -125,7 +141,7 @@ func TestCoordinator_GetNextFairScheduling(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	coordinator := NewCoordinator(ctx)
+	coordinator := queue.NewCoordinator(ctx)
 	defer func() {
 		if err := coordinator.Stop(); err != nil {
 			t.Errorf("Failed to stop coordinator: %v", err)
@@ -151,11 +167,15 @@ func TestCoordinator_GetNextFairScheduling(t *testing.T) {
 	verifyFairScheduling(t, conversationRounds, conversationMessages)
 }
 
-// enqueueConversationMessages enqueues test messages for multiple conversations
-func enqueueConversationMessages(t *testing.T, coordinator *Coordinator, conversationMessages map[string]int) {
+// enqueueConversationMessages enqueues test messages for multiple conversations.
+func enqueueConversationMessages(
+	t *testing.T,
+	coordinator *queue.Coordinator,
+	conversationMessages map[string]int,
+) {
 	t.Helper()
 	for from, count := range conversationMessages {
-		for i := 0; i < count; i++ {
+		for i := range count {
 			msg := signal.IncomingMessage{
 				Timestamp: time.Now(),
 				From:      from,
@@ -169,8 +189,13 @@ func enqueueConversationMessages(t *testing.T, coordinator *Coordinator, convers
 	}
 }
 
-// processAndTrackRounds processes messages and tracks which round each conversation was processed in
-func processAndTrackRounds(t *testing.T, coordinator *Coordinator, conversationMessages map[string]int, workerID string) map[string][]int {
+// processAndTrackRounds processes messages and tracks which round each conversation was processed in.
+func processAndTrackRounds(
+	t *testing.T,
+	coordinator *queue.Coordinator,
+	conversationMessages map[string]int,
+	workerID string,
+) map[string][]int {
 	t.Helper()
 	conversationRounds := make(map[string][]int)
 	round := 1
@@ -181,7 +206,7 @@ func processAndTrackRounds(t *testing.T, coordinator *Coordinator, conversationM
 		totalMessages += count
 	}
 
-	for i := 0; i < totalMessages; i++ {
+	for range totalMessages {
 		msg, err := coordinator.GetNext(workerID)
 		if err != nil {
 			t.Fatalf("Failed to get next message: %v", err)
@@ -198,15 +223,15 @@ func processAndTrackRounds(t *testing.T, coordinator *Coordinator, conversationM
 		}
 		conversationRounds[msg.From] = append(conversationRounds[msg.From], round)
 
-		if err := coordinator.UpdateState(msg.ID, MessageStateCompleted, "test completed"); err != nil {
-			t.Fatalf("Failed to update state: %v", err)
+		if updateErr := coordinator.UpdateState(msg.ID, queue.MessageStateCompleted, "test completed"); updateErr != nil {
+			t.Fatalf("Failed to update state: %v", updateErr)
 		}
 	}
 
 	return conversationRounds
 }
 
-// trackMessageRound determines which round a message belongs to
+// trackMessageRound determines which round a message belongs to.
 func trackMessageRound(from string, processedInRound map[string]bool, currentRound int) int {
 	if processedInRound[from] {
 		// Start a new round
@@ -218,8 +243,12 @@ func trackMessageRound(from string, processedInRound map[string]bool, currentRou
 	return currentRound
 }
 
-// verifyFairScheduling verifies that conversations are scheduled fairly
-func verifyFairScheduling(t *testing.T, conversationRounds map[string][]int, conversationMessages map[string]int) {
+// verifyFairScheduling verifies that conversations are scheduled fairly.
+func verifyFairScheduling(
+	t *testing.T,
+	conversationRounds map[string][]int,
+	conversationMessages map[string]int,
+) {
 	t.Helper()
 
 	// Each conversation should be processed once per round until it runs out
@@ -238,8 +267,12 @@ func verifyFairScheduling(t *testing.T, conversationRounds map[string][]int, con
 		for i := 1; i < len(rounds); i++ {
 			wait := rounds[i] - rounds[i-1]
 			if wait > maxWait {
-				t.Errorf("Conversation %s waited too long between messages: %d rounds (max allowed: %d)",
-					from, wait, maxWait)
+				t.Errorf(
+					"Conversation %s waited too long between messages: %d rounds (max allowed: %d)",
+					from,
+					wait,
+					maxWait,
+				)
 			}
 		}
 	}
@@ -251,7 +284,7 @@ func TestCoordinator_GetNextNoStarvation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	coordinator := NewCoordinator(ctx)
+	coordinator := queue.NewCoordinator(ctx)
 	defer func() {
 		if err := coordinator.Stop(); err != nil {
 			t.Errorf("Failed to stop coordinator: %v", err)
@@ -275,9 +308,9 @@ func TestCoordinator_GetNextNoStarvation(t *testing.T) {
 
 // Helper functions for TestCoordinator_GetNextNoStarvation
 
-func enqueueHeavyMessages(t *testing.T, coordinator *Coordinator, from string, count int) {
+func enqueueHeavyMessages(t *testing.T, coordinator *queue.Coordinator, from string, count int) {
 	t.Helper()
-	for i := 0; i < count; i++ {
+	for i := range count {
 		msg := signal.IncomingMessage{
 			Timestamp: time.Now(),
 			From:      from,
@@ -289,11 +322,15 @@ func enqueueHeavyMessages(t *testing.T, coordinator *Coordinator, from string, c
 	}
 }
 
-func enqueueLightMessages(t *testing.T, coordinator *Coordinator, conversations []string) map[string]time.Time {
+func enqueueLightMessages(
+	t *testing.T,
+	coordinator *queue.Coordinator,
+	conversations []string,
+) map[string]time.Time {
 	t.Helper()
 	lightMessageTimes := make(map[string]time.Time)
 	for _, from := range conversations {
-		for i := 0; i < 2; i++ {
+		for i := range 2 {
 			enqueueTime := time.Now()
 			if i == 0 {
 				lightMessageTimes[from] = enqueueTime
@@ -316,7 +353,11 @@ type processingResult struct {
 	maxMessagesBeforeLightProcessed int
 }
 
-func processMessagesWithTracking(t *testing.T, coordinator *Coordinator, lightConvs []string) processingResult {
+func processMessagesWithTracking(
+	t *testing.T,
+	coordinator *queue.Coordinator,
+	lightConvs []string,
+) processingResult {
 	t.Helper()
 	workerID := "worker1"
 	lightProcessedTimes := make(map[string]time.Time)
@@ -326,7 +367,7 @@ func processMessagesWithTracking(t *testing.T, coordinator *Coordinator, lightCo
 	for {
 		msg, err := coordinator.GetNext(workerID)
 		if err != nil {
-			if err == context.DeadlineExceeded {
+			if errors.Is(err, context.DeadlineExceeded) {
 				break
 			}
 			t.Fatalf("Failed to get next message: %v", err)
@@ -336,10 +377,16 @@ func processMessagesWithTracking(t *testing.T, coordinator *Coordinator, lightCo
 		}
 
 		messageCount++
-		trackLightConversationProcessing(msg, lightConvs, lightProcessedTimes, messageCount, &maxMessagesBeforeLightProcessed)
+		trackLightConversationProcessing(
+			msg,
+			lightConvs,
+			lightProcessedTimes,
+			messageCount,
+			&maxMessagesBeforeLightProcessed,
+		)
 
-		if err := coordinator.UpdateState(msg.ID, MessageStateCompleted, "test completed"); err != nil {
-			t.Fatalf("Failed to update state: %v", err)
+		if updateErr := coordinator.UpdateState(msg.ID, queue.MessageStateCompleted, "test completed"); updateErr != nil {
+			t.Fatalf("Failed to update state: %v", updateErr)
 		}
 
 		if shouldStopProcessing(lightConvs, lightProcessedTimes, messageCount) {
@@ -353,7 +400,13 @@ func processMessagesWithTracking(t *testing.T, coordinator *Coordinator, lightCo
 	}
 }
 
-func trackLightConversationProcessing(msg *QueuedMessage, lightConvs []string, lightProcessedTimes map[string]time.Time, messageCount int, maxMessages *int) {
+func trackLightConversationProcessing(
+	msg *queue.QueuedMessage,
+	lightConvs []string,
+	lightProcessedTimes map[string]time.Time,
+	messageCount int,
+	maxMessages *int,
+) {
 	for _, lightConv := range lightConvs {
 		if msg.From == lightConv && lightProcessedTimes[lightConv].IsZero() {
 			lightProcessedTimes[lightConv] = time.Now()
@@ -364,7 +417,11 @@ func trackLightConversationProcessing(msg *QueuedMessage, lightConvs []string, l
 	}
 }
 
-func shouldStopProcessing(lightConvs []string, lightProcessedTimes map[string]time.Time, messageCount int) bool {
+func shouldStopProcessing(
+	lightConvs []string,
+	lightProcessedTimes map[string]time.Time,
+	messageCount int,
+) bool {
 	allLightProcessed := true
 	for _, from := range lightConvs {
 		if lightProcessedTimes[from].IsZero() {
@@ -375,7 +432,12 @@ func shouldStopProcessing(lightConvs []string, lightProcessedTimes map[string]ti
 	return allLightProcessed && messageCount > 20
 }
 
-func verifyNoStarvation(t *testing.T, lightConvs []string, lightMessageTimes map[string]time.Time, results processingResult) {
+func verifyNoStarvation(
+	t *testing.T,
+	lightConvs []string,
+	lightMessageTimes map[string]time.Time,
+	results processingResult,
+) {
 	t.Helper()
 	// Verify all light conversations got processed reasonably quickly
 	for _, from := range lightConvs {
@@ -393,8 +455,11 @@ func verifyNoStarvation(t *testing.T, lightConvs []string, lightMessageTimes map
 	// Verify light conversations weren't starved by the heavy conversation
 	expectedMaxMessages := len(lightConvs) + 5 // Some buffer for fair scheduling
 	if results.maxMessagesBeforeLightProcessed > expectedMaxMessages {
-		t.Errorf("Light conversations had to wait for %d messages before being processed (expected < %d)",
-			results.maxMessagesBeforeLightProcessed, expectedMaxMessages)
+		t.Errorf(
+			"Light conversations had to wait for %d messages before being processed (expected < %d)",
+			results.maxMessagesBeforeLightProcessed,
+			expectedMaxMessages,
+		)
 	}
 }
 
@@ -404,7 +469,7 @@ func TestCoordinator_GetNextConversationAffinity(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	coordinator := NewCoordinator(ctx)
+	coordinator := queue.NewCoordinator(ctx)
 	defer func() {
 		if err := coordinator.Stop(); err != nil {
 			t.Errorf("Failed to stop coordinator: %v", err)
@@ -416,7 +481,7 @@ func TestCoordinator_GetNextConversationAffinity(t *testing.T) {
 	from := "+1234567890"
 
 	// Enqueue 5 messages for the same conversation
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		msg := signal.IncomingMessage{
 			Timestamp: time.Now(),
 			From:      from,
@@ -443,11 +508,13 @@ func TestCoordinator_GetNextConversationAffinity(t *testing.T) {
 	worker2 := "worker2"
 	msg2, err := coordinator.GetNext(worker2)
 	if err == nil && msg2 != nil && msg2.From == from {
-		t.Error("Second worker should not get message from same conversation while first is processing")
+		t.Error(
+			"Second worker should not get message from same conversation while first is processing",
+		)
 	}
 
 	// Complete the first message
-	if updateErr := coordinator.UpdateState(msg1.ID, MessageStateCompleted, "test completed"); updateErr != nil {
+	if updateErr := coordinator.UpdateState(msg1.ID, queue.MessageStateCompleted, "test completed"); updateErr != nil {
 		t.Fatalf("Failed to update state: %v", updateErr)
 	}
 
@@ -470,7 +537,7 @@ func TestCoordinator_GetNextConcurrentWorkers(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	coordinator := NewCoordinator(ctx)
+	coordinator := queue.NewCoordinator(ctx)
 	defer func() {
 		if err := coordinator.Stop(); err != nil {
 			t.Errorf("Failed to stop coordinator: %v", err)
@@ -480,7 +547,12 @@ func TestCoordinator_GetNextConcurrentWorkers(t *testing.T) {
 	// Enqueue messages from multiple conversations
 	numConversations := 10
 	messagesPerConv := 5
-	totalMessages := enqueueConcurrentTestMessages(t, coordinator, numConversations, messagesPerConv)
+	totalMessages := enqueueConcurrentTestMessages(
+		t,
+		coordinator,
+		numConversations,
+		messagesPerConv,
+	)
 
 	// Create multiple workers that will process messages concurrently
 	numWorkers := 5
@@ -490,14 +562,18 @@ func TestCoordinator_GetNextConcurrentWorkers(t *testing.T) {
 	verifyConcurrentProcessing(t, processedMessages, duplicates, totalMessages)
 }
 
-// enqueueConcurrentTestMessages enqueues test messages for concurrent processing
-func enqueueConcurrentTestMessages(t *testing.T, coordinator *Coordinator, numConversations, messagesPerConv int) int {
+// enqueueConcurrentTestMessages enqueues test messages for concurrent processing.
+func enqueueConcurrentTestMessages(
+	t *testing.T,
+	coordinator *queue.Coordinator,
+	numConversations, messagesPerConv int,
+) int {
 	t.Helper()
 	totalMessages := numConversations * messagesPerConv
 
-	for i := 0; i < numConversations; i++ {
+	for i := range numConversations {
 		from := fmt.Sprintf("+%010d", i)
-		for j := 0; j < messagesPerConv; j++ {
+		for j := range messagesPerConv {
 			msg := signal.IncomingMessage{
 				Timestamp: time.Now(),
 				From:      from,
@@ -513,14 +589,18 @@ func enqueueConcurrentTestMessages(t *testing.T, coordinator *Coordinator, numCo
 	return totalMessages
 }
 
-// runConcurrentWorkers runs multiple workers concurrently and tracks processed messages
-func runConcurrentWorkers(t *testing.T, coordinator *Coordinator, numWorkers int) (*sync.Map, *atomic.Int32) {
+// runConcurrentWorkers runs multiple workers concurrently and tracks processed messages.
+func runConcurrentWorkers(
+	t *testing.T,
+	coordinator *queue.Coordinator,
+	numWorkers int,
+) (*sync.Map, *atomic.Int32) {
 	t.Helper()
 	var wg sync.WaitGroup
 	processedMessages := &sync.Map{}
 	duplicates := &atomic.Int32{}
 
-	for w := 0; w < numWorkers; w++ {
+	for w := range numWorkers {
 		wg.Add(1)
 		workerID := fmt.Sprintf("worker%d", w)
 		go processWorkerMessages(t, coordinator, workerID, processedMessages, duplicates, &wg)
@@ -530,14 +610,22 @@ func runConcurrentWorkers(t *testing.T, coordinator *Coordinator, numWorkers int
 	return processedMessages, duplicates
 }
 
-// processWorkerMessages processes messages for a single worker
-func processWorkerMessages(t *testing.T, coordinator *Coordinator, workerID string, processedMessages *sync.Map, duplicates *atomic.Int32, wg *sync.WaitGroup) {
+// processWorkerMessages processes messages for a single worker.
+func processWorkerMessages(
+	t *testing.T,
+	coordinator *queue.Coordinator,
+	workerID string,
+	processedMessages *sync.Map,
+	duplicates *atomic.Int32,
+	wg *sync.WaitGroup,
+) {
+	t.Helper()
 	defer wg.Done()
 
 	for {
 		msg, err := coordinator.GetNext(workerID)
 		if err != nil {
-			if err == context.DeadlineExceeded {
+			if errors.Is(err, context.DeadlineExceeded) {
 				return
 			}
 			t.Errorf("Worker %s failed to get message: %v", workerID, err)
@@ -554,14 +642,19 @@ func processWorkerMessages(t *testing.T, coordinator *Coordinator, workerID stri
 		}
 
 		// Mark as completed
-		if err := coordinator.UpdateState(msg.ID, MessageStateCompleted, "test completed"); err != nil {
-			t.Errorf("Worker %s failed to update state: %v", workerID, err)
+		if updateErr := coordinator.UpdateState(msg.ID, queue.MessageStateCompleted, "test completed"); updateErr != nil {
+			t.Errorf("Worker %s failed to update state: %v", workerID, updateErr)
 		}
 	}
 }
 
-// verifyConcurrentProcessing verifies that all messages were processed exactly once
-func verifyConcurrentProcessing(t *testing.T, processedMessages *sync.Map, duplicates *atomic.Int32, totalMessages int) {
+// verifyConcurrentProcessing verifies that all messages were processed exactly once.
+func verifyConcurrentProcessing(
+	t *testing.T,
+	processedMessages *sync.Map,
+	duplicates *atomic.Int32,
+	totalMessages int,
+) {
 	t.Helper()
 	processedCount := 0
 	processedMessages.Range(func(_, _ any) bool {
@@ -602,22 +695,26 @@ func BenchmarkCoordinator_GetNext(b *testing.B) {
 
 	for _, scenario := range scenarios {
 		b.Run(scenario.name, func(b *testing.B) {
-			coordinator := setupBenchmarkCoordinator(b, scenario.numConversations, scenario.messagesPerConv)
+			coordinator := setupBenchmarkCoordinator(
+				b,
+				scenario.numConversations,
+				scenario.messagesPerConv,
+			)
 			b.ResetTimer()
 			runBenchmarkWorkers(b, coordinator, scenario.numWorkers, scenario.numConversations)
 		})
 	}
 }
 
-// setupBenchmarkCoordinator creates and populates a coordinator for benchmarking
-func setupBenchmarkCoordinator(b *testing.B, numConversations, messagesPerConv int) *Coordinator {
+// setupBenchmarkCoordinator creates and populates a coordinator for benchmarking.
+func setupBenchmarkCoordinator(b *testing.B, numConversations, messagesPerConv int) *queue.Coordinator {
 	b.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	b.Cleanup(func() {
 		cancel()
 	})
 
-	coordinator := NewCoordinator(ctx)
+	coordinator := queue.NewCoordinator(ctx)
 	b.Cleanup(func() {
 		_ = coordinator.Stop()
 	})
@@ -627,12 +724,16 @@ func setupBenchmarkCoordinator(b *testing.B, numConversations, messagesPerConv i
 	return coordinator
 }
 
-// populateBenchmarkQueue fills the queue with test messages
-func populateBenchmarkQueue(b *testing.B, coordinator *Coordinator, numConversations, messagesPerConv int) {
+// populateBenchmarkQueue fills the queue with test messages.
+func populateBenchmarkQueue(
+	b *testing.B,
+	coordinator *queue.Coordinator,
+	numConversations, messagesPerConv int,
+) {
 	b.Helper()
-	for i := 0; i < numConversations; i++ {
+	for i := range numConversations {
 		from := fmt.Sprintf("+%010d", i)
-		for j := 0; j < messagesPerConv; j++ {
+		for j := range messagesPerConv {
 			msg := signal.IncomingMessage{
 				Timestamp: time.Now(),
 				From:      from,
@@ -646,12 +747,12 @@ func populateBenchmarkQueue(b *testing.B, coordinator *Coordinator, numConversat
 	}
 }
 
-// runBenchmarkWorkers runs workers for the benchmark
-func runBenchmarkWorkers(b *testing.B, coordinator *Coordinator, numWorkers, numConversations int) {
+// runBenchmarkWorkers runs workers for the benchmark.
+func runBenchmarkWorkers(b *testing.B, coordinator *queue.Coordinator, numWorkers, numConversations int) {
 	b.Helper()
 	var wg sync.WaitGroup
 
-	for w := 0; w < numWorkers; w++ {
+	for w := range numWorkers {
 		wg.Add(1)
 		workerID := fmt.Sprintf("worker%d", w)
 		go benchmarkWorker(b, coordinator, workerID, numWorkers, numConversations, &wg)
@@ -660,11 +761,18 @@ func runBenchmarkWorkers(b *testing.B, coordinator *Coordinator, numWorkers, num
 	wg.Wait()
 }
 
-// benchmarkWorker processes messages for a single benchmark worker
-func benchmarkWorker(b *testing.B, coordinator *Coordinator, workerID string, numWorkers, numConversations int, wg *sync.WaitGroup) {
+// benchmarkWorker processes messages for a single benchmark worker.
+func benchmarkWorker(
+	b *testing.B,
+	coordinator *queue.Coordinator,
+	workerID string,
+	numWorkers, numConversations int,
+	wg *sync.WaitGroup,
+) {
+	b.Helper()
 	defer wg.Done()
 
-	for i := 0; i < b.N/numWorkers; i++ {
+	for i := range b.N / numWorkers {
 		msg, err := coordinator.GetNext(workerID)
 		if err != nil || msg == nil {
 			// Re-enqueue a message to keep the queue full
@@ -678,6 +786,6 @@ func benchmarkWorker(b *testing.B, coordinator *Coordinator, workerID string, nu
 		}
 
 		// Immediately complete to allow more messages
-		_ = coordinator.UpdateState(msg.ID, MessageStateCompleted, "benchmark")
+		_ = coordinator.UpdateState(msg.ID, queue.MessageStateCompleted, "benchmark")
 	}
 }

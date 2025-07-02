@@ -2,7 +2,7 @@ package signal
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"testing"
@@ -141,7 +141,7 @@ func TestNewHandler(t *testing.T) {
 }
 
 func TestHandlerWithLogger(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(nil, nil))
+	logger := slog.Default()
 	handler, err := NewHandler(
 		newMockMessenger(),
 		newMockQueue(),
@@ -187,7 +187,7 @@ func startHandlerAsync(ctx context.Context, handler *Handler) <-chan error {
 
 func waitForMessages(t *testing.T, q *mockQueue, count int) {
 	t.Helper()
-	for i := 0; i < count; i++ {
+	for range count {
 		select {
 		case <-q.enqueued:
 		case <-time.After(time.Second):
@@ -240,7 +240,7 @@ func TestHandlerStart(t *testing.T) {
 
 	t.Run("subscribe error", func(t *testing.T) {
 		setup := newHandlerTestSetup(t)
-		setup.messenger.subscribeError = errors.New("subscribe failed")
+		setup.messenger.subscribeError = fmt.Errorf("subscribe failed")
 
 		err := setup.handler.Start(context.Background())
 		if err == nil {
@@ -307,7 +307,7 @@ func TestHandlerEnqueueError(t *testing.T) {
 
 	// Set queue to fail
 	q.mu.Lock()
-	q.enqueueError = errors.New("queue full")
+	q.enqueueError = fmt.Errorf("queue full")
 	q.mu.Unlock()
 
 	// Send message that will fail to enqueue
@@ -369,9 +369,9 @@ func TestHandlerChannelClosed(t *testing.T) {
 
 	// Handler should exit gracefully
 	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Errorf("handler returned error: %v", err)
+	case handlerErr := <-errCh:
+		if handlerErr != nil {
+			t.Errorf("handler returned error: %v", handlerErr)
 		}
 	case <-time.After(time.Second):
 		t.Error("handler did not stop after context canceled")
@@ -410,7 +410,7 @@ func TestHandlerIsRunning(t *testing.T) {
 	// Stop handler
 	cancel()
 	// Wait for handler to actually stop
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		if !handler.IsRunning() {
 			break
 		}
@@ -441,9 +441,9 @@ func TestHandlerConcurrentAccess(t *testing.T) {
 
 	// Concurrent operations
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
-		go func(_ int) {
+		go func() {
 			defer wg.Done()
 			// Check running status
 			_ = handler.IsRunning()
@@ -453,7 +453,7 @@ func TestHandlerConcurrentAccess(t *testing.T) {
 				Text:      "Concurrent message",
 				Timestamp: time.Now(),
 			}
-		}(i)
+		}()
 	}
 
 	wg.Wait()
@@ -480,7 +480,7 @@ func BenchmarkHandlerMessageProcessing(b *testing.B) {
 	<-started
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		messenger.messages <- IncomingMessage{
 			From:      "+1234567890",
 			Text:      "Benchmark message",
@@ -489,7 +489,7 @@ func BenchmarkHandlerMessageProcessing(b *testing.B) {
 	}
 
 	// Wait for all messages to be processed
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		select {
 		case <-q.enqueued:
 		case <-time.After(time.Second):

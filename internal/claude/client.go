@@ -10,6 +10,11 @@ import (
 	"github.com/Veraticus/mentat/internal/command"
 )
 
+const (
+	// DefaultTimeout is the default timeout for Claude API calls.
+	DefaultTimeout = 30 * time.Second
+)
+
 // commandRunner interface for command execution (allows mocking in tests).
 type commandRunner interface {
 	RunCommandContext(ctx context.Context, name string, args ...string) (string, error)
@@ -19,7 +24,11 @@ type commandRunner interface {
 type realCommandRunner struct{}
 
 func (r *realCommandRunner) RunCommandContext(ctx context.Context, name string, args ...string) (string, error) {
-	return command.RunCommandContext(ctx, name, args...)
+	output, err := command.RunCommandContext(ctx, name, args...)
+	if err != nil {
+		return "", fmt.Errorf("command execution failed: %w", err)
+	}
+	return output, nil
 }
 
 // Client implements the LLM interface for Claude CLI.
@@ -70,12 +79,12 @@ type jsonUsage struct {
 func NewClient(config Config) (*Client, error) {
 	// Validate configuration
 	if config.Command == "" {
-		return nil, fmt.Errorf("command path is required")
+		return nil, fmt.Errorf("command path cannot be empty")
 	}
 
 	// Set default timeout if not specified
 	if config.Timeout == 0 {
-		config.Timeout = 30 * time.Second
+		config.Timeout = DefaultTimeout
 	}
 
 	return &Client{

@@ -5,6 +5,10 @@ import (
 	"time"
 )
 
+const (
+	testMessage = "Test message"
+)
+
 func TestConfigZeroValue(t *testing.T) {
 	var cfg Config
 
@@ -100,7 +104,7 @@ func TestMessageCreation(t *testing.T) {
 		ID:          "msg-123",
 		Sender:      "+1234567890",
 		Recipient:   "+0987654321",
-		Text:        "Test message",
+		Text:        testMessage,
 		IsDelivered: true,
 		IsRead:      true,
 	}
@@ -117,7 +121,7 @@ func TestMessageCreation(t *testing.T) {
 	if msg.Recipient != "+0987654321" {
 		t.Error("Recipient not set correctly")
 	}
-	if msg.Text != "Test message" {
+	if msg.Text != testMessage {
 		t.Error("Text not set correctly")
 	}
 	if !msg.IsDelivered {
