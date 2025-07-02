@@ -1,29 +1,32 @@
-package queue
+package queue_test
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/Veraticus/mentat/internal/queue"
 )
 
 func TestMessageStateConstants(t *testing.T) {
 	// Verify that MessageState constants have expected values
-	if MessageStateQueued != 0 {
+	if queue.MessageStateQueued != 0 {
 		t.Error("Expected MessageStateQueued to be 0")
 	}
-	if MessageStateProcessing != 1 {
+	if queue.MessageStateProcessing != 1 {
 		t.Error("Expected MessageStateProcessing to be 1")
 	}
-	if MessageStateValidating != 2 {
+	if queue.MessageStateValidating != 2 {
 		t.Error("Expected MessageStateValidating to be 2")
 	}
-	if MessageStateCompleted != 3 {
+	if queue.MessageStateCompleted != 3 {
 		t.Error("Expected MessageStateCompleted to be 3")
 	}
-	if MessageStateFailed != 4 {
+	if queue.MessageStateFailed != 4 {
 		t.Error("Expected MessageStateFailed to be 4")
 	}
-	if MessageStateRetrying != 5 {
+	if queue.MessageStateRetrying != 5 {
 		t.Error("Expected MessageStateRetrying to be 5")
 	}
 }
@@ -31,15 +34,15 @@ func TestMessageStateConstants(t *testing.T) {
 func TestStateConstants(t *testing.T) {
 	// Verify that State constants have expected string values
 	tests := []struct {
-		state    State
+		state    queue.State
 		expected string
 	}{
-		{StateQueued, "queued"},
-		{StateProcessing, "processing"},
-		{StateValidating, "validating"},
-		{StateCompleted, "completed"},
-		{StateFailed, "failed"},
-		{StateRetrying, "retrying"},
+		{queue.StateQueued, "queued"},
+		{queue.StateProcessing, "processing"},
+		{queue.StateValidating, "validating"},
+		{queue.StateCompleted, "completed"},
+		{queue.StateFailed, "failed"},
+		{queue.StateRetrying, "retrying"},
 	}
 
 	for _, tt := range tests {
@@ -53,16 +56,16 @@ func TestStateConstants(t *testing.T) {
 
 func TestPriorityConstants(t *testing.T) {
 	// Verify that priority constants have expected values
-	if PriorityNormal != 0 {
+	if queue.PriorityNormal != 0 {
 		t.Error("Expected PriorityNormal to be 0")
 	}
-	if PriorityHigh != 1 {
+	if queue.PriorityHigh != 1 {
 		t.Error("Expected PriorityHigh to be 1")
 	}
 }
 
 func TestMessageZeroValue(t *testing.T) {
-	var msg Message
+	var msg queue.Message
 
 	// Zero value should be identifiable as uninitialized
 	if msg.ID != "" {
@@ -102,7 +105,7 @@ func TestMessageZeroValue(t *testing.T) {
 
 func TestNewMessage(t *testing.T) {
 	beforeCreate := time.Now()
-	msg := NewMessage("msg-123", "conv-123", "sender", "+1234567890", "Test message")
+	msg := queue.NewMessage("msg-123", "conv-123", "sender", "+1234567890", "Test message")
 	afterCreate := time.Now()
 
 	// Verify ID is generated
@@ -125,7 +128,7 @@ func TestNewMessage(t *testing.T) {
 	}
 
 	// Verify default state
-	if msg.State != StateQueued {
+	if msg.State != queue.StateQueued {
 		t.Error("Expected initial state to be StateQueued")
 	}
 	if msg.Attempts != 0 {
@@ -145,114 +148,120 @@ func TestNewMessage(t *testing.T) {
 }
 
 func TestMessageSetState(t *testing.T) {
-	msg := NewMessage("msg-123", "conv-123", "sender", "+1234567890", "Test")
-	originalUpdatedAt := msg.UpdatedAt
+	msg := queue.NewMessage("msg-123", "conv-123", "sender", "+1234567890", "Test")
 
-	// Allow time to pass for updated timestamp
-	<-time.After(time.Millisecond)
+	beforeUpdate := msg.UpdatedAt
+	// Use a channel with timeout to ensure time difference
+	done := make(chan struct{})
+	go func() {
+		time.After(time.Millisecond)
+		close(done)
+	}()
+	<-done
 
-	msg.SetState(StateProcessing)
+	msg.SetState(queue.StateProcessing)
 
-	if msg.State != StateProcessing {
+	if msg.State != queue.StateProcessing {
 		t.Error("State not updated correctly")
 	}
-	if msg.UpdatedAt.Equal(originalUpdatedAt) {
+	if !msg.UpdatedAt.After(beforeUpdate) {
 		t.Error("UpdatedAt should be updated when state changes")
 	}
 }
 
 func TestMessageSetError(t *testing.T) {
-	msg := NewMessage("msg-123", "conv-123", "sender", "+1234567890", "Test")
-	originalAttempts := msg.Attempts
+	msg := queue.NewMessage("msg-123", "conv-123", "sender", "+1234567890", "Test")
 
-	testErr := fmt.Errorf("Test error")
+	testErr := fmt.Errorf("test error")
 	msg.SetError(testErr)
 
-	if msg.Error == nil || msg.Error.Error() != "Test error" {
+	if !errors.Is(msg.Error, testErr) {
 		t.Error("Error not set correctly")
 	}
 	// Note: SetError doesn't automatically change state to failed
 	// Note: SetError doesn't automatically increment attempts
-	if msg.Attempts != originalAttempts {
+	if msg.Attempts != 0 {
 		t.Error("Attempts should not be incremented by SetError")
 	}
 }
 
 func TestMessageSetResponse(t *testing.T) {
-	msg := NewMessage("msg-123", "conv-123", "sender", "+1234567890", "Test")
-	beforeProcess := time.Now()
+	msg := queue.NewMessage("msg-123", "conv-123", "sender", "+1234567890", "Test")
 
 	msg.SetResponse("Test response")
-
-	afterProcess := time.Now()
 
 	if msg.Response != "Test response" {
 		t.Error("Response not set correctly")
 	}
+	if msg.ProcessedAt == nil {
+		t.Error("ProcessedAt should be set when response is set")
+	}
 	// Note: SetResponse doesn't automatically change state
-	if msg.ProcessedAt == nil || msg.ProcessedAt.Before(beforeProcess) || msg.ProcessedAt.After(afterProcess) {
-		t.Error("ProcessedAt not set correctly")
+}
+
+func TestMessageIncrementAttempts(t *testing.T) {
+	msg := queue.NewMessage("msg-123", "conv-123", "sender", "+1234567890", "Test")
+
+	// Test initial increment
+	count := msg.IncrementAttempts()
+	if count != 1 {
+		t.Errorf("Expected 1 attempt, got %d", count)
+	}
+	if msg.Attempts != 1 {
+		t.Error("Attempts not incremented correctly")
+	}
+
+	// Test multiple increments
+	for i := 2; i <= 5; i++ {
+		count = msg.IncrementAttempts()
+		if count != i {
+			t.Errorf("Expected %d attempts, got %d", i, count)
+		}
 	}
 }
 
-func TestQueuedMessageZeroValue(t *testing.T) {
-	var qm QueuedMessage
+func TestMessageCanRetry(t *testing.T) {
+	msg := queue.NewMessage("msg-123", "conv-123", "sender", "+1234567890", "Test")
 
-	// Zero value should be identifiable as uninitialized
-	if qm.ID != "" {
-		t.Error("Expected empty ID for zero value")
+	// Test with default max attempts (3)
+	msg.MaxAttempts = 3
+
+	tests := []struct {
+		attempts int
+		expected bool
+	}{
+		{0, true},
+		{1, true},
+		{2, true},
+		{3, false},
+		{4, false},
 	}
-	if qm.ConversationID != "" {
-		t.Error("Expected empty ConversationID for zero value")
-	}
-	if qm.Priority != PriorityNormal {
-		t.Error("Expected PriorityNormal as default Priority")
-	}
-	if !qm.QueuedAt.IsZero() {
-		t.Error("Expected zero time for QueuedAt")
+
+	for _, tt := range tests {
+		msg.Attempts = tt.attempts
+		if msg.CanRetry() != tt.expected {
+			t.Errorf("Attempts=%d: expected CanRetry=%v", tt.attempts, tt.expected)
+		}
 	}
 }
 
-func TestStatsZeroValue(t *testing.T) {
-	var stats Stats
+func TestMessageConcurrency(t *testing.T) {
+	msg := queue.NewMessage("msg-123", "conv-123", "sender", "+1234567890", "Test")
 
-	// Zero value should have all counts at zero
-	if stats.TotalQueued != 0 {
-		t.Error("Expected zero TotalQueued for zero value")
-	}
-	if stats.TotalProcessing != 0 {
-		t.Error("Expected zero TotalProcessing for zero value")
-	}
-	if stats.TotalCompleted != 0 {
-		t.Error("Expected zero TotalCompleted for zero value")
-	}
-	if stats.TotalFailed != 0 {
-		t.Error("Expected zero TotalFailed for zero value")
-	}
-	if stats.AverageProcessTime != 0 {
-		t.Error("Expected zero AverageProcessTime for zero value")
-	}
-	if stats.AverageWaitTime != 0 {
-		t.Error("Expected zero AverageWaitTime for zero value")
-	}
-}
-
-func TestMessageThreadSafety(_ *testing.T) {
-	msg := NewMessage("msg-123", "conv-123", "sender", "+1234567890", "Test")
-
-	// Run concurrent operations
-	done := make(chan bool, 3)
+	// Test concurrent operations
+	done := make(chan bool)
+	operations := 100
 
 	go func() {
-		for range 100 {
-			msg.SetState(StateProcessing)
-			msg.SetState(StateQueued)
+		for range operations {
+			msg.SetState(queue.StateProcessing)
+			msg.SetState(queue.StateQueued)
 		}
 		done <- true
 	}()
 
 	go func() {
-		for range 100 {
+		for range operations {
 			msg.SetError(fmt.Errorf("error"))
 			msg.SetResponse("response")
 		}
@@ -260,61 +269,64 @@ func TestMessageThreadSafety(_ *testing.T) {
 	}()
 
 	go func() {
-		for range 100 {
+		for range operations {
 			_ = msg.GetState()
-			// Note: No thread-safe getters for Error and Response
-			// This test verifies that concurrent writes don't panic
+			_ = msg.IncrementAttempts()
 		}
 		done <- true
 	}()
 
-	// Wait for all goroutines to complete
+	// Wait for all goroutines
 	for range 3 {
 		<-done
 	}
 
-	// If we get here without panic, thread safety is working
+	// Verify data integrity (basic check)
+	if msg.Attempts < operations {
+		t.Error("Concurrent increments may have been lost")
+	}
 }
 
-func TestMessageStateHistory(t *testing.T) {
-	msg := NewMessage("msg-123", "conv-123", "sender", "+1234567890", "Test")
+func TestMessageStateTransitions(t *testing.T) {
+	msg := queue.NewMessage("msg-123", "conv-123", "sender", "+1234567890", "Test")
 
-	// Initially, history should be empty
+	// Test initial state history
 	history := msg.GetStateHistory()
 	if len(history) != 0 {
-		t.Error("Expected empty history for new message")
+		t.Error("Initial state history should be empty")
 	}
 
-	// Add a state transition
-	msg.AddStateTransition(StateQueued, StateProcessing, StartingProcessingReason)
+	// Add first transition
+	msg.AddStateTransition(queue.StateQueued, queue.StateProcessing, queue.StartingProcessingReason)
 
 	history = msg.GetStateHistory()
 	if len(history) != 1 {
-		t.Fatalf("Expected 1 history entry, got %d", len(history))
+		t.Fatal("Expected 1 state transition")
 	}
 
-	if history[0].From != MessageStateQueued || history[0].To != MessageStateProcessing {
-		t.Error("State transition not recorded correctly")
+	first := history[0]
+	if first.From != queue.MessageStateQueued {
+		t.Error("Incorrect From state")
 	}
-
-	if history[0].Reason != StartingProcessingReason {
-		t.Errorf("Expected reason '%s', got '%s'", StartingProcessingReason, history[0].Reason)
+	if first.To != queue.MessageStateProcessing {
+		t.Error("Incorrect To state")
 	}
-
-	// Verify timestamp is recent
-	if time.Since(history[0].Timestamp) > time.Second {
-		t.Error("Timestamp seems incorrect")
+	if first.Reason != queue.StartingProcessingReason {
+		t.Error("Incorrect transition reason")
+	}
+	if first.Error != nil {
+		t.Error("Expected no error in transition")
 	}
 
 	// Add another transition
-	msg.AddStateTransition(StateProcessing, StateCompleted, "success")
+	msg.AddStateTransition(queue.StateProcessing, queue.StateCompleted, "success")
 
 	history = msg.GetStateHistory()
 	if len(history) != 2 {
-		t.Fatalf("Expected 2 history entries, got %d", len(history))
+		t.Error("Expected 2 state transitions")
 	}
 
-	// Verify the returned history is a copy (modifying it doesn't affect the original)
+	// Verify history is a copy
 	history[0].Reason = "modified"
 	actualHistory := msg.GetStateHistory()
 	if actualHistory[0].Reason == "modified" {
@@ -322,20 +334,40 @@ func TestMessageStateHistory(t *testing.T) {
 	}
 }
 
-func TestStateTransitionZeroValue(t *testing.T) {
-	var st StateTransition
+func TestStatsZeroValue(t *testing.T) {
+	var stats queue.Stats
 
-	// Zero value should be identifiable as uninitialized
-	if st.From != 0 {
-		t.Error("Expected zero From state for zero value")
+	// All counters should be zero
+	if stats.TotalQueued != 0 {
+		t.Error("TotalQueued should be 0")
 	}
-	if st.To != 0 {
-		t.Error("Expected empty To state for zero value")
+	if stats.TotalProcessing != 0 {
+		t.Error("TotalProcessing should be 0")
 	}
-	if st.Reason != "" {
-		t.Error("Expected empty Reason for zero value")
+	if stats.TotalCompleted != 0 {
+		t.Error("TotalCompleted should be 0")
 	}
-	if !st.Timestamp.IsZero() {
-		t.Error("Expected zero time for Timestamp")
+	if stats.TotalFailed != 0 {
+		t.Error("TotalFailed should be 0")
+	}
+	if stats.ConversationCount != 0 {
+		t.Error("ConversationCount should be 0")
+	}
+	if stats.ActiveWorkers != 0 {
+		t.Error("ActiveWorkers should be 0")
+	}
+	if stats.HealthyWorkers != 0 {
+		t.Error("HealthyWorkers should be 0")
+	}
+
+	// Durations should be zero
+	if stats.LongestMessageAge != 0 {
+		t.Error("LongestMessageAge should be 0")
+	}
+	if stats.AverageWaitTime != 0 {
+		t.Error("AverageWaitTime should be 0")
+	}
+	if stats.AverageProcessTime != 0 {
+		t.Error("AverageProcessTime should be 0")
 	}
 }

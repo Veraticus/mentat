@@ -36,7 +36,7 @@ type HandlerOption func(*handler) error
 // Returns an error if required dependencies are missing.
 func NewHandler(llm claude.LLM, opts ...HandlerOption) (Handler, error) {
 	if llm == nil {
-		return nil, fmt.Errorf("llm is required")
+		return nil, fmt.Errorf("handler creation failed: llm is required")
 	}
 
 	// Initialize with defaults
@@ -59,13 +59,13 @@ func NewHandler(llm claude.LLM, opts ...HandlerOption) (Handler, error) {
 
 	// Validate required dependencies
 	if h.validationStrategy == nil {
-		return nil, fmt.Errorf("validation strategy is required")
+		return nil, fmt.Errorf("handler creation failed: validation strategy is required")
 	}
 	if h.messenger == nil {
-		return nil, fmt.Errorf("messenger is required")
+		return nil, fmt.Errorf("handler creation failed: messenger is required")
 	}
 	if h.sessionManager == nil {
-		return nil, fmt.Errorf("session manager is required")
+		return nil, fmt.Errorf("handler creation failed: session manager is required")
 	}
 
 	return h, nil
@@ -75,7 +75,7 @@ func NewHandler(llm claude.LLM, opts ...HandlerOption) (Handler, error) {
 func WithValidationStrategy(strategy ValidationStrategy) HandlerOption {
 	return func(h *handler) error {
 		if strategy == nil {
-			return fmt.Errorf("validation strategy cannot be nil")
+			return fmt.Errorf("invalid option: validation strategy cannot be nil")
 		}
 		h.validationStrategy = strategy
 		return nil
@@ -86,7 +86,7 @@ func WithValidationStrategy(strategy ValidationStrategy) HandlerOption {
 func WithIntentEnhancer(enhancer IntentEnhancer) HandlerOption {
 	return func(h *handler) error {
 		if enhancer == nil {
-			return fmt.Errorf("intent enhancer cannot be nil")
+			return fmt.Errorf("invalid option: intent enhancer cannot be nil")
 		}
 		h.intentEnhancer = enhancer
 		return nil
@@ -97,7 +97,7 @@ func WithIntentEnhancer(enhancer IntentEnhancer) HandlerOption {
 func WithMessenger(messenger signal.Messenger) HandlerOption {
 	return func(h *handler) error {
 		if messenger == nil {
-			return fmt.Errorf("messenger cannot be nil")
+			return fmt.Errorf("invalid option: messenger cannot be nil")
 		}
 		h.messenger = messenger
 		return nil
@@ -109,10 +109,10 @@ func WithConfig(cfg Config) HandlerOption {
 	return func(h *handler) error {
 		// Validate config
 		if cfg.MaxRetries < 0 {
-			return fmt.Errorf("max retries cannot be negative")
+			return fmt.Errorf("invalid config: max retries cannot be negative")
 		}
 		if cfg.ValidationThreshold < 0 || cfg.ValidationThreshold > 1 {
-			return fmt.Errorf("validation threshold must be between 0 and 1")
+			return fmt.Errorf("invalid config: validation threshold must be between 0 and 1")
 		}
 		h.config = cfg
 		return nil
@@ -123,7 +123,7 @@ func WithConfig(cfg Config) HandlerOption {
 func WithLogger(logger *slog.Logger) HandlerOption {
 	return func(h *handler) error {
 		if logger == nil {
-			return fmt.Errorf("logger cannot be nil")
+			return fmt.Errorf("invalid option: logger cannot be nil")
 		}
 		h.logger = logger
 		return nil
@@ -134,7 +134,7 @@ func WithLogger(logger *slog.Logger) HandlerOption {
 func WithSessionManager(manager conversation.SessionManager) HandlerOption {
 	return func(h *handler) error {
 		if manager == nil {
-			return fmt.Errorf("session manager cannot be nil")
+			return fmt.Errorf("invalid option: session manager cannot be nil")
 		}
 		h.sessionManager = manager
 		return nil

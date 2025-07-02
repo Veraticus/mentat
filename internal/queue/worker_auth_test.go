@@ -1,4 +1,4 @@
-package queue
+package queue_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Veraticus/mentat/internal/claude"
+	"github.com/Veraticus/mentat/internal/queue"
 	"github.com/Veraticus/mentat/internal/signal"
 )
 
@@ -53,27 +54,27 @@ func TestWorkerHandlesAuthenticationError(t *testing.T) {
 	// Create mock components
 	mockLLM := &mockLLMAuth{}
 	mockMessenger := &mockMessengerCapture{}
-	mockQueueMgr := NewManager(ctx)
+	mockQueueMgr := queue.NewManager(ctx)
 
 	// Start queue manager
 	go mockQueueMgr.Start(ctx)
 	<-time.After(100 * time.Millisecond)
 
 	// Create worker config
-	config := WorkerConfig{
+	config := queue.WorkerConfig{
 		ID:                 1,
 		LLM:                mockLLM,
 		Messenger:          mockMessenger,
 		QueueManager:       mockQueueMgr,
-		RateLimiter:        NewRateLimiter(10, 1, time.Minute),
+		RateLimiter:        queue.NewRateLimiter(10, 1, time.Minute),
 		TypingIndicatorMgr: signal.NewTypingIndicatorManager(mockMessenger),
 	}
 
 	// Create worker
-	worker := NewWorker(config)
+	worker := queue.NewWorker(config)
 
 	// Create test message
-	msg := NewMessage("test-123", "+1234567890", "John Doe", "+1234567890", "Hello Claude")
+	msg := queue.NewMessage("test-123", "+1234567890", "John Doe", "+1234567890", "Hello Claude")
 
 	// Submit message to queue
 	if err := mockQueueMgr.Submit(msg); err != nil {
@@ -144,26 +145,26 @@ func TestWorkerAuthErrorNotRetried(t *testing.T) {
 	// Create mock components
 	mockLLM := &mockLLMAuth{}
 	mockMessenger := &mockMessengerCapture{}
-	mockQueueMgr := NewManager(ctx)
+	mockQueueMgr := queue.NewManager(ctx)
 
 	// Start queue manager
 	go mockQueueMgr.Start(ctx)
 	<-time.After(100 * time.Millisecond)
 
 	// Create worker config
-	config := WorkerConfig{
+	config := queue.WorkerConfig{
 		ID:           1,
 		LLM:          mockLLM,
 		Messenger:    mockMessenger,
 		QueueManager: mockQueueMgr,
-		RateLimiter:  NewRateLimiter(10, 1, time.Minute),
+		RateLimiter:  queue.NewRateLimiter(10, 1, time.Minute),
 	}
 
 	// Create worker
-	worker := NewWorker(config)
+	worker := queue.NewWorker(config)
 
 	// Create test message
-	msg := NewMessage("test-456", "+1234567890", "John Doe", "+1234567890", "Test message")
+	msg := queue.NewMessage("test-456", "+1234567890", "John Doe", "+1234567890", "Test message")
 
 	// Submit message to queue
 	if err := mockQueueMgr.Submit(msg); err != nil {

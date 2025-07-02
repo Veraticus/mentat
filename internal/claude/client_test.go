@@ -30,7 +30,7 @@ func TestNewClient(t *testing.T) {
 				Timeout:       30 * time.Second,
 			},
 			wantErr: true,
-			errMsg:  "command path cannot be empty",
+			errMsg:  "client creation failed: command path cannot be empty",
 		},
 		{
 			name: "zero timeout uses default",

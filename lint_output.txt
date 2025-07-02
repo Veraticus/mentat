@@ -1,21 +1,17 @@
 Running linters...
-internal/queue/conversation_queue.go:1: : # github.com/joshsymonds/mentat/internal/queue [github.com/joshsymonds/mentat/internal/queue.test]
-internal/queue/manager.go:137:5: undefined: log
-internal/queue/manager.go:297:3: undefined: log
-internal/queue/manager.go:309:5: undefined: log (typecheck)
-package queue
-internal/storage/interfaces.go:7:2: could not import github.com/joshsymonds/mentat/internal/queue (-: # github.com/joshsymonds/mentat/internal/queue
-internal/queue/manager.go:137:5: undefined: log
-internal/queue/manager.go:297:3: undefined: log
-internal/queue/manager.go:309:5: undefined: log) (typecheck)
-	"github.com/joshsymonds/mentat/internal/queue"
-	^
-internal/testing/mocks.go:12:2: could not import github.com/joshsymonds/mentat/internal/queue (-: # github.com/joshsymonds/mentat/internal/queue
-internal/queue/manager.go:137:5: undefined: log
-internal/queue/manager.go:297:3: undefined: log
-internal/queue/manager.go:309:5: undefined: log) (typecheck)
-	"github.com/joshsymonds/mentat/internal/queue"
-	^
-3 issues:
-* typecheck: 3
-make: *** [Makefile:45: lint] Error 1
+internal/queue/conversation_queue_test.go:1: : # github.com/Veraticus/mentat/internal/queue_test [github.com/Veraticus/mentat/internal/queue.test]
+internal/queue/stats_test.go:12:8: undefined: NewStatsCollector
+internal/queue/stats_test.go:29:12: undefined: State
+internal/queue/stats_test.go:30:12: undefined: State
+internal/queue/stats_test.go:31:37: undefined: Stats
+internal/queue/stats_test.go:35:10: undefined: StateQueued
+internal/queue/stats_test.go:36:10: undefined: StateProcessing
+internal/queue/stats_test.go:37:39: undefined: Stats
+internal/queue/stats_test.go:46:10: undefined: StateProcessing
+internal/queue/stats_test.go:47:10: undefined: StateCompleted
+internal/queue/stats_test.go:48:39: undefined: Stats
+internal/queue/stats_test.go:48:39: too many errors (typecheck)
+package queue_test
+1 issues:
+* typecheck: 1
+make: *** [Makefile:63: lint] Error 1

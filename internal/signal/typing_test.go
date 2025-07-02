@@ -1,4 +1,4 @@
-package signal
+package signal_test
 
 import (
 	"context"
@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Veraticus/mentat/internal/signal"
 )
 
 // mockTypingMessenger tracks typing indicator calls for testing.
@@ -40,7 +42,7 @@ func (m *mockTypingMessenger) Send(_ context.Context, _ string, _ string) error 
 	return nil
 }
 
-func (m *mockTypingMessenger) Subscribe(_ context.Context) (<-chan IncomingMessage, error) {
+func (m *mockTypingMessenger) Subscribe(_ context.Context) (<-chan signal.IncomingMessage, error) {
 	// Not used in these tests
 	return nil, fmt.Errorf("not implemented in mock")
 }
@@ -94,7 +96,7 @@ func TestTypingIndicatorManager_Start(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			messenger := &mockTypingMessenger{}
-			manager := NewTypingIndicatorManager(messenger)
+			manager := signal.NewTypingIndicatorManager(messenger)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 			defer cancel()
@@ -120,7 +122,7 @@ func TestTypingIndicatorManager_Start(t *testing.T) {
 
 func TestTypingIndicatorManager_Stop(t *testing.T) {
 	messenger := &mockTypingMessenger{}
-	manager := NewTypingIndicatorManager(messenger)
+	manager := signal.NewTypingIndicatorManager(messenger)
 
 	ctx := context.Background()
 	recipient := "+1234567890"
@@ -153,7 +155,7 @@ func TestTypingIndicatorManager_Stop(t *testing.T) {
 func TestTypingIndicatorManager_RefreshEvery10Seconds(t *testing.T) {
 	// This test verifies the 10-second refresh interval
 	messenger := &mockTypingMessenger{}
-	manager := NewTypingIndicatorManager(messenger)
+	manager := signal.NewTypingIndicatorManager(messenger)
 
 	ctx := context.Background()
 	recipient := "+1234567890"
@@ -188,7 +190,7 @@ func TestTypingIndicatorManager_RefreshEvery10Seconds(t *testing.T) {
 
 func TestTypingIndicatorManager_MultipleRecipients(t *testing.T) {
 	messenger := &mockTypingMessenger{}
-	manager := NewTypingIndicatorManager(messenger)
+	manager := signal.NewTypingIndicatorManager(messenger)
 
 	ctx := context.Background()
 	recipients := []string{"+1111111111", "+2222222222", "+3333333333"}
@@ -246,7 +248,7 @@ func TestTypingIndicatorManager_MultipleRecipients(t *testing.T) {
 
 func TestTypingIndicatorManager_DuplicateStart(t *testing.T) {
 	messenger := &mockTypingMessenger{}
-	manager := NewTypingIndicatorManager(messenger)
+	manager := signal.NewTypingIndicatorManager(messenger)
 
 	ctx := context.Background()
 	recipient := "+1234567890"
@@ -267,7 +269,7 @@ func TestTypingIndicatorManager_DuplicateStart(t *testing.T) {
 
 func TestTypingIndicatorManager_StopAll(t *testing.T) {
 	messenger := &mockTypingMessenger{}
-	manager := NewTypingIndicatorManager(messenger)
+	manager := signal.NewTypingIndicatorManager(messenger)
 
 	ctx := context.Background()
 	recipients := []string{"+1111111111", "+2222222222", "+3333333333"}
@@ -306,7 +308,7 @@ func TestTypingIndicatorManager_StopAll(t *testing.T) {
 
 func TestTypingIndicatorManager_ContextCancellation(t *testing.T) {
 	messenger := &mockTypingMessenger{}
-	manager := NewTypingIndicatorManager(messenger)
+	manager := signal.NewTypingIndicatorManager(messenger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	recipient := "+1234567890"
@@ -342,7 +344,7 @@ func TestTypingIndicatorManager_ErrorHandling(t *testing.T) {
 	messenger := &mockTypingMessenger{
 		sendTypingError: context.DeadlineExceeded,
 	}
-	manager := NewTypingIndicatorManager(messenger)
+	manager := signal.NewTypingIndicatorManager(messenger)
 
 	ctx := context.Background()
 	recipient := "+1234567890"
@@ -364,7 +366,7 @@ func TestTypingIndicatorManager_ErrorHandling(t *testing.T) {
 
 func TestTypingIndicatorManager_ThreadSafety(t *testing.T) {
 	messenger := &mockTypingMessenger{}
-	manager := NewTypingIndicatorManager(messenger)
+	manager := signal.NewTypingIndicatorManager(messenger)
 
 	ctx := context.Background()
 	var wg sync.WaitGroup
@@ -408,7 +410,7 @@ func TestTypingIndicatorManager_ThreadSafety(t *testing.T) {
 // Benchmarks.
 func BenchmarkTypingIndicatorManager_Start(b *testing.B) {
 	messenger := &mockTypingMessenger{}
-	manager := NewTypingIndicatorManager(messenger)
+	manager := signal.NewTypingIndicatorManager(messenger)
 	ctx := context.Background()
 
 	b.ResetTimer()
@@ -424,7 +426,7 @@ func BenchmarkTypingIndicatorManager_Start(b *testing.B) {
 
 func BenchmarkTypingIndicatorManager_Concurrent(b *testing.B) {
 	messenger := &mockTypingMessenger{}
-	manager := NewTypingIndicatorManager(messenger)
+	manager := signal.NewTypingIndicatorManager(messenger)
 	ctx := context.Background()
 
 	b.ResetTimer()

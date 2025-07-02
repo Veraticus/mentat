@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+const (
+	// typingIndicatorInterval is the interval at which typing indicators are refreshed.
+	typingIndicatorInterval = 10 * time.Second
+)
+
 // TypingIndicatorManager manages typing indicators for multiple recipients.
 type TypingIndicatorManager interface {
 	// Start begins sending typing indicators for a recipient.
@@ -95,12 +100,14 @@ func (m *typingManager) runIndicator(ctx context.Context, recipient string) {
 	// Send initial typing indicator
 	if err := m.messenger.SendTypingIndicator(ctx, recipient); err != nil {
 		logger := slog.Default()
-		logger.ErrorContext(ctx, "Failed to send initial typing indicator", slog.String("recipient", recipient), slog.Any("error", err))
+		logger.ErrorContext(ctx, "Failed to send initial typing indicator",
+			slog.String("recipient", recipient),
+			slog.Any("error", err))
 		// Continue anyway - don't fail the whole operation
 	}
 
 	// Create ticker for periodic updates
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(typingIndicatorInterval)
 	defer ticker.Stop()
 
 	for {
@@ -114,7 +121,9 @@ func (m *typingManager) runIndicator(ctx context.Context, recipient string) {
 			// Send periodic typing indicator
 			if err := m.messenger.SendTypingIndicator(ctx, recipient); err != nil {
 				logger := slog.Default()
-				logger.ErrorContext(ctx, "Failed to send typing indicator", slog.String("recipient", recipient), slog.Any("error", err))
+				logger.ErrorContext(ctx, "Failed to send typing indicator",
+					slog.String("recipient", recipient),
+					slog.Any("error", err))
 				// Don't stop on error - the recipient might come back online
 			}
 		}

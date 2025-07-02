@@ -42,7 +42,7 @@ func (cq *ConversationQueue) Enqueue(msg *Message) error {
 	defer cq.mu.Unlock()
 
 	if msg == nil {
-		return fmt.Errorf("cannot enqueue nil message")
+		return fmt.Errorf("enqueue failed: cannot enqueue nil message")
 	}
 
 	if msg.ConversationID != cq.conversationID {

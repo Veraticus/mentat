@@ -50,7 +50,7 @@ type Manager struct {
 }
 
 // NewManager creates a new queue manager.
-func NewManager(ctx context.Context) *Manager {
+func NewManager(_ context.Context) *Manager {
 	return &Manager{
 		queues:            make(map[string]*ConversationQueue),
 		stateMachine:      NewStateMachine(),
@@ -168,7 +168,7 @@ func (m *Manager) RequestMessage(ctx context.Context) (*Message, error) {
 	case m.requestCh <- respCh:
 		// Request sent
 	case <-ctx.Done():
-		return nil, fmt.Errorf("context cancelled while sending request: %w", ctx.Err())
+		return nil, fmt.Errorf("context canceled while sending request: %w", ctx.Err())
 	case <-m.stopCh:
 		return nil, fmt.Errorf("queue manager shutting down")
 	}
@@ -178,7 +178,7 @@ func (m *Manager) RequestMessage(ctx context.Context) (*Message, error) {
 		// Message state transition is handled by Start() method when dispatching
 		return msg, nil
 	case <-ctx.Done():
-		return nil, fmt.Errorf("context cancelled while waiting for message: %w", ctx.Err())
+		return nil, fmt.Errorf("context canceled while waiting for message: %w", ctx.Err())
 	case <-m.stopCh:
 		return nil, fmt.Errorf("queue manager shutting down")
 	}

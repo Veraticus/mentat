@@ -16,23 +16,23 @@ const (
 	messageIDByteSize = 8
 )
 
-// simpleMessageQueue implements the MessageQueue interface.
-type simpleMessageQueue struct {
+// SimpleMessageQueue implements the MessageQueue interface.
+type SimpleMessageQueue struct {
 	messages     map[string]*Message
 	stateMachine StateMachine
 	mu           sync.RWMutex
 }
 
 // NewMessageQueue creates a new message queue implementation.
-func NewMessageQueue() MessageQueue {
-	return &simpleMessageQueue{
+func NewMessageQueue() *SimpleMessageQueue {
+	return &SimpleMessageQueue{
 		messages:     make(map[string]*Message),
 		stateMachine: NewStateMachine(),
 	}
 }
 
 // Enqueue adds a message to the queue.
-func (q *simpleMessageQueue) Enqueue(msg signal.IncomingMessage) error {
+func (q *SimpleMessageQueue) Enqueue(msg signal.IncomingMessage) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -60,7 +60,7 @@ func (q *simpleMessageQueue) Enqueue(msg signal.IncomingMessage) error {
 }
 
 // GetNext returns the next message for a worker to process.
-func (q *simpleMessageQueue) GetNext(_ string) (*QueuedMessage, error) {
+func (q *SimpleMessageQueue) GetNext(_ string) (*QueuedMessage, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -97,7 +97,7 @@ func (q *simpleMessageQueue) GetNext(_ string) (*QueuedMessage, error) {
 }
 
 // UpdateState marks a message state transition.
-func (q *simpleMessageQueue) UpdateState(msgID string, state MessageState, _ string) error {
+func (q *SimpleMessageQueue) UpdateState(msgID string, state MessageState, _ string) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -147,7 +147,7 @@ func generateMessageID() (string, error) {
 }
 
 // Stats returns queue statistics.
-func (q *simpleMessageQueue) Stats() Stats {
+func (q *SimpleMessageQueue) Stats() Stats {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 

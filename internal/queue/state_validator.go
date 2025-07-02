@@ -12,71 +12,79 @@ type TransitionRule struct {
 	Validate    func(msg *Message) error
 }
 
-// stateValidator provides enhanced validation for state transitions.
-type stateValidator struct {
+// StateValidatorImpl provides enhanced validation for state transitions.
+type StateValidatorImpl struct {
 	rules []TransitionRule
 }
 
 // Validation functions for state transitions.
-var (
-	validateQueuedToProcessing = func(msg *Message) error {
-		if msg.ID == "" {
-			return fmt.Errorf("cannot process message without ID")
-		}
-		if msg.Text == "" {
-			return fmt.Errorf("cannot process empty message")
-		}
-		return nil
-	}
 
-	validateHasResponse = func(msg *Message) error {
-		if msg.Response == "" {
-			return fmt.Errorf("cannot validate without response: message has not been processed")
-		}
-		return nil
+func validateQueuedToProcessing(msg *Message) error {
+	if msg.ID == "" {
+		return fmt.Errorf("cannot process message without ID")
 	}
-
-	validateFailureReason = func(msg *Message) error {
-		// If we can't retry (at max attempts), we can fail without explicit error
-		// If we can retry but have no error, that's invalid
-		if msg.Error == nil && msg.CanRetry() {
-			return fmt.Errorf("cannot fail without error when retries remain")
-		}
-		return nil
+	if msg.Text == "" {
+		return fmt.Errorf("cannot process empty message")
 	}
+	return nil
+}
 
-	validateCanRetry = func(msg *Message) error {
-		if !msg.CanRetry() {
-			return fmt.Errorf("cannot retry: maximum attempts (%d) exceeded", msg.MaxAttempts)
-		}
-		return nil
+func validateHasResponse(msg *Message) error {
+	if msg.Response == "" {
+		return fmt.Errorf("cannot validate without response: message has not been processed")
 	}
+	return nil
+}
 
-	validateCompletionReady = func(msg *Message) error {
-		if msg.Response == "" {
-			return fmt.Errorf("cannot complete without validated response")
-		}
-		if msg.ProcessedAt == nil {
-			return fmt.Errorf("cannot complete without processing timestamp")
-		}
-		return nil
+func validateFailureReason(msg *Message) error {
+	// If we can't retry (at max attempts), we can fail without explicit error
+	// If we can retry but have no error, that's invalid
+	if msg.Error == nil && msg.CanRetry() {
+		return fmt.Errorf("cannot fail without error when retries remain")
 	}
+	return nil
+}
 
-	validateRetryNotExceeded = func(msg *Message) error {
-		if msg.Attempts >= msg.MaxAttempts {
-			return fmt.Errorf(
-				"cannot retry: already attempted %d times (max: %d)",
-				msg.Attempts,
-				msg.MaxAttempts,
-			)
-		}
-		return nil
+func validateCanRetry(msg *Message) error {
+	if !msg.CanRetry() {
+		return fmt.Errorf("cannot retry: maximum attempts (%d) exceeded", msg.MaxAttempts)
 	}
-)
+	return nil
+}
 
-// newStateValidator creates a validator with comprehensive transition rules.
-func newStateValidator() *stateValidator {
-	return &stateValidator{
+func validateCompletionReady(msg *Message) error {
+	if msg.Response == "" {
+		return fmt.Errorf("cannot complete without validated response")
+	}
+	if msg.ProcessedAt == nil {
+		return fmt.Errorf("cannot complete without processing timestamp")
+	}
+	return nil
+}
+
+func validateRetryNotExceeded(msg *Message) error {
+	if msg.Attempts >= msg.MaxAttempts {
+		return fmt.Errorf(
+			"cannot retry: already attempted %d times (max: %d)",
+			msg.Attempts,
+			msg.MaxAttempts,
+		)
+	}
+	return nil
+}
+
+// StateValidator validates state transitions for messages.
+type StateValidator interface {
+	// ValidateTransition checks if a transition is valid for the given message.
+	ValidateTransition(msg *Message, from, to State) error
+
+	// ExplainInvalidTransition provides a human-readable explanation for why a transition is invalid.
+	ExplainInvalidTransition(from, to State) string
+}
+
+// NewStateValidator creates a validator with comprehensive transition rules.
+func NewStateValidator() *StateValidatorImpl {
+	return &StateValidatorImpl{
 		rules: []TransitionRule{
 			{
 				From:        StateQueued,
@@ -130,8 +138,8 @@ func newStateValidator() *stateValidator {
 	}
 }
 
-// validateTransition checks if a transition is valid according to business rules.
-func (v *stateValidator) validateTransition(msg *Message, from, to State) error {
+// ValidateTransition checks if a transition is valid according to business rules.
+func (v *StateValidatorImpl) ValidateTransition(msg *Message, from, to State) error {
 	// Find applicable rule
 	for _, rule := range v.rules {
 		if rule.From == from && rule.To == to {
@@ -146,8 +154,8 @@ func (v *stateValidator) validateTransition(msg *Message, from, to State) error 
 	return nil
 }
 
-// explainInvalidTransition provides detailed explanation for why a transition is not allowed.
-func (v *stateValidator) explainInvalidTransition(from, to State) string {
+// ExplainInvalidTransition provides detailed explanation for why a transition is not allowed.
+func (v *StateValidatorImpl) ExplainInvalidTransition(from, to State) string {
 	// Terminal states
 	if from == StateCompleted {
 		return fmt.Sprintf(

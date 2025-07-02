@@ -349,6 +349,47 @@ func (m *MockRateLimiter) SetAllowed(conversationID string, allowed bool) {
 	m.allowedConvs[conversationID] = allowed
 }
 
+// Wait implements the queue.RateLimiter interface.
+func (m *MockRateLimiter) Wait(_ context.Context, conversationID string) error {
+	if !m.Allow(conversationID) {
+		return fmt.Errorf("rate limit exceeded for conversation %s", conversationID)
+	}
+	return nil
+}
+
+// CleanupStale implements the queue.RateLimiter interface.
+func (m *MockRateLimiter) CleanupStale(maxAge time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// For testing, just clear old records
+	cutoff := time.Now().Add(-maxAge)
+	for convID, records := range m.records {
+		var kept []time.Time
+		for _, t := range records {
+			if t.After(cutoff) {
+				kept = append(kept, t)
+			}
+		}
+		if len(kept) == 0 {
+			delete(m.records, convID)
+		} else {
+			m.records[convID] = kept
+		}
+	}
+}
+
+// Stats implements the queue.RateLimiter interface.
+func (m *MockRateLimiter) Stats() map[string]any {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return map[string]any{
+		"allowed_conversations":  len(m.allowedConvs),
+		"recorded_conversations": len(m.records),
+	}
+}
+
 // MockValidationStrategy is a test implementation of ValidationStrategy.
 type MockValidationStrategy struct {
 	recovery string

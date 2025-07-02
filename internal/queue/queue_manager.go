@@ -200,7 +200,7 @@ func (qm *Coordinator) handleCompletedState(msgID string, msg *Message, queuedMs
 }
 
 // handleFailedState handles the transition to failed state.
-func (qm *Coordinator) handleFailedState(msg *Message, now time.Time) error {
+func (qm *Coordinator) handleFailedState(msg *Message, _ time.Time) error {
 	atomic.AddInt64(&qm.stats.totalProcessing, -1)
 	atomic.AddInt64(&qm.stats.totalFailed, 1)
 

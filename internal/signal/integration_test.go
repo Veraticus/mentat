@@ -1,7 +1,7 @@
 //go:build integration
 // +build integration
 
-package signal
+package signal_test
 
 import (
 	"context"
@@ -10,12 +10,14 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/Veraticus/mentat/internal/signal"
 )
 
 // TestIntegration_ClientWithMockTransport tests the full client flow with mock transport
 func TestIntegration_ClientWithMockTransport(t *testing.T) {
 	// Create mock transport
-	transport := NewMockTransport()
+	transport := signal.NewMockTransport()
 
 	// Set up response for send method
 	transport.SetResponse("send", func() *json.RawMessage {
@@ -24,11 +26,11 @@ func TestIntegration_ClientWithMockTransport(t *testing.T) {
 	}(), nil)
 
 	// Create client
-	client := NewClient(transport)
+	client := signal.NewClient(transport)
 
 	// Test sending a message
 	ctx := context.Background()
-	resp, err := client.Send(ctx, &SendRequest{
+	resp, err := client.Send(ctx, &signal.SendRequest{
 		Recipients: []string{"+1234567890"},
 		Message:    "Integration test message",
 	})
@@ -59,10 +61,10 @@ func TestIntegration_ClientWithMockTransport(t *testing.T) {
 // TestIntegration_SubscriptionFlow tests the full subscription flow
 func TestIntegration_SubscriptionFlow(t *testing.T) {
 	// Create mock transport
-	transport := NewMockTransport()
+	transport := signal.NewMockTransport()
 
 	// Create client
-	client := NewClient(transport)
+	client := signal.NewClient(transport)
 
 	// Subscribe
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -76,7 +78,7 @@ func TestIntegration_SubscriptionFlow(t *testing.T) {
 	// Simulate incoming message
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		transport.SimulateNotification(&Notification{
+		transport.SimulateNotification(&signal.Notification{
 			JSONRPC: "2.0",
 			Method:  "receive",
 			Params: json.RawMessage(`{
@@ -114,16 +116,16 @@ func TestIntegration_SubscriptionFlow(t *testing.T) {
 		if envelope.Source != "+9876543210" {
 			t.Errorf("Expected source '+9876543210', got %s", envelope.Source)
 		}
-		if envelope.DataMessage == nil {
-			t.Fatal("Expected DataMessage to be non-nil")
+		if envelope.signal.DataMessage == nil {
+			t.Fatal("Expected signal.DataMessage to be non-nil")
 		}
-		if envelope.DataMessage.Message != "Hello from integration test" {
-			t.Errorf("Expected message 'Hello from integration test', got %s", envelope.DataMessage.Message)
+		if envelope.signal.DataMessage.Message != "Hello from integration test" {
+			t.Errorf("Expected message 'Hello from integration test', got %s", envelope.signal.DataMessage.Message)
 		}
-		if len(envelope.DataMessage.Attachments) != 1 {
-			t.Errorf("Expected 1 attachment, got %d", len(envelope.DataMessage.Attachments))
+		if len(envelope.signal.DataMessage.Attachments) != 1 {
+			t.Errorf("Expected 1 attachment, got %d", len(envelope.signal.DataMessage.Attachments))
 		} else {
-			att := envelope.DataMessage.Attachments[0]
+			att := envelope.signal.DataMessage.Attachments[0]
 			if att.ContentType != "image/jpeg" {
 				t.Errorf("Expected content type 'image/jpeg', got %s", att.ContentType)
 			}
@@ -139,17 +141,17 @@ func TestIntegration_SubscriptionFlow(t *testing.T) {
 // TestIntegration_ErrorHandling tests error propagation through the stack
 func TestIntegration_ErrorHandling(t *testing.T) {
 	// Create mock transport
-	transport := NewMockTransport()
+	transport := signal.NewMockTransport()
 
 	// Set up error response
 	transport.SetError("send", fmt.Errorf("network error"))
 
 	// Create client
-	client := NewClient(transport)
+	client := signal.NewClient(transport)
 
 	// Try to send a message
 	ctx := context.Background()
-	_, err := client.Send(ctx, &SendRequest{
+	_, err := client.Send(ctx, &signal.SendRequest{
 		Recipients: []string{"+1234567890"},
 		Message:    "This should fail",
 	})
@@ -165,7 +167,7 @@ func TestIntegration_ErrorHandling(t *testing.T) {
 // TestIntegration_ConcurrentOperations tests concurrent client operations
 func TestIntegration_ConcurrentOperations(t *testing.T) {
 	// Create mock transport
-	transport := NewMockTransport()
+	transport := signal.NewMockTransport()
 	transport.SetResponse("send", func() *json.RawMessage {
 		msg := json.RawMessage(`{"timestamp": 1699564800000}`)
 		return &msg
@@ -173,7 +175,7 @@ func TestIntegration_ConcurrentOperations(t *testing.T) {
 	transport.SetResponse("sendTyping", nil, nil)
 
 	// Create client
-	client := NewClient(transport)
+	client := signal.NewClient(transport)
 
 	// Launch concurrent operations
 	ctx := context.Background()
@@ -184,7 +186,7 @@ func TestIntegration_ConcurrentOperations(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		go func(id int) {
 			defer func() { done <- struct{}{} }()
-			_, err := client.Send(ctx, &SendRequest{
+			_, err := client.Send(ctx, &signal.SendRequest{
 				Recipients: []string{fmt.Sprintf("+123456789%d", id)},
 				Message:    fmt.Sprintf("Message %d", id),
 			})
@@ -231,11 +233,11 @@ func TestIntegration_ConcurrentOperations(t *testing.T) {
 // TestIntegration_TypingIndicatorFlow tests typing indicator flow
 func TestIntegration_TypingIndicatorFlow(t *testing.T) {
 	// Create mock transport
-	transport := NewMockTransport()
+	transport := signal.NewMockTransport()
 	transport.SetResponse("sendTyping", nil, nil)
 
 	// Create client
-	client := NewClient(transport)
+	client := signal.NewClient(transport)
 
 	// Send typing start
 	ctx := context.Background()
@@ -286,20 +288,20 @@ func TestIntegration_RealSignalCLI(t *testing.T) {
 	}
 
 	// Create real Unix socket transport
-	transport, err := NewUnixSocketTransport(socketPath)
+	transport, err := signal.NewUnixSocketTransport(socketPath)
 	if err != nil {
 		t.Fatalf("Failed to create transport: %v", err)
 	}
 	defer transport.Close()
 
 	// Create client
-	client := NewClient(transport)
+	client := signal.NewClient(transport)
 
 	// Test sending a message
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	resp, err := client.Send(ctx, &SendRequest{
+	resp, err := client.Send(ctx, &signal.SendRequest{
 		Recipients: []string{recipient},
 		Message:    fmt.Sprintf("Integration test at %s", time.Now().Format(time.RFC3339)),
 	})

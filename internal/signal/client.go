@@ -7,6 +7,13 @@ import (
 	"time"
 )
 
+const (
+	// envelopeChannelBuffer is the buffer size for envelope channels.
+	envelopeChannelBuffer = 10
+	// incomingMessageBuffer is the buffer size for incoming message channels.
+	incomingMessageBuffer = 100
+)
+
 // Client represents a Signal client that communicates via JSON-RPC.
 type Client interface {
 	// Send sends a message to one or more recipients
@@ -137,15 +144,15 @@ type GroupInfo struct {
 	Members []string `json:"members,omitempty"`
 }
 
-// client implements the Client interface.
-type client struct {
+// ClientImpl implements the Client interface.
+type ClientImpl struct {
 	transport Transport
 	account   string // Optional account for multi-account mode
 }
 
 // NewClient creates a new Signal client.
-func NewClient(transport Transport, opts ...ClientOption) Client {
-	c := &client{
+func NewClient(transport Transport, opts ...ClientOption) *ClientImpl {
+	c := &ClientImpl{
 		transport: transport,
 	}
 
@@ -157,17 +164,17 @@ func NewClient(transport Transport, opts ...ClientOption) Client {
 }
 
 // ClientOption configures the client.
-type ClientOption func(*client)
+type ClientOption func(*ClientImpl)
 
 // WithAccount sets the account for multi-account mode.
 func WithAccount(account string) ClientOption {
-	return func(c *client) {
+	return func(c *ClientImpl) {
 		c.account = account
 	}
 }
 
 // Send implements Client.Send.
-func (c *client) Send(ctx context.Context, req *SendRequest) (*SendResponse, error) {
+func (c *ClientImpl) Send(ctx context.Context, req *SendRequest) (*SendResponse, error) {
 	params := make(map[string]any)
 
 	// Add account if in multi-account mode
@@ -221,7 +228,7 @@ func (c *client) Send(ctx context.Context, req *SendRequest) (*SendResponse, err
 }
 
 // SendTypingIndicator implements Client.SendTypingIndicator.
-func (c *client) SendTypingIndicator(ctx context.Context, recipient string, stop bool) error {
+func (c *ClientImpl) SendTypingIndicator(ctx context.Context, recipient string, stop bool) error {
 	params := map[string]any{
 		"recipient": []string{recipient},
 		"stop":      stop,
@@ -239,7 +246,7 @@ func (c *client) SendTypingIndicator(ctx context.Context, recipient string, stop
 }
 
 // SendReceipt implements Client.SendReceipt.
-func (c *client) SendReceipt(
+func (c *ClientImpl) SendReceipt(
 	ctx context.Context,
 	recipient string,
 	timestamp int64,
@@ -263,7 +270,7 @@ func (c *client) SendReceipt(
 }
 
 // Subscribe implements Client.Subscribe.
-func (c *client) Subscribe(ctx context.Context) (<-chan *Envelope, error) {
+func (c *ClientImpl) Subscribe(ctx context.Context) (<-chan *Envelope, error) {
 	// Get notification channel from transport
 	notifications, err := c.transport.Subscribe(ctx)
 	if err != nil {
@@ -271,7 +278,7 @@ func (c *client) Subscribe(ctx context.Context) (<-chan *Envelope, error) {
 	}
 
 	// Create envelope channel
-	envelopes := make(chan *Envelope, 10)
+	envelopes := make(chan *Envelope, envelopeChannelBuffer)
 
 	// Start processing notifications
 	go c.processNotifications(ctx, notifications, envelopes)
@@ -280,7 +287,7 @@ func (c *client) Subscribe(ctx context.Context) (<-chan *Envelope, error) {
 }
 
 // processNotifications handles incoming notifications and converts them to envelopes.
-func (c *client) processNotifications(
+func (c *ClientImpl) processNotifications(
 	ctx context.Context,
 	notifications <-chan *Notification,
 	envelopes chan<- *Envelope,
@@ -301,7 +308,7 @@ func (c *client) processNotifications(
 }
 
 // handleNotification processes a single notification.
-func (c *client) handleNotification(
+func (c *ClientImpl) handleNotification(
 	ctx context.Context,
 	notif *Notification,
 	envelopes chan<- *Envelope,
@@ -324,7 +331,7 @@ func (c *client) handleNotification(
 }
 
 // parseEnvelope extracts an envelope from a notification.
-func (c *client) parseEnvelope(notif *Notification) *Envelope {
+func (c *ClientImpl) parseEnvelope(notif *Notification) *Envelope {
 	var params struct {
 		Envelope *Envelope `json:"envelope"`
 	}
@@ -337,7 +344,7 @@ func (c *client) parseEnvelope(notif *Notification) *Envelope {
 }
 
 // Close implements Client.Close.
-func (c *client) Close() error {
+func (c *ClientImpl) Close() error {
 	if err := c.transport.Close(); err != nil {
 		return fmt.Errorf("failed to close transport: %w", err)
 	}
@@ -385,7 +392,7 @@ type MockReceipt struct {
 // NewMockClient creates a new mock client.
 func NewMockClient() *MockClient {
 	m := &MockClient{
-		incomingMessages: make(chan *Envelope, 100),
+		incomingMessages: make(chan *Envelope, incomingMessageBuffer),
 	}
 
 	// Set default implementations

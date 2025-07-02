@@ -135,7 +135,7 @@ func LoadMCPConfig(path string) (MCPConfig, error) {
 // ValidateMCPConfig validates that an MCP configuration is well-formed.
 func ValidateMCPConfig(config MCPConfig) error {
 	if len(config.MCPServers) == 0 {
-		return fmt.Errorf("no MCP servers configured")
+		return fmt.Errorf("validation failed: no MCP servers configured")
 	}
 
 	for name, server := range config.MCPServers {

@@ -28,7 +28,7 @@ func parseResponse(output string) (*jsonResponse, error) {
 	}
 
 	// If we get here, we have empty or unusable output
-	return nil, fmt.Errorf("claude returned empty or unparseable response")
+	return nil, fmt.Errorf("parse failed: claude returned empty or unparseable response")
 }
 
 // tryParseJSON attempts to parse the output as JSON.
@@ -40,7 +40,7 @@ func tryParseJSON(output string) (*jsonResponse, error) {
 
 	// Check for message in either Message or Result field (Claude Code uses Result)
 	if jsonResp.Message == "" && jsonResp.Result == "" {
-		return nil, fmt.Errorf("claude response missing message/result field")
+		return nil, fmt.Errorf("parse failed: claude response missing message/result field")
 	}
 	return &jsonResp, nil
 }

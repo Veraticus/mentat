@@ -11,6 +11,15 @@ import (
 	"sync/atomic"
 )
 
+const (
+	// unixNotificationChannelBuffer is the buffer size for notification channels.
+	unixNotificationChannelBuffer = 100
+	// maxLineSize is the maximum size of a single line in bytes.
+	maxLineSize = 10 * 1024 * 1024 // 10MB
+	// initialBufferSize is the initial buffer size for the scanner.
+	initialBufferSize = 1024 * 1024 // 1MB
+)
+
 // UnixSocketTransport implements Transport using a UNIX socket.
 type UnixSocketTransport struct {
 	socketPath string
@@ -43,7 +52,7 @@ func NewUnixSocketTransport(socketPath string) (*UnixSocketTransport, error) {
 		socketPath:    socketPath,
 		conn:          conn,
 		pending:       make(map[string]chan *rpcResponse),
-		notifications: make(chan *Notification, 100),
+		notifications: make(chan *Notification, unixNotificationChannelBuffer),
 		cancel:        cancel,
 		done:          make(chan struct{}),
 		stopCh:        make(chan struct{}),
@@ -95,7 +104,7 @@ func (t *UnixSocketTransport) Call(ctx context.Context, method string, params an
 	// Wait for response
 	select {
 	case <-ctx.Done():
-		return nil, fmt.Errorf("context cancelled while waiting for response: %w", ctx.Err())
+		return nil, fmt.Errorf("context canceled while waiting for response: %w", ctx.Err())
 	case resp := <-respChan:
 		if resp.Error != nil {
 			return nil, &RPCError{
@@ -113,7 +122,7 @@ func (t *UnixSocketTransport) readLoop() {
 	defer close(t.done)
 
 	scanner := bufio.NewScanner(t.conn)
-	scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024) // 10MB max
+	scanner.Buffer(make([]byte, initialBufferSize), maxLineSize)
 
 	for scanner.Scan() {
 		select {

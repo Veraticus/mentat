@@ -65,7 +65,7 @@ func (tb *TokenBucket) Wait(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("context cancelled while waiting for rate limit: %w", ctx.Err())
+			return fmt.Errorf("context canceled while waiting for rate limit: %w", ctx.Err())
 		case <-ticker.C:
 			if tb.Allow() {
 				return nil
@@ -98,8 +98,8 @@ func (tb *TokenBucket) refill() {
 	tb.lastRefill = tb.lastRefill.Add(time.Duration(periods) * tb.refillPeriod)
 }
 
-// rateLimiter implements the RateLimiter interface using token buckets.
-type rateLimiter struct {
+// RateLimiterImpl implements the RateLimiter interface using token buckets.
+type RateLimiterImpl struct {
 	buckets      map[string]*TokenBucket
 	capacity     int
 	refillRate   int
@@ -108,8 +108,8 @@ type rateLimiter struct {
 }
 
 // NewRateLimiter creates a new rate limiter with per-conversation token buckets.
-func NewRateLimiter(capacity, refillRate int, refillPeriod time.Duration) RateLimiter {
-	return &rateLimiter{
+func NewRateLimiter(capacity, refillRate int, refillPeriod time.Duration) *RateLimiterImpl {
+	return &RateLimiterImpl{
 		buckets:      make(map[string]*TokenBucket),
 		capacity:     capacity,
 		refillRate:   refillRate,
@@ -118,7 +118,7 @@ func NewRateLimiter(capacity, refillRate int, refillPeriod time.Duration) RateLi
 }
 
 // Allow checks if the conversation can process a message now.
-func (rl *rateLimiter) Allow(conversationID string) bool {
+func (rl *RateLimiterImpl) Allow(conversationID string) bool {
 	rl.mu.Lock()
 	bucket, exists := rl.buckets[conversationID]
 	if !exists {
@@ -131,7 +131,7 @@ func (rl *rateLimiter) Allow(conversationID string) bool {
 }
 
 // Wait blocks until the conversation can process a message.
-func (rl *rateLimiter) Wait(ctx context.Context, conversationID string) error {
+func (rl *RateLimiterImpl) Wait(ctx context.Context, conversationID string) error {
 	rl.mu.Lock()
 	bucket, exists := rl.buckets[conversationID]
 	if !exists {
@@ -144,13 +144,13 @@ func (rl *rateLimiter) Wait(ctx context.Context, conversationID string) error {
 }
 
 // Record marks a conversation as active.
-func (rl *rateLimiter) Record(_ string) {
+func (rl *RateLimiterImpl) Record(_ string) {
 	// This implementation uses token buckets, so recording happens via Allow()
 	// This method exists to satisfy the interface but doesn't need to do anything
 }
 
 // CleanupStale removes token buckets that haven't been used recently.
-func (rl *rateLimiter) CleanupStale(maxAge time.Duration) {
+func (rl *RateLimiterImpl) CleanupStale(maxAge time.Duration) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
@@ -166,7 +166,7 @@ func (rl *rateLimiter) CleanupStale(maxAge time.Duration) {
 }
 
 // Stats returns rate limiter statistics.
-func (rl *rateLimiter) Stats() map[string]any {
+func (rl *RateLimiterImpl) Stats() map[string]any {
 	rl.mu.RLock()
 	defer rl.mu.RUnlock()
 
@@ -187,6 +187,6 @@ func (rl *rateLimiter) Stats() map[string]any {
 
 // DefaultRateLimiter creates a rate limiter with sensible defaults.
 // Allows burst of 5 messages, then 1 message per second.
-func DefaultRateLimiter() RateLimiter {
+func DefaultRateLimiter() *RateLimiterImpl {
 	return NewRateLimiter(defaultBurstSize, 1, time.Second)
 }

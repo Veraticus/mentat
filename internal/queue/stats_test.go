@@ -1,13 +1,15 @@
-package queue
+package queue_test
 
 import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Veraticus/mentat/internal/queue"
 )
 
 func TestStatsCollector_RecordEnqueue(t *testing.T) {
-	sc := NewStatsCollector()
+	sc := queue.NewStatsCollector()
 
 	// Record multiple enqueues
 	for range 10 {
@@ -24,15 +26,15 @@ func TestStatsCollector_StateTransitions(t *testing.T) {
 	// Test various state transitions
 	tests := []struct {
 		name     string
-		from     State
-		to       State
-		validate func(t *testing.T, stats Stats)
+		from     queue.State
+		to       queue.State
+		validate func(t *testing.T, stats queue.Stats)
 	}{
 		{
 			name: "queued to processing",
-			from: StateQueued,
-			to:   StateProcessing,
-			validate: func(t *testing.T, stats Stats) {
+			from: queue.StateQueued,
+			to:   queue.StateProcessing,
+			validate: func(t *testing.T, stats queue.Stats) {
 				t.Helper()
 				if stats.TotalProcessing != 1 {
 					t.Errorf("expected 1 processing, got %d", stats.TotalProcessing)
@@ -41,9 +43,9 @@ func TestStatsCollector_StateTransitions(t *testing.T) {
 		},
 		{
 			name: "processing to completed",
-			from: StateProcessing,
-			to:   StateCompleted,
-			validate: func(t *testing.T, stats Stats) {
+			from: queue.StateProcessing,
+			to:   queue.StateCompleted,
+			validate: func(t *testing.T, stats queue.Stats) {
 				t.Helper()
 				if stats.TotalProcessing != 0 {
 					t.Errorf("expected 0 processing, got %d", stats.TotalProcessing)
@@ -55,9 +57,9 @@ func TestStatsCollector_StateTransitions(t *testing.T) {
 		},
 		{
 			name: "processing to failed",
-			from: StateProcessing,
-			to:   StateFailed,
-			validate: func(t *testing.T, stats Stats) {
+			from: queue.StateProcessing,
+			to:   queue.StateFailed,
+			validate: func(t *testing.T, stats queue.Stats) {
 				t.Helper()
 				if stats.TotalFailed != 1 {
 					t.Errorf("expected 1 failed, got %d", stats.TotalFailed)
@@ -68,7 +70,7 @@ func TestStatsCollector_StateTransitions(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			sc := NewStatsCollector()
+			sc := queue.NewStatsCollector()
 			sc.RecordStateTransition(tc.from, tc.to)
 			stats := sc.GetStats()
 			tc.validate(t, stats)
@@ -77,7 +79,7 @@ func TestStatsCollector_StateTransitions(t *testing.T) {
 }
 
 func TestStatsCollector_TimingStats(t *testing.T) {
-	sc := NewStatsCollector()
+	sc := queue.NewStatsCollector()
 
 	// Record various processing times
 	times := []time.Duration{
@@ -106,7 +108,7 @@ func TestStatsCollector_TimingStats(t *testing.T) {
 }
 
 func TestStatsCollector_ErrorTracking(t *testing.T) {
-	sc := NewStatsCollector()
+	sc := queue.NewStatsCollector()
 
 	// Record different error types
 	errorTypes := []string{
@@ -132,7 +134,7 @@ func TestStatsCollector_ErrorTracking(t *testing.T) {
 }
 
 func TestStatsCollector_RetryDistribution(t *testing.T) {
-	sc := NewStatsCollector()
+	sc := queue.NewStatsCollector()
 
 	// Record retry attempts
 	for i := range 5 {
@@ -161,7 +163,7 @@ func TestStatsCollector_RetryDistribution(t *testing.T) {
 }
 
 func TestStatsCollector_WorkerMetrics(t *testing.T) {
-	sc := NewStatsCollector()
+	sc := queue.NewStatsCollector()
 
 	sc.UpdateWorkerCount(5, 4, 5)
 
@@ -175,7 +177,7 @@ func TestStatsCollector_WorkerMetrics(t *testing.T) {
 }
 
 func TestStatsCollector_ConversationTracking(t *testing.T) {
-	sc := NewStatsCollector()
+	sc := queue.NewStatsCollector()
 
 	// Record activity for different conversations
 	conversations := []string{"conv1", "conv2", "conv3"}
@@ -190,7 +192,7 @@ func TestStatsCollector_ConversationTracking(t *testing.T) {
 }
 
 func TestStatsCollector_ConcurrentAccess(t *testing.T) {
-	sc := NewStatsCollector()
+	sc := queue.NewStatsCollector()
 
 	// Test concurrent access to ensure thread safety
 	var wg sync.WaitGroup
@@ -203,7 +205,7 @@ func TestStatsCollector_ConcurrentAccess(t *testing.T) {
 			defer wg.Done()
 			for j := range iterations {
 				sc.RecordEnqueue()
-				sc.RecordStateTransition(StateQueued, StateProcessing)
+				sc.RecordStateTransition(queue.StateQueued, queue.StateProcessing)
 				sc.RecordProcessingTime(time.Duration(j) * time.Millisecond)
 				sc.RecordError("test_error")
 				sc.RecordRetryAttempt(j % 5)
@@ -233,7 +235,7 @@ func TestStatsCollector_ConcurrentAccess(t *testing.T) {
 }
 
 func TestTimingStats_Percentiles(t *testing.T) {
-	ts := NewTimingStats(100)
+	ts := queue.NewTimingStats(100)
 
 	// Add samples in order for predictable percentiles
 	for i := 1; i <= 100; i++ {
@@ -256,7 +258,7 @@ func TestTimingStats_Percentiles(t *testing.T) {
 }
 
 func TestThroughputTracker_MessagesPerSecond(t *testing.T) {
-	tt := NewThroughputTracker()
+	tt := queue.NewThroughputTracker()
 
 	// Record messages
 	for range 10 {
@@ -274,12 +276,12 @@ func TestThroughputTracker_MessagesPerSecond(t *testing.T) {
 }
 
 func TestStatsCollector_DetailedStats(t *testing.T) {
-	sc := NewStatsCollector()
+	sc := queue.NewStatsCollector()
 
 	// Set up a scenario
 	for i := range 100 {
 		sc.RecordEnqueue()
-		sc.RecordStateTransition(StateQueued, StateProcessing)
+		sc.RecordStateTransition(queue.StateQueued, queue.StateProcessing)
 		sc.RecordProcessingTime(time.Duration(i) * time.Millisecond)
 
 		if i%10 == 0 {
@@ -288,9 +290,9 @@ func TestStatsCollector_DetailedStats(t *testing.T) {
 		}
 
 		if i%2 == 0 {
-			sc.RecordStateTransition(StateProcessing, StateCompleted)
+			sc.RecordStateTransition(queue.StateProcessing, queue.StateCompleted)
 		} else {
-			sc.RecordStateTransition(StateProcessing, StateRetrying)
+			sc.RecordStateTransition(queue.StateProcessing, queue.StateRetrying)
 		}
 	}
 
@@ -322,7 +324,7 @@ func TestStatsCollector_DetailedStats(t *testing.T) {
 }
 
 func TestStatsCollector_QueueDepthCalculation(t *testing.T) {
-	sc := NewStatsCollector()
+	sc := queue.NewStatsCollector()
 
 	// Enqueue 10 messages
 	for range 10 {
@@ -331,12 +333,12 @@ func TestStatsCollector_QueueDepthCalculation(t *testing.T) {
 
 	// Complete 3
 	for range 3 {
-		sc.RecordStateTransition(StateProcessing, StateCompleted)
+		sc.RecordStateTransition(queue.StateProcessing, queue.StateCompleted)
 	}
 
 	// Fail 2
 	for range 2 {
-		sc.RecordStateTransition(StateProcessing, StateFailed)
+		sc.RecordStateTransition(queue.StateProcessing, queue.StateFailed)
 	}
 
 	stats := sc.GetStats()

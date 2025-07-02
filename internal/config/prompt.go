@@ -37,7 +37,7 @@ func LoadSystemPrompt(path string) (string, error) {
 func ValidateSystemPrompt(prompt string) error {
 	trimmed := strings.TrimSpace(prompt)
 	if trimmed == "" {
-		return fmt.Errorf("system prompt is empty")
+		return fmt.Errorf("validation failed: system prompt is empty")
 	}
 	return nil
 }

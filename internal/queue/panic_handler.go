@@ -13,10 +13,16 @@ type PanicHandler interface {
 	HandlePanic(workerID string, panicValue any, stackTrace []byte) bool
 }
 
-// defaultPanicHandler logs panics with stack traces and always replaces workers.
-type defaultPanicHandler struct{}
+// DefaultPanicHandler logs panics with stack traces and always replaces workers.
+type DefaultPanicHandler struct{}
 
-func (h *defaultPanicHandler) HandlePanic(workerID string, panicValue any, stackTrace []byte) bool {
+// NewDefaultPanicHandler returns the default panic handler.
+func NewDefaultPanicHandler() *DefaultPanicHandler {
+	return &DefaultPanicHandler{}
+}
+
+// HandlePanic logs the panic with stack trace and returns true to replace the worker.
+func (h *DefaultPanicHandler) HandlePanic(workerID string, panicValue any, stackTrace []byte) bool {
 	logger := slog.Default()
 	logger.ErrorContext(context.Background(), "PANIC in worker",
 		slog.String("worker_id", workerID),
@@ -25,10 +31,16 @@ func (h *defaultPanicHandler) HandlePanic(workerID string, panicValue any, stack
 	return true // Always replace panicked workers
 }
 
-// noPanicHandler disables panic recovery (useful for tests/debugging).
-type noPanicHandler struct{}
+// NoPanicHandler disables panic recovery (useful for tests/debugging).
+type NoPanicHandler struct{}
 
-func (h *noPanicHandler) HandlePanic(workerID string, panicValue any, _ []byte) bool {
+// NewNoPanicHandler returns a handler that disables panic recovery.
+func NewNoPanicHandler() *NoPanicHandler {
+	return &NoPanicHandler{}
+}
+
+// HandlePanic logs the panic and returns false to not replace the worker.
+func (h *NoPanicHandler) HandlePanic(workerID string, panicValue any, _ []byte) bool {
 	// For debugging, log and return false to not replace the worker
 	logger := slog.Default()
 	logger.ErrorContext(
@@ -40,13 +52,22 @@ func (h *noPanicHandler) HandlePanic(workerID string, panicValue any, _ []byte) 
 	return false
 }
 
-// metricsPanicHandler can be used to track panic metrics.
-type metricsPanicHandler struct {
+// MetricsPanicHandler can be used to track panic metrics.
+type MetricsPanicHandler struct {
 	wrapped PanicHandler
 	onPanic func(workerID string, panicValue any)
 }
 
-func (h *metricsPanicHandler) HandlePanic(workerID string, panicValue any, stackTrace []byte) bool {
+// NewMetricsPanicHandler wraps another handler to add metrics tracking.
+func NewMetricsPanicHandler(wrapped PanicHandler, onPanic func(string, any)) *MetricsPanicHandler {
+	return &MetricsPanicHandler{
+		wrapped: wrapped,
+		onPanic: onPanic,
+	}
+}
+
+// HandlePanic calls the metrics callback and delegates to the wrapped handler.
+func (h *MetricsPanicHandler) HandlePanic(workerID string, panicValue any, stackTrace []byte) bool {
 	if h.onPanic != nil {
 		h.onPanic(workerID, panicValue)
 	}
@@ -54,24 +75,6 @@ func (h *metricsPanicHandler) HandlePanic(workerID string, panicValue any, stack
 		return h.wrapped.HandlePanic(workerID, panicValue, stackTrace)
 	}
 	return true
-}
-
-// NewDefaultPanicHandler returns the default panic handler.
-func NewDefaultPanicHandler() PanicHandler {
-	return &defaultPanicHandler{}
-}
-
-// NewNoPanicHandler returns a handler that disables panic recovery.
-func NewNoPanicHandler() PanicHandler {
-	return &noPanicHandler{}
-}
-
-// NewMetricsPanicHandler wraps another handler to add metrics tracking.
-func NewMetricsPanicHandler(wrapped PanicHandler, onPanic func(string, any)) PanicHandler {
-	return &metricsPanicHandler{
-		wrapped: wrapped,
-		onPanic: onPanic,
-	}
 }
 
 // HandleRecoveredPanic processes a panic that was recovered.

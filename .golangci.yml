@@ -79,6 +79,10 @@ issues:
       - path: cmd/mentat/main\.go
         text: "Non-inherited new context"
         linters: [ contextcheck ]
+        
+      # Disable perfsprint error-format due to forbidigo conflict
+      - text: "fmt\\.Errorf can be replaced with errors\\.New"
+        linters: [ perfsprint ]
 
 # Formatters - automatically fix style issues
 formatters:
@@ -185,7 +189,7 @@ linters:
     - goprintffuncname # Printf-like functions end with 'f'
     
     # Performance
-    - perfsprint      # Optimize fmt.Sprintf usage
+    # - perfsprint      # Disabled due to conflict with forbidigo rules on errors.New
     - intrange        # Use integer ranges (Go 1.22+)
     - mirror          # Correct bytes/strings patterns
     
@@ -495,6 +499,21 @@ linters:
         - io.ReadWriteCloser
         - http.ResponseWriter
         - http.Handler
+        # Project interfaces for dependency injection
+        - github.com/Veraticus/mentat/internal/agent.Handler
+        - github.com/Veraticus/mentat/internal/agent.ValidationStrategy
+        - github.com/Veraticus/mentat/internal/claude.LLM
+        - github.com/Veraticus/mentat/internal/conversation.SessionManager
+        - github.com/Veraticus/mentat/internal/queue.MessageQueue
+        - github.com/Veraticus/mentat/internal/queue.RateLimiter
+        - github.com/Veraticus/mentat/internal/queue.StateMachine
+        - github.com/Veraticus/mentat/internal/queue.StateValidator
+        - github.com/Veraticus/mentat/internal/queue.Worker
+        - github.com/Veraticus/mentat/internal/signal.Client
+        - github.com/Veraticus/mentat/internal/signal.Messenger
+        - github.com/Veraticus/mentat/internal/signal.MessageHandler
+        - github.com/Veraticus/mentat/internal/signal.TypingIndicatorManager
+        - github.com/Veraticus/mentat/internal/storage.Storage
         
     # Error wrapping
     wrapcheck:

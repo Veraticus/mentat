@@ -1,4 +1,4 @@
-package queue
+package queue_test
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Veraticus/mentat/internal/queue"
 	"github.com/Veraticus/mentat/internal/signal"
 )
 
@@ -131,23 +132,23 @@ func testErrorHandlingAndRetry(t *testing.T) {
 // Helper functions
 
 // setupTestSystem creates and starts a queue system for testing.
-func setupTestSystem(t *testing.T) *System {
+func setupTestSystem(t *testing.T) *queue.System {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
 	// Create mock dependencies
-	mockLLM := &mockLLM{
-		response: "Test response",
+	mockLLM := &queue.TestMockLLM{
+		Response: "Test response",
 	}
-	mockMessenger := &mockMessenger{
-		sendFunc: func(_ context.Context, _, _ string) error {
+	mockMessenger := &queue.TestMockMessenger{
+		SendFunc: func(_ context.Context, _, _ string) error {
 			return nil
 		},
 	}
 
 	// Create system configuration
-	config := SystemConfig{
+	config := queue.SystemConfig{
 		WorkerPoolSize:     2,
 		MinWorkers:         1,
 		MaxWorkers:         5,
@@ -158,7 +159,7 @@ func setupTestSystem(t *testing.T) *System {
 	}
 
 	// Create the integrated queue system
-	system, err := NewSystem(ctx, config)
+	system, err := queue.NewSystem(ctx, config)
 	if err != nil {
 		t.Fatalf("Failed to create queue system: %v", err)
 	}
@@ -178,7 +179,7 @@ func setupTestSystem(t *testing.T) *System {
 }
 
 // waitForCompletion waits for a specific number of messages to be completed.
-func waitForCompletion(t *testing.T, system *System, expectedCompleted int, timeout time.Duration) {
+func waitForCompletion(t *testing.T, system *queue.System, expectedCompleted int, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 
@@ -199,7 +200,7 @@ func waitForCompletion(t *testing.T, system *System, expectedCompleted int, time
 }
 
 // enqueueMessages enqueues multiple test messages.
-func enqueueMessages(t *testing.T, system *System, user string, count int) {
+func enqueueMessages(t *testing.T, system *queue.System, user string, count int) {
 	t.Helper()
 	for i := 1; i <= count; i++ {
 		msg := signal.IncomingMessage{

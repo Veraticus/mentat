@@ -1,89 +1,91 @@
-package queue
+package queue_test
 
 import (
 	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/Veraticus/mentat/internal/queue"
 )
 
 func TestStateMachine_Transition(t *testing.T) {
 	tests := []struct {
-		from       State
-		to         State
-		finalState State
+		from       queue.State
+		to         queue.State
+		finalState queue.State
 		name       string
 		wantErr    bool
 	}{
 		// Valid transitions
 		{
 			name:       "queued to processing",
-			from:       StateQueued,
-			to:         StateProcessing,
+			from:       queue.StateQueued,
+			to:         queue.StateProcessing,
 			wantErr:    false,
-			finalState: StateProcessing,
+			finalState: queue.StateProcessing,
 		},
 		{
 			name:       "processing to validating",
-			from:       StateProcessing,
-			to:         StateValidating,
+			from:       queue.StateProcessing,
+			to:         queue.StateValidating,
 			wantErr:    false,
-			finalState: StateValidating,
+			finalState: queue.StateValidating,
 		},
 		{
 			name:       "processing to retrying",
-			from:       StateProcessing,
-			to:         StateRetrying,
+			from:       queue.StateProcessing,
+			to:         queue.StateRetrying,
 			wantErr:    false,
-			finalState: StateRetrying,
+			finalState: queue.StateRetrying,
 		},
 		{
 			name:       "processing to failed when can retry",
-			from:       StateProcessing,
-			to:         StateFailed,
+			from:       queue.StateProcessing,
+			to:         queue.StateFailed,
 			wantErr:    false,
-			finalState: StateRetrying, // Should go to retrying instead
+			finalState: queue.StateRetrying, // Should go to retrying instead
 		},
 		{
 			name:       "validating to completed",
-			from:       StateValidating,
-			to:         StateCompleted,
+			from:       queue.StateValidating,
+			to:         queue.StateCompleted,
 			wantErr:    false,
-			finalState: StateCompleted,
+			finalState: queue.StateCompleted,
 		},
 		{
 			name:       "retrying to processing",
-			from:       StateRetrying,
-			to:         StateProcessing,
+			from:       queue.StateRetrying,
+			to:         queue.StateProcessing,
 			wantErr:    false,
-			finalState: StateProcessing,
+			finalState: queue.StateProcessing,
 		},
 
 		// Invalid transitions
 		{
 			name:    "queued to completed",
-			from:    StateQueued,
-			to:      StateCompleted,
+			from:    queue.StateQueued,
+			to:      queue.StateCompleted,
 			wantErr: true,
 		},
 		{
 			name:    "completed to processing",
-			from:    StateCompleted,
-			to:      StateProcessing,
+			from:    queue.StateCompleted,
+			to:      queue.StateProcessing,
 			wantErr: true,
 		},
 		{
 			name:    "failed to processing",
-			from:    StateFailed,
-			to:      StateProcessing,
+			from:    queue.StateFailed,
+			to:      queue.StateProcessing,
 			wantErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sm := NewStateMachine()
-			msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
+			sm := queue.NewStateMachine()
+			msg := queue.NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
 			msg.SetState(tt.from)
 
 			// Set up message state for validation rules
@@ -110,27 +112,27 @@ func TestStateMachine_Transition(t *testing.T) {
 }
 
 func TestStateMachine_TransitionWithMaxAttempts(t *testing.T) {
-	sm := NewStateMachine()
-	msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
-	msg.SetState(StateProcessing)
+	sm := queue.NewStateMachine()
+	msg := queue.NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
+	msg.SetState(queue.StateProcessing)
 	msg.MaxAttempts = 3
 	msg.Attempts = 3 // Already at max attempts
 
 	// Should go to failed, not retrying
-	err := sm.Transition(msg, StateFailed)
+	err := sm.Transition(msg, queue.StateFailed)
 	if err != nil {
 		t.Errorf("Transition() unexpected error: %v", err)
 	}
 
-	if msg.GetState() != StateFailed {
-		t.Errorf("Expected state %s, got %s", StateFailed, msg.GetState())
+	if msg.GetState() != queue.StateFailed {
+		t.Errorf("Expected state %s, got %s", queue.StateFailed, msg.GetState())
 	}
 }
 
 func TestStateMachine_TransitionNilMessage(t *testing.T) {
-	sm := NewStateMachine()
+	sm := queue.NewStateMachine()
 
-	err := sm.Transition(nil, StateProcessing)
+	err := sm.Transition(nil, queue.StateProcessing)
 	if err == nil {
 		t.Error("Expected error for nil message")
 	}
@@ -139,32 +141,32 @@ func TestStateMachine_TransitionNilMessage(t *testing.T) {
 func TestStateMachine_CanTransition(t *testing.T) {
 	tests := []struct {
 		name string
-		from State
-		to   State
+		from queue.State
+		to   queue.State
 		want bool
 	}{
 		// Valid transitions
-		{"queued to processing", StateQueued, StateProcessing, true},
-		{"processing to validating", StateProcessing, StateValidating, true},
-		{"processing to retrying", StateProcessing, StateRetrying, true},
-		{"processing to failed", StateProcessing, StateFailed, true},
-		{"validating to completed", StateValidating, StateCompleted, true},
-		{"validating to retrying", StateValidating, StateRetrying, true},
-		{"validating to failed", StateValidating, StateFailed, true},
-		{"retrying to processing", StateRetrying, StateProcessing, true},
+		{"queued to processing", queue.StateQueued, queue.StateProcessing, true},
+		{"processing to validating", queue.StateProcessing, queue.StateValidating, true},
+		{"processing to retrying", queue.StateProcessing, queue.StateRetrying, true},
+		{"processing to failed", queue.StateProcessing, queue.StateFailed, true},
+		{"validating to completed", queue.StateValidating, queue.StateCompleted, true},
+		{"validating to retrying", queue.StateValidating, queue.StateRetrying, true},
+		{"validating to failed", queue.StateValidating, queue.StateFailed, true},
+		{"retrying to processing", queue.StateRetrying, queue.StateProcessing, true},
 
 		// Invalid transitions
-		{"queued to completed", StateQueued, StateCompleted, false},
-		{"queued to failed", StateQueued, StateFailed, false},
-		{"completed to any", StateCompleted, StateProcessing, false},
-		{"failed to any", StateFailed, StateProcessing, false},
-		{"processing to queued", StateProcessing, StateQueued, false},
+		{"queued to completed", queue.StateQueued, queue.StateCompleted, false},
+		{"queued to failed", queue.StateQueued, queue.StateFailed, false},
+		{"completed to any", queue.StateCompleted, queue.StateProcessing, false},
+		{"failed to any", queue.StateFailed, queue.StateProcessing, false},
+		{"processing to queued", queue.StateProcessing, queue.StateQueued, false},
 
 		// Unknown states
-		{"unknown from state", State("unknown"), StateProcessing, false},
+		{"unknown from state", queue.State("unknown"), queue.StateProcessing, false},
 	}
 
-	sm := NewStateMachine()
+	sm := queue.NewStateMachine()
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -176,15 +178,15 @@ func TestStateMachine_CanTransition(t *testing.T) {
 }
 
 func TestStateMachine_RetryingIncrementsAttempts(t *testing.T) {
-	sm := NewStateMachine()
-	msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
+	sm := queue.NewStateMachine()
+	msg := queue.NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
 
 	// Start in retrying state
-	msg.SetState(StateRetrying)
+	msg.SetState(queue.StateRetrying)
 	initialAttempts := msg.Attempts
 
 	// Transition to processing
-	err := sm.Transition(msg, StateProcessing)
+	err := sm.Transition(msg, queue.StateProcessing)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -196,8 +198,8 @@ func TestStateMachine_RetryingIncrementsAttempts(t *testing.T) {
 }
 
 func TestStateMachine_ConcurrentTransitions(t *testing.T) {
-	sm := NewStateMachine()
-	msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
+	sm := queue.NewStateMachine()
+	msg := queue.NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
 
 	// Run multiple goroutines trying to transition
 	done := make(chan bool, 10)
@@ -208,7 +210,7 @@ func TestStateMachine_ConcurrentTransitions(t *testing.T) {
 			defer func() { done <- true }()
 
 			// Try valid transition
-			err := sm.Transition(msg, StateProcessing)
+			err := sm.Transition(msg, queue.StateProcessing)
 			if err == nil {
 				atomic.AddInt32(&successCount, 1)
 			} else if !strings.Contains(err.Error(), "invalid transition") &&
@@ -230,14 +232,14 @@ func TestStateMachine_ConcurrentTransitions(t *testing.T) {
 	}
 
 	// Message should be in processing state
-	if msg.GetState() != StateProcessing {
-		t.Errorf("Expected state %s, got %s", StateProcessing, msg.GetState())
+	if msg.GetState() != queue.StateProcessing {
+		t.Errorf("Expected state %s, got %s", queue.StateProcessing, msg.GetState())
 	}
 }
 
 func TestStateMachine_StateHistory(t *testing.T) {
-	sm := NewStateMachine()
-	msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
+	sm := queue.NewStateMachine()
+	msg := queue.NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
 
 	// Initial state should have no history
 	history := msg.GetStateHistory()
@@ -246,7 +248,7 @@ func TestStateMachine_StateHistory(t *testing.T) {
 	}
 
 	// Transition from queued to processing
-	err := sm.Transition(msg, StateProcessing)
+	err := sm.Transition(msg, queue.StateProcessing)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -256,20 +258,20 @@ func TestStateMachine_StateHistory(t *testing.T) {
 		t.Fatalf("Expected 1 history entry, got %d", len(history))
 	}
 
-	if history[0].From != MessageStateQueued || history[0].To != MessageStateProcessing {
+	if history[0].From != queue.MessageStateQueued || history[0].To != queue.MessageStateProcessing {
 		t.Errorf("Expected transition from %d to %d, got from %d to %d",
-			MessageStateQueued, MessageStateProcessing, history[0].From, history[0].To)
+			queue.MessageStateQueued, queue.MessageStateProcessing, history[0].From, history[0].To)
 	}
 
-	if history[0].Reason != StartingProcessingReason {
-		t.Errorf("Expected reason '%s', got '%s'", StartingProcessingReason, history[0].Reason)
+	if history[0].Reason != queue.StartingProcessingReason {
+		t.Errorf("Expected reason '%s', got '%s'", queue.StartingProcessingReason, history[0].Reason)
 	}
 
 	// Set response before validating
 	msg.SetResponse("test response")
 
 	// Transition to validating
-	err = sm.Transition(msg, StateValidating)
+	err = sm.Transition(msg, queue.StateValidating)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -284,7 +286,7 @@ func TestStateMachine_StateHistory(t *testing.T) {
 	}
 
 	// Transition to completed
-	err = sm.Transition(msg, StateCompleted)
+	err = sm.Transition(msg, queue.StateCompleted)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -300,9 +302,9 @@ func TestStateMachine_StateHistory(t *testing.T) {
 }
 
 func TestStateMachine_RetryHistory(t *testing.T) {
-	sm := NewStateMachine()
-	msg := NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
-	msg.SetState(StateProcessing)
+	sm := queue.NewStateMachine()
+	msg := queue.NewMessage("test-id", "conv-1", "sender", "+1234567890", "test message")
+	msg.SetState(queue.StateProcessing)
 	msg.MaxAttempts = 3
 	msg.Attempts = 1
 
@@ -310,14 +312,14 @@ func TestStateMachine_RetryHistory(t *testing.T) {
 	msg.SetError(fmt.Errorf("processing failed"))
 
 	// Simulate a failure that should trigger retry
-	err := sm.Transition(msg, StateFailed)
+	err := sm.Transition(msg, queue.StateFailed)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
 	// Should have transitioned to retrying, not failed
-	if msg.GetState() != StateRetrying {
-		t.Errorf("Expected state %s, got %s", StateRetrying, msg.GetState())
+	if msg.GetState() != queue.StateRetrying {
+		t.Errorf("Expected state %s, got %s", queue.StateRetrying, msg.GetState())
 	}
 
 	history := msg.GetStateHistory()
@@ -331,7 +333,7 @@ func TestStateMachine_RetryHistory(t *testing.T) {
 	}
 
 	// Transition back to processing for retry
-	err = sm.Transition(msg, StateProcessing)
+	err = sm.Transition(msg, queue.StateProcessing)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -353,19 +355,19 @@ func TestStateMachine_RetryHistory(t *testing.T) {
 }
 
 func TestStateMachine_IsTerminal(t *testing.T) {
-	sm := NewStateMachine()
+	sm := queue.NewStateMachine()
 
 	tests := []struct {
 		name     string
-		state    State
+		state    queue.State
 		terminal bool
 	}{
-		{"completed is terminal", StateCompleted, true},
-		{"failed is terminal", StateFailed, true},
-		{"queued is not terminal", StateQueued, false},
-		{"processing is not terminal", StateProcessing, false},
-		{"validating is not terminal", StateValidating, false},
-		{"retrying is not terminal", StateRetrying, false},
+		{"completed is terminal", queue.StateCompleted, true},
+		{"failed is terminal", queue.StateFailed, true},
+		{"queued is not terminal", queue.StateQueued, false},
+		{"processing is not terminal", queue.StateProcessing, false},
+		{"validating is not terminal", queue.StateValidating, false},
+		{"retrying is not terminal", queue.StateRetrying, false},
 	}
 
 	for _, tt := range tests {

@@ -1,13 +1,15 @@
-package queue
+package queue_test
 
 import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/Veraticus/mentat/internal/queue"
 )
 
 func TestDefaultPanicHandler(t *testing.T) {
-	handler := NewDefaultPanicHandler()
+	handler := queue.NewDefaultPanicHandler()
 
 	// Test panic handling
 	shouldReplace := handler.HandlePanic("test-worker", "test panic", []byte("stack trace here"))
@@ -19,7 +21,7 @@ func TestDefaultPanicHandler(t *testing.T) {
 }
 
 func TestNoPanicHandler(t *testing.T) {
-	handler := NewNoPanicHandler()
+	handler := queue.NewNoPanicHandler()
 
 	// Should re-panic
 	defer func() {
@@ -49,7 +51,7 @@ func TestMetricsPanicHandler(t *testing.T) {
 	}
 
 	// Test with wrapped default handler
-	handler := NewMetricsPanicHandler(NewDefaultPanicHandler(), onPanic)
+	handler := queue.NewMetricsPanicHandler(queue.NewDefaultPanicHandler(), onPanic)
 
 	shouldReplace := handler.HandlePanic("worker-1", "panic 1", []byte("stack"))
 	if !shouldReplace {
@@ -77,13 +79,13 @@ func TestHandleRecoveredPanic(t *testing.T) {
 	tests := []struct {
 		name          string
 		panicValue    any
-		handler       PanicHandler
+		handler       queue.PanicHandler
 		expectReplace bool
 	}{
 		{
 			name:          "default handler always replaces",
 			panicValue:    "test panic",
-			handler:       NewDefaultPanicHandler(),
+			handler:       queue.NewDefaultPanicHandler(),
 			expectReplace: true,
 		},
 		{
@@ -105,7 +107,7 @@ func TestHandleRecoveredPanic(t *testing.T) {
 			// Note: With slog, we don't need to capture output as it's structured logging
 			// The default handler will log via slog which can be configured separately
 
-			shouldReplace := HandleRecoveredPanic("test-worker", tt.panicValue, tt.handler)
+			shouldReplace := queue.HandleRecoveredPanic("test-worker", tt.panicValue, tt.handler)
 
 			if shouldReplace != tt.expectReplace {
 				t.Errorf("Expected replace=%v, got %v", tt.expectReplace, shouldReplace)
@@ -129,7 +131,7 @@ func TestPanicHandlerIntegration(t *testing.T) {
 			}
 		}()
 
-		handler := NewNoPanicHandler()
+		handler := queue.NewNoPanicHandler()
 		// This should panic
 		handler.HandlePanic("test-worker", "test panic", []byte("stack"))
 	})
@@ -139,7 +141,7 @@ func TestPanicHandlerIntegration(t *testing.T) {
 		customHandler := &customPanicHandler{shouldReplace: false}
 
 		// Handler should track panics
-		shouldReplace := HandleRecoveredPanic("worker-1", "panic 1", customHandler)
+		shouldReplace := queue.HandleRecoveredPanic("worker-1", "panic 1", customHandler)
 		if shouldReplace {
 			t.Error("Custom handler should return false")
 		}
@@ -149,7 +151,7 @@ func TestPanicHandlerIntegration(t *testing.T) {
 		}
 
 		// Multiple panics should be tracked
-		HandleRecoveredPanic("worker-2", "panic 2", customHandler)
+		queue.HandleRecoveredPanic("worker-2", "panic 2", customHandler)
 		if len(customHandler.panics) != 2 {
 			t.Errorf("Expected 2 panics tracked, got %d", len(customHandler.panics))
 		}

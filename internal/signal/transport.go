@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+const (
+	// notificationChannelBuffer is the buffer size for notification channels.
+	notificationChannelBuffer = 100
+)
+
 // Transport represents the underlying connection to signal-cli.
 type Transport interface {
 	// Call makes a JSON-RPC call
@@ -57,7 +62,7 @@ func NewMockTransport() *MockTransport {
 	return &MockTransport{
 		responses:     make(map[string]*mockResponse),
 		calls:         make(map[string][]any),
-		notifications: make(chan *Notification, 100),
+		notifications: make(chan *Notification, notificationChannelBuffer),
 		delays:        make(map[string]time.Duration),
 	}
 }
@@ -103,7 +108,7 @@ func (m *MockTransport) Call(ctx context.Context, method string, params any) (*j
 	if delay > 0 {
 		select {
 		case <-ctx.Done():
-			return nil, fmt.Errorf("context cancelled during mock delay: %w", ctx.Err())
+			return nil, fmt.Errorf("context canceled during mock delay: %w", ctx.Err())
 		case <-time.After(delay):
 		}
 	}
@@ -111,7 +116,7 @@ func (m *MockTransport) Call(ctx context.Context, method string, params any) (*j
 	// Check context before returning
 	select {
 	case <-ctx.Done():
-		return nil, fmt.Errorf("context cancelled before returning response: %w", ctx.Err())
+		return nil, fmt.Errorf("context canceled before returning response: %w", ctx.Err())
 	default:
 	}
 

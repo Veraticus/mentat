@@ -1,4 +1,4 @@
-package queue
+package queue_test
 
 import (
 	"context"
@@ -11,11 +11,12 @@ import (
 	"time"
 
 	"github.com/Veraticus/mentat/internal/claude"
+	"github.com/Veraticus/mentat/internal/queue"
 	"github.com/Veraticus/mentat/internal/signal"
 )
 
 // mockLLM implements the LLM interface for testing.
-type mockLLM struct {
+type workerMockLLM struct {
 	err       error
 	response  string
 	queries   []string
@@ -24,7 +25,7 @@ type mockLLM struct {
 	queryFunc func(ctx context.Context, prompt string, sessionID string) (*claude.LLMResponse, error)
 }
 
-func (m *mockLLM) Query(ctx context.Context, prompt string, sessionID string) (*claude.LLMResponse, error) {
+func (m *workerMockLLM) Query(ctx context.Context, prompt string, sessionID string) (*claude.LLMResponse, error) {
 	if m.queryFunc != nil {
 		return m.queryFunc(ctx, prompt, sessionID)
 	}
@@ -37,7 +38,7 @@ func (m *mockLLM) Query(ctx context.Context, prompt string, sessionID string) (*
 		select {
 		case <-time.After(m.delay):
 		case <-ctx.Done():
-			return nil, fmt.Errorf("context cancelled during mock LLM delay: %w", ctx.Err())
+			return nil, fmt.Errorf("context canceled during mock LLM delay: %w", ctx.Err())
 		}
 	}
 
@@ -52,7 +53,7 @@ func (m *mockLLM) Query(ctx context.Context, prompt string, sessionID string) (*
 }
 
 // mockMessenger implements the Messenger interface for testing.
-type mockMessenger struct {
+type workerMockMessenger struct {
 	sendErr      error
 	typingErr    error
 	incomingCh   chan signal.IncomingMessage
@@ -67,7 +68,7 @@ type sentMessage struct {
 	message   string
 }
 
-func (m *mockMessenger) Send(ctx context.Context, recipient string, message string) error {
+func (m *workerMockMessenger) Send(ctx context.Context, recipient string, message string) error {
 	m.mu.Lock()
 	sendFunc := m.sendFunc
 	m.mu.Unlock()
@@ -82,14 +83,14 @@ func (m *mockMessenger) Send(ctx context.Context, recipient string, message stri
 	return m.sendErr
 }
 
-func (m *mockMessenger) Subscribe(_ context.Context) (<-chan signal.IncomingMessage, error) {
+func (m *workerMockMessenger) Subscribe(_ context.Context) (<-chan signal.IncomingMessage, error) {
 	if m.incomingCh == nil {
 		m.incomingCh = make(chan signal.IncomingMessage)
 	}
 	return m.incomingCh, nil
 }
 
-func (m *mockMessenger) SendTypingIndicator(_ context.Context, _ string) error {
+func (m *workerMockMessenger) SendTypingIndicator(_ context.Context, _ string) error {
 	atomic.AddInt32(&m.typingCount, 1)
 	return m.typingErr
 }
@@ -98,10 +99,10 @@ func TestWorker_ProcessSuccess(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup mocks
-	llm := &mockLLM{response: "Hello from Claude!"}
-	messenger := &mockMessenger{}
-	queueMgr := NewManager(ctx)
-	rateLimiter := NewRateLimiter(10, 1, time.Second)
+	llm := &workerMockLLM{response: "Hello from Claude!"}
+	messenger := &workerMockMessenger{}
+	queueMgr := queue.NewManager(ctx)
+	rateLimiter := queue.NewRateLimiter(10, 1, time.Second)
 
 	// Start queue manager
 	go queueMgr.Start(ctx)
@@ -112,21 +113,17 @@ func TestWorker_ProcessSuccess(t *testing.T) {
 	}()
 
 	// Create worker
-	config := WorkerConfig{
+	config := queue.WorkerConfig{
 		ID:           1,
 		LLM:          llm,
 		Messenger:    messenger,
 		QueueManager: queueMgr,
 		RateLimiter:  rateLimiter,
 	}
-	w := NewWorker(config)
-	worker, ok := w.(*worker)
-	if !ok {
-		t.Fatal("NewWorker did not return *worker")
-	}
+	worker := queue.NewWorker(config)
 
 	// Create and submit message to queue first
-	msg := NewMessage("msg-1", "conv-1", "user123", "+1234567890", "Hello Claude")
+	msg := queue.NewMessage("msg-1", "conv-1", "user123", "+1234567890", "Hello Claude")
 	if err := queueMgr.Submit(msg); err != nil {
 		t.Fatalf("Failed to submit message: %v", err)
 	}
@@ -140,7 +137,7 @@ func TestWorker_ProcessSuccess(t *testing.T) {
 	// Add a small delay to LLM to ensure typing indicator starts
 	llm.delay = 20 * time.Millisecond
 
-	err = worker.Process(ctx, reqMsg)
+	err = queue.ProcessTestMessage(ctx, worker, reqMsg)
 	if err != nil {
 		t.Fatalf("Process failed: %v", err)
 	}
@@ -162,8 +159,8 @@ func TestWorker_ProcessSuccess(t *testing.T) {
 	}
 
 	// Verify message state
-	if msg.GetState() != StateCompleted {
-		t.Errorf("Expected state %s, got %s", StateCompleted, msg.GetState())
+	if msg.GetState() != queue.StateCompleted {
+		t.Errorf("Expected state %s, got %s", queue.StateCompleted, msg.GetState())
 	}
 	if msg.Response != "Hello from Claude!" {
 		t.Errorf("Expected response saved in message")
@@ -180,10 +177,10 @@ func TestWorker_ProcessLLMError(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup mocks with LLM error
-	llm := &mockLLM{err: fmt.Errorf("LLM unavailable")}
-	messenger := &mockMessenger{}
-	queueMgr := NewManager(ctx)
-	rateLimiter := NewRateLimiter(10, 1, time.Second)
+	llm := &workerMockLLM{err: fmt.Errorf("LLM unavailable")}
+	messenger := &workerMockMessenger{}
+	queueMgr := queue.NewManager(ctx)
+	rateLimiter := queue.NewRateLimiter(10, 1, time.Second)
 
 	// Start queue manager
 	go queueMgr.Start(ctx)
@@ -194,21 +191,17 @@ func TestWorker_ProcessLLMError(t *testing.T) {
 	}()
 
 	// Create worker
-	config := WorkerConfig{
+	config := queue.WorkerConfig{
 		ID:           1,
 		LLM:          llm,
 		Messenger:    messenger,
 		QueueManager: queueMgr,
 		RateLimiter:  rateLimiter,
 	}
-	w := NewWorker(config)
-	worker, ok := w.(*worker)
-	if !ok {
-		t.Fatal("NewWorker did not return *worker")
-	}
+	worker := queue.NewWorker(config)
 
 	// Create and submit message to queue first
-	msg := NewMessage("msg-1", "conv-1", "user123", "+1234567890", "Hello")
+	msg := queue.NewMessage("msg-1", "conv-1", "user123", "+1234567890", "Hello")
 	msg.MaxAttempts = 3
 	if err := queueMgr.Submit(msg); err != nil {
 		t.Fatalf("Failed to submit message: %v", err)
@@ -220,14 +213,14 @@ func TestWorker_ProcessLLMError(t *testing.T) {
 		t.Fatalf("Failed to get message from queue: %v", err)
 	}
 
-	err = worker.Process(ctx, reqMsg)
+	err = queue.ProcessTestMessage(ctx, worker, reqMsg)
 	if err == nil {
 		t.Fatal("Expected error from Process")
 	}
 
 	// Verify message can retry
-	if reqMsg.GetState() != StateRetrying {
-		t.Errorf("Expected state %s, got %s", StateRetrying, reqMsg.GetState())
+	if reqMsg.GetState() != queue.StateRetrying {
+		t.Errorf("Expected state %s, got %s", queue.StateRetrying, reqMsg.GetState())
 	}
 
 	// Verify no response was sent
@@ -240,10 +233,10 @@ func TestWorker_ProcessMaxRetries(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup mocks
-	llm := &mockLLM{err: fmt.Errorf("LLM error")}
-	messenger := &mockMessenger{}
-	queueMgr := NewManager(ctx)
-	rateLimiter := NewRateLimiter(10, 1, time.Second)
+	llm := &workerMockLLM{err: fmt.Errorf("LLM error")}
+	messenger := &workerMockMessenger{}
+	queueMgr := queue.NewManager(ctx)
+	rateLimiter := queue.NewRateLimiter(10, 1, time.Second)
 
 	// Start queue manager
 	go queueMgr.Start(ctx)
@@ -254,21 +247,17 @@ func TestWorker_ProcessMaxRetries(t *testing.T) {
 	}()
 
 	// Create worker
-	config := WorkerConfig{
+	config := queue.WorkerConfig{
 		ID:           1,
 		LLM:          llm,
 		Messenger:    messenger,
 		QueueManager: queueMgr,
 		RateLimiter:  rateLimiter,
 	}
-	w := NewWorker(config)
-	worker, ok := w.(*worker)
-	if !ok {
-		t.Fatal("NewWorker did not return *worker")
-	}
+	worker := queue.NewWorker(config)
 
 	// Create message at max attempts
-	msg := NewMessage("msg-1", "conv-1", "user123", "+1234567890", "Hello")
+	msg := queue.NewMessage("msg-1", "conv-1", "user123", "+1234567890", "Hello")
 	msg.MaxAttempts = 3
 	msg.Attempts = 3
 	if err := queueMgr.Submit(msg); err != nil {
@@ -281,14 +270,14 @@ func TestWorker_ProcessMaxRetries(t *testing.T) {
 		t.Fatalf("Failed to get message from queue: %v", err)
 	}
 
-	err = worker.Process(ctx, reqMsg)
+	err = queue.ProcessTestMessage(ctx, worker, reqMsg)
 	if err == nil {
 		t.Fatal("Expected error from Process")
 	}
 
 	// Should be failed, not retrying
-	if reqMsg.GetState() != StateFailed {
-		t.Errorf("Expected state %s, got %s", StateFailed, reqMsg.GetState())
+	if reqMsg.GetState() != queue.StateFailed {
+		t.Errorf("Expected state %s, got %s", queue.StateFailed, reqMsg.GetState())
 	}
 }
 
@@ -296,10 +285,10 @@ func TestWorker_RateLimiting(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup with restrictive rate limiter
-	llm := &mockLLM{response: "Response"}
-	messenger := &mockMessenger{}
-	queueMgr := NewManager(ctx)
-	rateLimiter := NewRateLimiter(1, 1, 100*time.Millisecond)
+	llm := &workerMockLLM{response: "Response"}
+	messenger := &workerMockMessenger{}
+	queueMgr := queue.NewManager(ctx)
+	rateLimiter := queue.NewRateLimiter(1, 1, 100*time.Millisecond)
 
 	// Start queue manager
 	go queueMgr.Start(ctx)
@@ -310,24 +299,20 @@ func TestWorker_RateLimiting(t *testing.T) {
 	}()
 
 	// Create worker
-	config := WorkerConfig{
+	config := queue.WorkerConfig{
 		ID:           1,
 		LLM:          llm,
 		Messenger:    messenger,
 		QueueManager: queueMgr,
 		RateLimiter:  rateLimiter,
 	}
-	w := NewWorker(config)
-	worker, ok := w.(*worker)
-	if !ok {
-		t.Fatal("NewWorker did not return *worker")
-	}
+	worker := queue.NewWorker(config)
 
 	// Use up the token
 	rateLimiter.Allow("conv-1")
 
 	// Submit message to queue first
-	msg := NewMessage("msg-1", "conv-1", "user123", "+1234567890", "Hello")
+	msg := queue.NewMessage("msg-1", "conv-1", "user123", "+1234567890", "Hello")
 	if err := queueMgr.Submit(msg); err != nil {
 		t.Fatalf("Failed to submit message: %v", err)
 	}
@@ -339,7 +324,7 @@ func TestWorker_RateLimiting(t *testing.T) {
 	}
 
 	// Process should be rate limited
-	err = worker.Process(ctx, reqMsg)
+	err = queue.ProcessTestMessage(ctx, worker, reqMsg)
 
 	// Should fail with rate limit error
 	if err == nil || !strings.Contains(err.Error(), "rate limited") {
@@ -350,7 +335,7 @@ func TestWorker_RateLimiting(t *testing.T) {
 	<-time.After(100 * time.Millisecond)
 
 	// Should succeed now
-	err = worker.Process(ctx, reqMsg)
+	err = queue.ProcessTestMessage(ctx, worker, reqMsg)
 	if err != nil {
 		t.Errorf("Process failed after rate limit refill: %v", err)
 	}
@@ -361,16 +346,16 @@ func TestWorkerPool_Start(t *testing.T) {
 	defer cancel()
 
 	// Setup
-	llm := &mockLLM{response: "Response", delay: 50 * time.Millisecond}
-	messenger := &mockMessenger{}
-	queueMgr := NewManager(ctx)
-	rateLimiter := NewRateLimiter(10, 1, time.Second)
+	llm := &workerMockLLM{response: "Response", delay: 50 * time.Millisecond}
+	messenger := &workerMockMessenger{}
+	queueMgr := queue.NewManager(ctx)
+	rateLimiter := queue.NewRateLimiter(10, 1, time.Second)
 
 	// Start queue manager
 	go queueMgr.Start(ctx)
 
 	// Create worker pool
-	pool := NewWorkerPool(3, llm, messenger, queueMgr, rateLimiter)
+	pool := queue.NewWorkerPool(3, llm, messenger, queueMgr, rateLimiter)
 
 	// Start pool
 	if err := pool.Start(ctx); err != nil {
@@ -379,7 +364,7 @@ func TestWorkerPool_Start(t *testing.T) {
 
 	// Submit some messages
 	for i := range 5 {
-		msg := NewMessage(
+		msg := queue.NewMessage(
 			fmt.Sprintf("msg-%d", i),
 			fmt.Sprintf("conv-%d", i%2),
 			"user",
@@ -410,12 +395,12 @@ func TestWorkerPool_Start(t *testing.T) {
 func TestWorkerPool_Size(t *testing.T) {
 	ctx := context.Background()
 
-	llm := &mockLLM{}
-	messenger := &mockMessenger{}
-	queueMgr := NewManager(ctx)
-	rateLimiter := NewRateLimiter(10, 1, time.Second)
+	llm := &workerMockLLM{}
+	messenger := &workerMockMessenger{}
+	queueMgr := queue.NewManager(ctx)
+	rateLimiter := queue.NewRateLimiter(10, 1, time.Second)
 
-	pool := NewWorkerPool(5, llm, messenger, queueMgr, rateLimiter)
+	pool := queue.NewWorkerPool(5, llm, messenger, queueMgr, rateLimiter)
 
 	if pool.Size() != 5 {
 		t.Errorf("Expected pool size 5, got %d", pool.Size())
@@ -427,10 +412,10 @@ func TestWorker_TypingIndicator(t *testing.T) {
 	defer cancel()
 
 	// Setup with slow LLM
-	llm := &mockLLM{response: "Response", delay: 150 * time.Millisecond}
-	messenger := &mockMessenger{}
-	queueMgr := NewManager(ctx)
-	rateLimiter := NewRateLimiter(10, 1, time.Second)
+	llm := &workerMockLLM{response: "Response", delay: 150 * time.Millisecond}
+	messenger := &workerMockMessenger{}
+	queueMgr := queue.NewManager(ctx)
+	rateLimiter := queue.NewRateLimiter(10, 1, time.Second)
 
 	// Start queue manager
 	go queueMgr.Start(ctx)
@@ -441,21 +426,17 @@ func TestWorker_TypingIndicator(t *testing.T) {
 	}()
 
 	// Create worker
-	config := WorkerConfig{
+	config := queue.WorkerConfig{
 		ID:           1,
 		LLM:          llm,
 		Messenger:    messenger,
 		QueueManager: queueMgr,
 		RateLimiter:  rateLimiter,
 	}
-	w := NewWorker(config)
-	worker, ok := w.(*worker)
-	if !ok {
-		t.Fatal("NewWorker did not return *worker")
-	}
+	worker := queue.NewWorker(config)
 
 	// Submit and get message from queue
-	msg := NewMessage("msg-1", "conv-1", "user123", "+1234567890", "Hello")
+	msg := queue.NewMessage("msg-1", "conv-1", "user123", "+1234567890", "Hello")
 	if err := queueMgr.Submit(msg); err != nil {
 		t.Fatalf("Failed to submit message: %v", err)
 	}
@@ -465,7 +446,7 @@ func TestWorker_TypingIndicator(t *testing.T) {
 		t.Fatalf("Failed to get message from queue: %v", err)
 	}
 
-	err = worker.Process(ctx, reqMsg)
+	err = queue.ProcessTestMessage(ctx, worker, reqMsg)
 	if err != nil {
 		t.Fatalf("Process failed: %v", err)
 	}
@@ -486,7 +467,7 @@ func TestWorker_ProcessesMessagesInOrder(t *testing.T) {
 	var orderMu sync.Mutex
 
 	// Setup LLM that records processing order
-	llm := &mockLLM{
+	llm := &workerMockLLM{
 		response: "Response",
 		delay:    10 * time.Millisecond,
 	}
@@ -510,9 +491,9 @@ func TestWorker_ProcessesMessagesInOrder(t *testing.T) {
 		}, nil
 	}
 
-	messenger := &mockMessenger{}
-	queueMgr := NewManager(ctx)
-	rateLimiter := NewRateLimiter(100, 10, time.Second) // High rate limit
+	messenger := &workerMockMessenger{}
+	queueMgr := queue.NewManager(ctx)
+	rateLimiter := queue.NewRateLimiter(100, 10, time.Second) // High rate limit
 
 	// Start queue manager
 	go queueMgr.Start(ctx)
@@ -523,14 +504,14 @@ func TestWorker_ProcessesMessagesInOrder(t *testing.T) {
 	}()
 
 	// Create single worker to ensure sequential processing
-	config := WorkerConfig{
+	config := queue.WorkerConfig{
 		ID:           1,
 		LLM:          llm,
 		Messenger:    messenger,
 		QueueManager: queueMgr,
 		RateLimiter:  rateLimiter,
 	}
-	worker := NewWorker(config)
+	worker := queue.NewWorker(config)
 
 	// Start worker
 	workerCtx, workerCancel := context.WithCancel(ctx)
@@ -543,7 +524,7 @@ func TestWorker_ProcessesMessagesInOrder(t *testing.T) {
 	// Submit messages from same conversation
 	messages := []string{"First", "Second", "Third", "Fourth", "Fifth"}
 	for i, text := range messages {
-		msg := NewMessage(
+		msg := queue.NewMessage(
 			fmt.Sprintf("msg-%d", i),
 			"conv-1", // Same conversation
 			"user123",
@@ -586,13 +567,13 @@ func TestWorkerPool_GracefulShutdown(t *testing.T) {
 	var processedCount int32
 
 	// Setup LLM with quick response
-	llm := &mockLLM{
+	llm := &workerMockLLM{
 		response: "Response",
 		delay:    10 * time.Millisecond,
 	}
 
 	// Track sent messages
-	messenger := &mockMessenger{}
+	messenger := &workerMockMessenger{}
 	messenger.sendFunc = func(_ context.Context, recipient string, message string) error {
 		atomic.AddInt32(&processedCount, 1)
 		// Also track in sentMessages
@@ -602,14 +583,14 @@ func TestWorkerPool_GracefulShutdown(t *testing.T) {
 		return nil
 	}
 
-	queueMgr := NewManager(ctx)
-	rateLimiter := NewRateLimiter(100, 10, time.Second)
+	queueMgr := queue.NewManager(ctx)
+	rateLimiter := queue.NewRateLimiter(100, 10, time.Second)
 
 	// Start queue manager
 	go queueMgr.Start(ctx)
 
 	// Create worker pool
-	pool := NewWorkerPool(2, llm, messenger, queueMgr, rateLimiter)
+	pool := queue.NewWorkerPool(2, llm, messenger, queueMgr, rateLimiter)
 
 	// Start pool
 	if err := pool.Start(ctx); err != nil {
@@ -619,7 +600,7 @@ func TestWorkerPool_GracefulShutdown(t *testing.T) {
 	// Submit messages
 	messageCount := 10
 	for i := range messageCount {
-		msg := NewMessage(
+		msg := queue.NewMessage(
 			fmt.Sprintf("msg-%d", i),
 			fmt.Sprintf("conv-%d", i%2), // Two conversations
 			fmt.Sprintf("user-%d", i),
@@ -676,7 +657,7 @@ func TestWorker_MessageOrderWithinConversation(t *testing.T) {
 	var orderMu sync.Mutex
 
 	// Setup LLM that tracks order
-	llm := &mockLLM{
+	llm := &workerMockLLM{
 		response: "Response",
 		delay:    5 * time.Millisecond,
 	}
@@ -698,9 +679,9 @@ func TestWorker_MessageOrderWithinConversation(t *testing.T) {
 		}, nil
 	}
 
-	messenger := &mockMessenger{}
-	queueMgr := NewManager(ctx)
-	rateLimiter := NewRateLimiter(100, 10, time.Second)
+	messenger := &workerMockMessenger{}
+	queueMgr := queue.NewManager(ctx)
+	rateLimiter := queue.NewRateLimiter(100, 10, time.Second)
 
 	// Start queue manager
 	go queueMgr.Start(ctx)
@@ -711,7 +692,7 @@ func TestWorker_MessageOrderWithinConversation(t *testing.T) {
 	}()
 
 	// Create worker pool with multiple workers
-	pool := NewWorkerPool(3, llm, messenger, queueMgr, rateLimiter)
+	pool := queue.NewWorkerPool(3, llm, messenger, queueMgr, rateLimiter)
 
 	// Start pool
 	poolCtx, poolCancel := context.WithCancel(ctx)
@@ -725,7 +706,7 @@ func TestWorker_MessageOrderWithinConversation(t *testing.T) {
 
 	for _, convID := range conversations {
 		for i := range messagesPerConv {
-			msg := NewMessage(
+			msg := queue.NewMessage(
 				fmt.Sprintf("msg-%s-%d", convID, i),
 				convID,
 				"user123",
@@ -771,20 +752,20 @@ func TestWorker_StartStopIdempotent(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup
-	llm := &mockLLM{response: "Response"}
-	messenger := &mockMessenger{}
-	queueMgr := NewManager(ctx)
-	rateLimiter := NewRateLimiter(10, 1, time.Second)
+	llm := &workerMockLLM{response: "Response"}
+	messenger := &workerMockMessenger{}
+	queueMgr := queue.NewManager(ctx)
+	rateLimiter := queue.NewRateLimiter(10, 1, time.Second)
 
 	// Create worker
-	config := WorkerConfig{
+	config := queue.WorkerConfig{
 		ID:           1,
 		LLM:          llm,
 		Messenger:    messenger,
 		QueueManager: queueMgr,
 		RateLimiter:  rateLimiter,
 	}
-	worker := NewWorker(config)
+	worker := queue.NewWorker(config)
 
 	// Multiple stops should not panic
 	if err := worker.Stop(); err != nil {

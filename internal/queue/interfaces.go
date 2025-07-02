@@ -3,6 +3,7 @@ package queue
 
 import (
 	"context"
+	"time"
 
 	"github.com/Veraticus/mentat/internal/signal"
 )
@@ -39,8 +40,17 @@ type RateLimiter interface {
 	// Allow returns true if the conversation can proceed
 	Allow(conversationID string) bool
 
+	// Wait blocks until the conversation can process a message
+	Wait(ctx context.Context, conversationID string) error
+
 	// Record marks a conversation as active
 	Record(conversationID string)
+
+	// CleanupStale removes token buckets that haven't been used recently
+	CleanupStale(maxAge time.Duration)
+
+	// Stats returns rate limiter statistics
+	Stats() map[string]any
 }
 
 // StateMachine manages message state transitions.

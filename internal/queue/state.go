@@ -8,20 +8,22 @@ import (
 const (
 	// StartingProcessingReason is the reason used when transitioning from queued to processing.
 	StartingProcessingReason = "starting processing"
+	// DefaultTransitionReason is the default reason for state transitions.
+	DefaultTransitionReason = "state transition"
 )
 
-// stateMachine implements the StateMachine interface.
-type stateMachine struct {
+// StateMachineImpl implements the StateMachine interface.
+type StateMachineImpl struct {
 	// transitions defines valid state transitions.
 	transitions map[State][]State
 	// validator provides enhanced transition validation.
-	validator *stateValidator
+	validator StateValidator
 	mu        sync.RWMutex
 }
 
 // NewStateMachine creates a new state machine with predefined transitions.
-func NewStateMachine() StateMachine {
-	return &stateMachine{
+func NewStateMachine() *StateMachineImpl {
+	return &StateMachineImpl{
 		transitions: map[State][]State{
 			StateQueued:     {StateProcessing},
 			StateProcessing: {StateValidating, StateRetrying, StateFailed, StateCompleted},
@@ -30,14 +32,14 @@ func NewStateMachine() StateMachine {
 			StateCompleted:  {}, // Terminal state
 			StateFailed:     {}, // Terminal state
 		},
-		validator: newStateValidator(),
+		validator: NewStateValidator(),
 	}
 }
 
 // determineTransitionDetails determines the final state and reason for a transition.
-func (sm *stateMachine) determineTransitionDetails(msg *Message, currentState, to State) (State, string, bool) {
+func (sm *StateMachineImpl) determineTransitionDetails(msg *Message, currentState, to State) (State, string, bool) {
 	finalState := to
-	reason := "state transition"
+	reason := DefaultTransitionReason
 	shouldIncrement := false
 
 	switch to {
@@ -59,21 +61,21 @@ func (sm *stateMachine) determineTransitionDetails(msg *Message, currentState, t
 }
 
 // handleProcessingTransition handles transitions to the processing state.
-func (sm *stateMachine) handleProcessingTransition(msg *Message, currentState State) (string, bool) {
+func (sm *StateMachineImpl) handleProcessingTransition(msg *Message, currentState State) (string, bool) {
 	switch currentState {
 	case StateRetrying:
 		return fmt.Sprintf("retry attempt %d", msg.Attempts+1), true
 	case StateQueued:
 		return StartingProcessingReason, false
 	case StateProcessing, StateValidating, StateCompleted, StateFailed:
-		return "state transition", false
+		return DefaultTransitionReason, false
 	}
 	// This should never be reached as all cases are handled
 	return "state transition", false
 }
 
 // handleFailedTransition handles transitions to the failed state.
-func (sm *stateMachine) handleFailedTransition(msg *Message, currentState State) (State, string) {
+func (sm *StateMachineImpl) handleFailedTransition(msg *Message, currentState State) (State, string) {
 	if msg.CanRetry() && currentState == StateProcessing {
 		// If we can retry, go to retrying instead
 		return StateRetrying, fmt.Sprintf("failed but retrying (attempt %d/%d)", msg.Attempts, msg.MaxAttempts)
@@ -87,7 +89,7 @@ func (sm *stateMachine) handleFailedTransition(msg *Message, currentState State)
 }
 
 // Transition moves a message to a new state if the transition is valid.
-func (sm *stateMachine) Transition(msg *Message, to State) error {
+func (sm *StateMachineImpl) Transition(msg *Message, to State) error {
 	if msg == nil {
 		return fmt.Errorf("cannot transition nil message")
 	}
@@ -98,13 +100,13 @@ func (sm *stateMachine) Transition(msg *Message, to State) error {
 	// Check structural validity first
 	if !sm.CanTransition(currentState, to) {
 		// Provide detailed explanation for invalid transitions
-		explanation := sm.validator.explainInvalidTransition(currentState, to)
+		explanation := sm.validator.ExplainInvalidTransition(currentState, to)
 		return fmt.Errorf("invalid transition from %s to %s: %s", currentState, to, explanation)
 	}
 
 	// Validate business rules
-	if err := sm.validator.validateTransition(msg, currentState, to); err != nil {
-		return err
+	if err := sm.validator.ValidateTransition(msg, currentState, to); err != nil {
+		return fmt.Errorf("validation failed: %w", err)
 	}
 
 	// Handle state-specific logic and determine final state
@@ -134,7 +136,7 @@ func (sm *stateMachine) Transition(msg *Message, to State) error {
 }
 
 // CanTransition checks if a transition from one state to another is valid.
-func (sm *stateMachine) CanTransition(from, to State) bool {
+func (sm *StateMachineImpl) CanTransition(from, to State) bool {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 
@@ -153,7 +155,7 @@ func (sm *stateMachine) CanTransition(from, to State) bool {
 }
 
 // IsTerminal checks if a state is terminal (no outgoing transitions).
-func (sm *stateMachine) IsTerminal(state State) bool {
+func (sm *StateMachineImpl) IsTerminal(state State) bool {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 

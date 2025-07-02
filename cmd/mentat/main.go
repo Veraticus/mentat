@@ -83,9 +83,7 @@ func run(ctx context.Context) error {
 	}
 
 	// Start all components
-	if startErr := startComponents(ctx, components); startErr != nil {
-		return startErr
-	}
+	startComponents(ctx, components)
 
 	log.Println("Mentat started successfully. Listening for messages.")
 
@@ -93,16 +91,14 @@ func run(ctx context.Context) error {
 	<-ctx.Done()
 
 	// Graceful shutdown with timeout
-	// Create a new context for shutdown since the parent context has been cancelled
+	// Create a new context for shutdown since the parent context has been canceled
 	// We must use a new root context here because the parent context is already done
-	//nolint:contextcheck // New context needed for shutdown after parent is canceled
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), ShutdownTimeout)
 	defer shutdownCancel()
 
 	// Call shutdown with the new context
-	if err := shutdown(shutdownCtx, components); err != nil {
-		return err
-	}
+	//nolint:contextcheck // New context needed for graceful shutdown after parent cancellation
+	shutdown(shutdownCtx, components)
 	return nil
 }
 
@@ -259,7 +255,7 @@ func initializeComponents(ctx context.Context) (*components, error) {
 	}, nil
 }
 
-func startComponents(ctx context.Context, c *components) error {
+func startComponents(ctx context.Context, c *components) {
 	// Start queue manager first (before workers start requesting messages)
 	c.wg.Add(1)
 	go func() {
@@ -290,11 +286,9 @@ func startComponents(ctx context.Context, c *components) error {
 	}()
 
 	// Components are started asynchronously and will initialize in the background
-
-	return nil
 }
 
-func shutdown(ctx context.Context, c *components) error {
+func shutdown(ctx context.Context, c *components) {
 	log.Println("Shutting down components...")
 
 	// Wait for all components to finish
@@ -313,5 +307,4 @@ func shutdown(ctx context.Context, c *components) error {
 	}
 
 	log.Println("Shutdown complete")
-	return nil
 }

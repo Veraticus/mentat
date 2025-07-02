@@ -149,7 +149,7 @@ func (w *worker) Start(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			logger.InfoContext(ctx, "Worker shutting down", slog.Int("worker_id", w.config.ID))
-			return fmt.Errorf("worker context cancelled: %w", ctx.Err())
+			return fmt.Errorf("worker context canceled: %w", ctx.Err())
 		default:
 			if err := w.processNextMessage(ctx); err != nil {
 				return err
@@ -242,7 +242,9 @@ func (w *worker) updateStateViaQueue(ctx context.Context, msg *Message) {
 func (w *worker) updateStateViaManager(ctx context.Context, msg *Message) {
 	if err := w.config.QueueManager.CompleteMessage(msg); err != nil {
 		logger := slog.Default()
-		logger.ErrorContext(ctx, "Failed to complete message", slog.String("message_id", msg.ID), slog.Any("error", err))
+		logger.ErrorContext(ctx, "Failed to complete message",
+			slog.String("message_id", msg.ID),
+			slog.Any("error", err))
 	}
 
 	if msg.GetState() == StateRetrying {

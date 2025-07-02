@@ -102,11 +102,7 @@ func NewDynamicWorkerPool(ctx context.Context, config PoolConfig) (*DynamicWorke
 
 	// Create initial workers
 	for range config.InitialSize {
-		if _, err := pool.createWorker(ctx); err != nil {
-			// Clean up any created workers
-			pool.Stop(context.Background())
-			return nil, fmt.Errorf("failed to create initial workers: %w", err)
-		}
+		pool.createWorker(ctx)
 	}
 
 	return pool, nil
@@ -156,7 +152,7 @@ func (p *DynamicWorkerPool) manage(ctx context.Context) {
 }
 
 // createWorker creates a new worker and adds it to the pool.
-func (p *DynamicWorkerPool) createWorker(ctx context.Context) (string, error) {
+func (p *DynamicWorkerPool) createWorker(ctx context.Context) string {
 	id := int(p.nextWorkerID.Add(1))
 
 	config := WorkerConfig{
@@ -180,7 +176,7 @@ func (p *DynamicWorkerPool) createWorker(ctx context.Context) (string, error) {
 
 	logger := slog.Default()
 	logger.InfoContext(ctx, "Created worker", slog.String("worker_id", workerID))
-	return workerID, nil
+	return workerID
 }
 
 // startWorker starts a worker in a new goroutine.
@@ -234,10 +230,7 @@ func (p *DynamicWorkerPool) addWorkers(ctx context.Context, count int) error {
 	}
 
 	for range count {
-		workerID, err := p.createWorker(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to add worker: %w", err)
-		}
+		workerID := p.createWorker(ctx)
 
 		// Start the new worker
 		if wi, ok := p.workers[workerID]; ok {
@@ -305,11 +298,7 @@ func (p *DynamicWorkerPool) handleWorkerDone(ctx context.Context, workerID strin
 		return
 	}
 
-	newWorkerID, err := p.createWorker(ctx)
-	if err != nil {
-		logger.ErrorContext(ctx, "Failed to replace stopped worker", slog.Any("error", err))
-		return
-	}
+	newWorkerID := p.createWorker(ctx)
 
 	// Start the replacement worker
 	wi, ok := p.workers[newWorkerID]

@@ -1,4 +1,4 @@
-package queue
+package queue_test
 
 import (
 	"errors"
@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Veraticus/mentat/internal/queue"
 	"github.com/Veraticus/mentat/internal/signal"
 )
 
@@ -18,26 +19,26 @@ func TestNewQueuedMessage(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		priority Priority
-		validate func(t *testing.T, qm *QueuedMessage)
+		priority queue.Priority
+		validate func(t *testing.T, qm *queue.QueuedMessage)
 	}{
 		{
 			name:     "normal priority message",
-			priority: PriorityNormal,
-			validate: func(t *testing.T, qm *QueuedMessage) {
+			priority: queue.PriorityNormal,
+			validate: func(t *testing.T, qm *queue.QueuedMessage) {
 				t.Helper()
-				if qm.Priority != PriorityNormal {
-					t.Errorf("expected priority %v, got %v", PriorityNormal, qm.Priority)
+				if qm.Priority != queue.PriorityNormal {
+					t.Errorf("expected priority %v, got %v", queue.PriorityNormal, qm.Priority)
 				}
 			},
 		},
 		{
 			name:     "high priority message",
-			priority: PriorityHigh,
-			validate: func(t *testing.T, qm *QueuedMessage) {
+			priority: queue.PriorityHigh,
+			validate: func(t *testing.T, qm *queue.QueuedMessage) {
 				t.Helper()
-				if qm.Priority != PriorityHigh {
-					t.Errorf("expected priority %v, got %v", PriorityHigh, qm.Priority)
+				if qm.Priority != queue.PriorityHigh {
+					t.Errorf("expected priority %v, got %v", queue.PriorityHigh, qm.Priority)
 				}
 			},
 		},
@@ -45,52 +46,12 @@ func TestNewQueuedMessage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			qm := NewQueuedMessage(msg, tt.priority)
+			qm := queue.NewQueuedMessage(msg, tt.priority)
 
-			// Verify basic fields
-			// ID is generated from timestamp and sender
-			expectedIDPrefix := fmt.Sprintf("%d-%s", msg.Timestamp.UnixNano(), msg.From)
-			if qm.ID != expectedIDPrefix {
-				t.Errorf("expected ID %s, got %s", expectedIDPrefix, qm.ID)
-			}
-			// ConversationID is generated from sender
-			expectedConvID := fmt.Sprintf("conv-%s", msg.From)
-			if qm.ConversationID != expectedConvID {
-				t.Errorf("expected ConversationID %s, got %s", expectedConvID, qm.ConversationID)
-			}
-			if qm.From != msg.From {
-				t.Errorf("expected From %s, got %s", msg.From, qm.From)
-			}
-			if qm.Text != msg.Text {
-				t.Errorf("expected Text %s, got %s", msg.Text, qm.Text)
-			}
-
-			// Verify initial state
-			if qm.State != MessageStateQueued {
-				t.Errorf("expected initial state %v, got %v", MessageStateQueued, qm.State)
-			}
-
-			// Verify state history
-			if len(qm.StateHistory) != 1 {
-				t.Fatalf("expected 1 state history entry, got %d", len(qm.StateHistory))
-			}
-			if qm.StateHistory[0].To != MessageStateQueued {
-				t.Errorf("expected initial state history To %v, got %v", MessageStateQueued, qm.StateHistory[0].To)
-			}
-			if qm.StateHistory[0].Reason != "message created" {
-				t.Errorf("expected reason 'message created', got %s", qm.StateHistory[0].Reason)
-			}
-
-			// Verify defaults
-			if qm.Attempts != 0 {
-				t.Errorf("expected 0 attempts, got %d", qm.Attempts)
-			}
-			if qm.MaxAttempts != 3 {
-				t.Errorf("expected 3 max attempts, got %d", qm.MaxAttempts)
-			}
-			if len(qm.ErrorHistory) != 0 {
-				t.Errorf("expected empty error history, got %d entries", len(qm.ErrorHistory))
-			}
+			// Verify all fields
+			verifyBasicFields(t, qm, msg)
+			verifyStateAndHistory(t, qm)
+			verifyDefaults(t, qm)
 
 			// Run custom validation
 			tt.validate(t, qm)
@@ -103,28 +64,28 @@ func TestQueuedMessage_WithState(t *testing.T) {
 
 	tests := []struct {
 		name         string
-		fromState    MessageState
-		toState      MessageState
+		fromState    queue.MessageState
+		toState      queue.MessageState
 		reason       string
 		expectError  bool
-		validateFunc func(t *testing.T, oldMsg, newMsg *QueuedMessage)
+		validateFunc func(t *testing.T, oldMsg, newMsg *queue.QueuedMessage)
 	}{
 		{
 			name:        "valid transition: queued to processing",
-			fromState:   MessageStateQueued,
-			toState:     MessageStateProcessing,
+			fromState:   queue.MessageStateQueued,
+			toState:     queue.MessageStateProcessing,
 			reason:      "worker picked up",
 			expectError: false,
-			validateFunc: func(t *testing.T, oldMsg, newMsg *QueuedMessage) {
+			validateFunc: func(t *testing.T, oldMsg, newMsg *queue.QueuedMessage) {
 				t.Helper()
 				// Old message should be unchanged
-				if oldMsg.State != MessageStateQueued {
+				if oldMsg.State != queue.MessageStateQueued {
 					t.Errorf("old message state changed")
 				}
 
 				// New message should have new state
-				if newMsg.State != MessageStateProcessing {
-					t.Errorf("expected state %v, got %v", MessageStateProcessing, newMsg.State)
+				if newMsg.State != queue.MessageStateProcessing {
+					t.Errorf("expected state %v, got %v", queue.MessageStateProcessing, newMsg.State)
 				}
 
 				// ProcessedAt should be set
@@ -135,18 +96,18 @@ func TestQueuedMessage_WithState(t *testing.T) {
 		},
 		{
 			name:        "valid transition: processing to validating",
-			fromState:   MessageStateProcessing,
-			toState:     MessageStateValidating,
+			fromState:   queue.MessageStateProcessing,
+			toState:     queue.MessageStateValidating,
 			reason:      "response generated",
 			expectError: false,
 		},
 		{
 			name:        "valid transition: validating to completed",
-			fromState:   MessageStateValidating,
-			toState:     MessageStateCompleted,
+			fromState:   queue.MessageStateValidating,
+			toState:     queue.MessageStateCompleted,
 			reason:      "validation passed",
 			expectError: false,
-			validateFunc: func(t *testing.T, _, newMsg *QueuedMessage) {
+			validateFunc: func(t *testing.T, _, newMsg *queue.QueuedMessage) {
 				t.Helper()
 				if newMsg.CompletedAt == nil {
 					t.Errorf("CompletedAt not set")
@@ -155,11 +116,11 @@ func TestQueuedMessage_WithState(t *testing.T) {
 		},
 		{
 			name:        "valid transition: processing to retrying",
-			fromState:   MessageStateProcessing,
-			toState:     MessageStateRetrying,
+			fromState:   queue.MessageStateProcessing,
+			toState:     queue.MessageStateRetrying,
 			reason:      "temporary error",
 			expectError: false,
-			validateFunc: func(t *testing.T, _, newMsg *QueuedMessage) {
+			validateFunc: func(t *testing.T, _, newMsg *queue.QueuedMessage) {
 				t.Helper()
 				if newMsg.NextRetryAt == nil {
 					t.Errorf("NextRetryAt not set")
@@ -168,15 +129,15 @@ func TestQueuedMessage_WithState(t *testing.T) {
 		},
 		{
 			name:        "invalid transition: queued to completed",
-			fromState:   MessageStateQueued,
-			toState:     MessageStateCompleted,
+			fromState:   queue.MessageStateQueued,
+			toState:     queue.MessageStateCompleted,
 			reason:      "skip processing",
 			expectError: true,
 		},
 		{
 			name:        "invalid transition: completed to processing",
-			fromState:   MessageStateCompleted,
-			toState:     MessageStateProcessing,
+			fromState:   queue.MessageStateCompleted,
+			toState:     queue.MessageStateProcessing,
 			reason:      "restart",
 			expectError: true,
 		},
@@ -185,46 +146,19 @@ func TestQueuedMessage_WithState(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Set up initial state
-			oldMsg := msg
-			if tt.fromState != MessageStateQueued {
-				// Transition to the required from state
-				transitionalStates := getTransitionPath(MessageStateQueued, tt.fromState)
-				for _, state := range transitionalStates {
-					var err error
-					oldMsg, err = oldMsg.WithState(state, "test setup")
-					if err != nil {
-						t.Fatalf("failed to set up initial state: %v", err)
-					}
-				}
-			}
+			oldMsg := setupInitialState(t, msg, tt.fromState)
 
 			// Perform the transition
 			newMsg, err := oldMsg.WithState(tt.toState, tt.reason)
 
 			// Check error expectation
-			if tt.expectError && err == nil {
-				t.Errorf("expected error but got none")
-			}
-			if !tt.expectError && err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
-
+			validateError(t, err, tt.expectError)
 			if err != nil {
 				return
 			}
 
 			// Verify state history was updated
-			history := newMsg.GetStateHistory()
-			lastTransition := history[len(history)-1]
-			if lastTransition.From != tt.fromState {
-				t.Errorf("expected transition from %v, got %v", tt.fromState, lastTransition.From)
-			}
-			if lastTransition.To != tt.toState {
-				t.Errorf("expected transition to %v, got %v", tt.toState, lastTransition.To)
-			}
-			if lastTransition.Reason != tt.reason {
-				t.Errorf("expected reason %s, got %s", tt.reason, lastTransition.Reason)
-			}
+			validateStateHistory(t, newMsg, tt.fromState, tt.toState, tt.reason)
 
 			// Run custom validation
 			if tt.validateFunc != nil {
@@ -239,7 +173,7 @@ func TestQueuedMessage_WithError(t *testing.T) {
 	testError := fmt.Errorf("test error")
 
 	// Add error
-	newMsg := msg.WithError(testError, MessageStateProcessing)
+	newMsg := msg.WithError(testError, queue.MessageStateProcessing)
 
 	// Original should be unchanged
 	if msg.LastError != nil {
@@ -262,8 +196,8 @@ func TestQueuedMessage_WithError(t *testing.T) {
 	if !errors.Is(errorHistory[0].Error, testError) {
 		t.Errorf("expected error %v in history, got %v", testError, errorHistory[0].Error)
 	}
-	if errorHistory[0].State != MessageStateProcessing {
-		t.Errorf("expected state %v in error history, got %v", MessageStateProcessing, errorHistory[0].State)
+	if errorHistory[0].State != queue.MessageStateProcessing {
+		t.Errorf("expected state %v in error history, got %v", queue.MessageStateProcessing, errorHistory[0].State)
 	}
 	if errorHistory[0].Attempt != 0 {
 		t.Errorf("expected attempt 0 in error history, got %d", errorHistory[0].Attempt)
@@ -397,16 +331,16 @@ func TestQueuedMessage_GetLastTransition(t *testing.T) {
 	if last == nil {
 		t.Fatal("expected last transition, got nil")
 	}
-	if last.To != MessageStateQueued {
-		t.Errorf("expected last transition to %v, got %v", MessageStateQueued, last.To)
+	if last.To != queue.MessageStateQueued {
+		t.Errorf("expected last transition to %v, got %v", queue.MessageStateQueued, last.To)
 	}
 
 	// After state change
-	newMsg, _ := msg.WithState(MessageStateProcessing, "test")
+	newMsg, _ := msg.WithState(queue.MessageStateProcessing, "test")
 	last = newMsg.GetLastTransition()
-	if last.From != MessageStateQueued || last.To != MessageStateProcessing {
+	if last.From != queue.MessageStateQueued || last.To != queue.MessageStateProcessing {
 		t.Errorf("expected transition from %v to %v, got from %v to %v",
-			MessageStateQueued, MessageStateProcessing, last.From, last.To)
+			queue.MessageStateQueued, queue.MessageStateProcessing, last.From, last.To)
 	}
 }
 
@@ -425,7 +359,7 @@ func TestCalculateRetryDelay(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			delay := CalculateRetryDelay(tt.attempts)
+			delay := queue.CalculateRetryDelay(tt.attempts)
 			if delay < tt.minDelay || delay > tt.maxDelay {
 				t.Errorf("expected delay between %v and %v, got %v", tt.minDelay, tt.maxDelay, delay)
 			}
@@ -435,21 +369,21 @@ func TestCalculateRetryDelay(t *testing.T) {
 
 func TestMessageStateString(t *testing.T) {
 	tests := []struct {
-		state    MessageState
+		state    queue.MessageState
 		expected string
 	}{
-		{MessageStateQueued, "queued"},
-		{MessageStateProcessing, "processing"},
-		{MessageStateValidating, "validating"},
-		{MessageStateCompleted, "completed"},
-		{MessageStateFailed, "failed"},
-		{MessageStateRetrying, "retrying"},
-		{MessageState(99), "unknown(99)"},
+		{queue.MessageStateQueued, "queued"},
+		{queue.MessageStateProcessing, "processing"},
+		{queue.MessageStateValidating, "validating"},
+		{queue.MessageStateCompleted, "completed"},
+		{queue.MessageStateFailed, "failed"},
+		{queue.MessageStateRetrying, "retrying"},
+		{queue.MessageState(99), "unknown(99)"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.expected, func(t *testing.T) {
-			if got := MessageStateString(tt.state); got != tt.expected {
+			if got := queue.MessageStateString(tt.state); got != tt.expected {
 				t.Errorf("expected %s, got %s", tt.expected, got)
 			}
 			if got := tt.state.String(); got != tt.expected {
@@ -461,25 +395,126 @@ func TestMessageStateString(t *testing.T) {
 
 // Helper functions
 
-func createTestMessage() *QueuedMessage {
-	return NewQueuedMessage(signal.IncomingMessage{
+func verifyBasicFields(t *testing.T, qm *queue.QueuedMessage, msg signal.IncomingMessage) {
+	t.Helper()
+	// ID is generated from timestamp and sender
+	expectedIDPrefix := fmt.Sprintf("%d-%s", msg.Timestamp.UnixNano(), msg.From)
+	if qm.ID != expectedIDPrefix {
+		t.Errorf("expected ID %s, got %s", expectedIDPrefix, qm.ID)
+	}
+	// ConversationID is generated from sender
+	expectedConvID := fmt.Sprintf("conv-%s", msg.From)
+	if qm.ConversationID != expectedConvID {
+		t.Errorf("expected ConversationID %s, got %s", expectedConvID, qm.ConversationID)
+	}
+	if qm.From != msg.From {
+		t.Errorf("expected From %s, got %s", msg.From, qm.From)
+	}
+	if qm.Text != msg.Text {
+		t.Errorf("expected Text %s, got %s", msg.Text, qm.Text)
+	}
+}
+
+func verifyStateAndHistory(t *testing.T, qm *queue.QueuedMessage) {
+	t.Helper()
+	// Verify initial state
+	if qm.State != queue.MessageStateQueued {
+		t.Errorf("expected initial state %v, got %v", queue.MessageStateQueued, qm.State)
+	}
+
+	// Verify state history
+	if len(qm.StateHistory) != 1 {
+		t.Fatalf("expected 1 state history entry, got %d", len(qm.StateHistory))
+	}
+	if qm.StateHistory[0].To != queue.MessageStateQueued {
+		t.Errorf("expected initial state history To %v, got %v", queue.MessageStateQueued, qm.StateHistory[0].To)
+	}
+	if qm.StateHistory[0].Reason != "message created" {
+		t.Errorf("expected reason 'message created', got %s", qm.StateHistory[0].Reason)
+	}
+}
+
+func verifyDefaults(t *testing.T, qm *queue.QueuedMessage) {
+	t.Helper()
+	if qm.Attempts != 0 {
+		t.Errorf("expected 0 attempts, got %d", qm.Attempts)
+	}
+	if qm.MaxAttempts != 3 {
+		t.Errorf("expected 3 max attempts, got %d", qm.MaxAttempts)
+	}
+	if len(qm.ErrorHistory) != 0 {
+		t.Errorf("expected empty error history, got %d entries", len(qm.ErrorHistory))
+	}
+}
+
+func setupInitialState(t *testing.T, msg *queue.QueuedMessage, targetState queue.MessageState) *queue.QueuedMessage {
+	t.Helper()
+	if targetState == queue.MessageStateQueued {
+		return msg
+	}
+
+	// Transition to the required from state
+	transitionalStates := getTransitionPath(queue.MessageStateQueued, targetState)
+	currentMsg := msg
+	for _, state := range transitionalStates {
+		var err error
+		currentMsg, err = currentMsg.WithState(state, "test setup")
+		if err != nil {
+			t.Fatalf("failed to set up initial state: %v", err)
+		}
+	}
+	return currentMsg
+}
+
+func validateError(t *testing.T, err error, expectError bool) {
+	t.Helper()
+	if expectError && err == nil {
+		t.Errorf("expected error but got none")
+	}
+	if !expectError && err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func validateStateHistory(
+	t *testing.T,
+	msg *queue.QueuedMessage,
+	fromState, toState queue.MessageState,
+	reason string,
+) {
+	t.Helper()
+	history := msg.GetStateHistory()
+	lastTransition := history[len(history)-1]
+	if lastTransition.From != fromState {
+		t.Errorf("expected transition from %v, got %v", fromState, lastTransition.From)
+	}
+	if lastTransition.To != toState {
+		t.Errorf("expected transition to %v, got %v", toState, lastTransition.To)
+	}
+	if lastTransition.Reason != reason {
+		t.Errorf("expected reason %s, got %s", reason, lastTransition.Reason)
+	}
+}
+
+func createTestMessage() *queue.QueuedMessage {
+	return queue.NewQueuedMessage(signal.IncomingMessage{
 		From:      "+1234567890",
 		Text:      "Test message",
 		Timestamp: time.Now(),
-	}, PriorityNormal)
+	}, queue.PriorityNormal)
 }
 
 // getTransitionPath returns the states needed to transition from one state to another.
-func getTransitionPath(from, to MessageState) []MessageState {
+func getTransitionPath(from, to queue.MessageState) []queue.MessageState {
 	// Simplified for testing - in real implementation this would use the state machine
-	paths := map[string][]MessageState{
-		"queued-processing": {MessageStateProcessing},
-		"queued-validating": {MessageStateProcessing, MessageStateValidating},
-		"queued-completed":  {MessageStateProcessing, MessageStateCompleted},
-		"queued-retrying":   {MessageStateProcessing, MessageStateRetrying},
-		"queued-failed":     {MessageStateFailed},
+	paths := map[string][]queue.MessageState{
+		"queued-processing": {queue.MessageStateProcessing},
+		"queued-validating": {queue.MessageStateProcessing, queue.MessageStateValidating},
+		"queued-completed":  {queue.MessageStateProcessing, queue.MessageStateCompleted},
+		"queued-retrying":   {queue.MessageStateProcessing, queue.MessageStateRetrying},
+		"queued-failed":     {queue.MessageStateFailed},
 	}
 
-	key := MessageStateString(from) + "-" + MessageStateString(to)
+	key := queue.MessageStateString(from) + "-" + queue.MessageStateString(to)
 	return paths[key]
 }

@@ -1,15 +1,17 @@
-package signal
+package signal_test
 
 import (
 	"context"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Veraticus/mentat/internal/signal"
 )
 
 type messageFlowTest struct {
-	envelope        *Envelope
-	expectedMessage *IncomingMessage
+	envelope        *signal.Envelope
+	expectedMessage *signal.IncomingMessage
 	shouldReceive   bool
 }
 
@@ -17,13 +19,13 @@ func createTestMessages(selfPhone string) []messageFlowTest {
 	return []messageFlowTest{
 		{
 			// Regular message from another user
-			envelope: &Envelope{
+			envelope: &signal.Envelope{
 				Source:      "+0987654321",
 				SourceName:  "Alice",
 				Timestamp:   time.Now().UnixMilli(),
-				DataMessage: &DataMessage{Message: "Hello, Bob!"},
+				DataMessage: &signal.DataMessage{Message: "Hello, Bob!"},
 			},
-			expectedMessage: &IncomingMessage{
+			expectedMessage: &signal.IncomingMessage{
 				From: "Alice",
 				Text: "Hello, Bob!",
 			},
@@ -31,12 +33,12 @@ func createTestMessages(selfPhone string) []messageFlowTest {
 		},
 		{
 			// Message from user without name
-			envelope: &Envelope{
+			envelope: &signal.Envelope{
 				SourceNumber: "+1122334455",
 				Timestamp:    time.Now().UnixMilli(),
-				DataMessage:  &DataMessage{Message: "Anonymous message"},
+				DataMessage:  &signal.DataMessage{Message: "Anonymous message"},
 			},
-			expectedMessage: &IncomingMessage{
+			expectedMessage: &signal.IncomingMessage{
 				From: "+1122334455",
 				Text: "Anonymous message",
 			},
@@ -44,52 +46,52 @@ func createTestMessages(selfPhone string) []messageFlowTest {
 		},
 		{
 			// Message from self (should be filtered)
-			envelope: &Envelope{
+			envelope: &signal.Envelope{
 				Source:      selfPhone,
 				Timestamp:   time.Now().UnixMilli(),
-				DataMessage: &DataMessage{Message: "Self message"},
+				DataMessage: &signal.DataMessage{Message: "Self message"},
 			},
 			shouldReceive: false,
 		},
 		{
 			// Typing indicator (should be filtered)
-			envelope: &Envelope{
+			envelope: &signal.Envelope{
 				Source:        "+0987654321",
-				TypingMessage: &TypingMessage{Action: "STARTED"},
+				TypingMessage: &signal.TypingMessage{Action: "STARTED"},
 			},
 			shouldReceive: false,
 		},
 		{
 			// Read receipt (should be filtered)
-			envelope: &Envelope{
+			envelope: &signal.Envelope{
 				Source:         "+0987654321",
-				ReceiptMessage: &ReceiptMessage{IsRead: true},
+				ReceiptMessage: &signal.ReceiptMessage{IsRead: true},
 			},
 			shouldReceive: false,
 		},
 		{
 			// Empty message (should be filtered)
-			envelope: &Envelope{
+			envelope: &signal.Envelope{
 				Source:      "+0987654321",
-				DataMessage: &DataMessage{Message: ""},
+				DataMessage: &signal.DataMessage{Message: ""},
 			},
 			shouldReceive: false,
 		},
 		{
 			// Group message
-			envelope: &Envelope{
+			envelope: &signal.Envelope{
 				Source:     "+5556667777",
 				SourceName: "Charlie",
 				Timestamp:  time.Now().UnixMilli(),
-				DataMessage: &DataMessage{
+				DataMessage: &signal.DataMessage{
 					Message: "Group chat message",
-					GroupInfo: &GroupInfo{
+					GroupInfo: &signal.GroupInfo{
 						GroupID: "group123",
 						Type:    "UPDATE",
 					},
 				},
 			},
-			expectedMessage: &IncomingMessage{
+			expectedMessage: &signal.IncomingMessage{
 				From: "Charlie",
 				Text: "Group chat message",
 			},
@@ -98,7 +100,7 @@ func createTestMessages(selfPhone string) []messageFlowTest {
 	}
 }
 
-func verifyMessage(t *testing.T, msgCh <-chan IncomingMessage, test messageFlowTest) {
+func verifyMessage(t *testing.T, msgCh <-chan signal.IncomingMessage, test messageFlowTest) {
 	t.Helper()
 
 	if test.shouldReceive {
@@ -108,7 +110,7 @@ func verifyMessage(t *testing.T, msgCh <-chan IncomingMessage, test messageFlowT
 	}
 }
 
-func verifyExpectedMessage(t *testing.T, msgCh <-chan IncomingMessage, expected *IncomingMessage) {
+func verifyExpectedMessage(t *testing.T, msgCh <-chan signal.IncomingMessage, expected *signal.IncomingMessage) {
 	t.Helper()
 
 	select {
@@ -124,7 +126,7 @@ func verifyExpectedMessage(t *testing.T, msgCh <-chan IncomingMessage, expected 
 	}
 }
 
-func verifyNoMessage(t *testing.T, msgCh <-chan IncomingMessage) {
+func verifyNoMessage(t *testing.T, msgCh <-chan signal.IncomingMessage) {
 	t.Helper()
 
 	select {
@@ -135,7 +137,7 @@ func verifyNoMessage(t *testing.T, msgCh <-chan IncomingMessage) {
 	}
 }
 
-func verifyChannelClosed(t *testing.T, msgCh <-chan IncomingMessage) {
+func verifyChannelClosed(t *testing.T, msgCh <-chan signal.IncomingMessage) {
 	t.Helper()
 
 	select {
@@ -151,9 +153,9 @@ func verifyChannelClosed(t *testing.T, msgCh <-chan IncomingMessage) {
 // TestMessengerIntegrationMessageFlow verifies messages flow through subscription channel.
 func TestMessengerIntegrationMessageFlow(t *testing.T) {
 	// Create a mock client with a channel we control
-	clientCh := make(chan *Envelope, 10)
-	client := &MockClient{
-		SubscribeFunc: func(_ context.Context) (<-chan *Envelope, error) {
+	clientCh := make(chan *signal.Envelope, 10)
+	client := &signal.MockClient{
+		SubscribeFunc: func(_ context.Context) (<-chan *signal.Envelope, error) {
 			return clientCh, nil
 		},
 		SendReceiptFunc: func(_ context.Context, _ string, _ int64, _ string) error {
@@ -162,7 +164,7 @@ func TestMessengerIntegrationMessageFlow(t *testing.T) {
 	}
 
 	selfPhone := "+1234567890"
-	m := NewMessenger(client, selfPhone)
+	m := signal.NewMessenger(client, selfPhone)
 
 	// Set up subscription
 	ctx, cancel := context.WithCancel(context.Background())
@@ -199,9 +201,9 @@ func TestMessengerIntegrationMessageFlow(t *testing.T) {
 
 // TestMessengerIntegrationConcurrentMessages tests handling of concurrent messages.
 func TestMessengerIntegrationConcurrentMessages(t *testing.T) {
-	clientCh := make(chan *Envelope, 100)
-	client := &MockClient{
-		SubscribeFunc: func(_ context.Context) (<-chan *Envelope, error) {
+	clientCh := make(chan *signal.Envelope, 100)
+	client := &signal.MockClient{
+		SubscribeFunc: func(_ context.Context) (<-chan *signal.Envelope, error) {
 			return clientCh, nil
 		},
 		SendReceiptFunc: func(_ context.Context, _ string, _ int64, _ string) error {
@@ -209,7 +211,7 @@ func TestMessengerIntegrationConcurrentMessages(t *testing.T) {
 		},
 	}
 
-	m := NewMessenger(client, "+1234567890")
+	m := signal.NewMessenger(client, "+1234567890")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -227,11 +229,11 @@ func TestMessengerIntegrationConcurrentMessages(t *testing.T) {
 	for i := range messageCount {
 		go func(_ int) {
 			defer sendWg.Done()
-			clientCh <- &Envelope{
+			clientCh <- &signal.Envelope{
 				Source:      "+0987654321",
 				SourceName:  "Concurrent User",
 				Timestamp:   time.Now().UnixMilli(),
-				DataMessage: &DataMessage{Message: "Concurrent message"},
+				DataMessage: &signal.DataMessage{Message: "Concurrent message"},
 			}
 		}(i)
 	}
@@ -258,13 +260,20 @@ func TestMessengerIntegrationConcurrentMessages(t *testing.T) {
 
 // TestMessengerIntegrationContextCancellation tests proper cleanup on context cancellation.
 func TestMessengerIntegrationContextCancellation(t *testing.T) {
-	clientCh := make(chan *Envelope)
-	var clientCtx context.Context
+	clientCh := make(chan *signal.Envelope)
+	ctxChan := make(chan context.Context, 1)
 	ctxCaptured := make(chan struct{})
 
-	client := &MockClient{
-		SubscribeFunc: func(ctx context.Context) (<-chan *Envelope, error) {
-			clientCtx = ctx
+	client := &signal.MockClient{
+		SubscribeFunc: func(ctx context.Context) (<-chan *signal.Envelope, error) {
+			select {
+			case ctxChan <- ctx:
+				// Store the context
+			default:
+				// Channel already has a context, replace it
+				<-ctxChan
+				ctxChan <- ctx
+			}
 			close(ctxCaptured)
 			return clientCh, nil
 		},
@@ -273,7 +282,7 @@ func TestMessengerIntegrationContextCancellation(t *testing.T) {
 		},
 	}
 
-	m := NewMessenger(client, "+1234567890")
+	m := signal.NewMessenger(client, "+1234567890")
 
 	// Subscribe with cancellable context
 	ctx, cancel := context.WithCancel(context.Background())
@@ -287,9 +296,9 @@ func TestMessengerIntegrationContextCancellation(t *testing.T) {
 
 	// Send a message to verify subscription is working
 	go func() {
-		clientCh <- &Envelope{
+		clientCh <- &signal.Envelope{
 			Source:      "+0987654321",
-			DataMessage: &DataMessage{Message: "Test message"},
+			DataMessage: &signal.DataMessage{Message: "Test message"},
 		}
 	}()
 
@@ -305,9 +314,18 @@ func TestMessengerIntegrationContextCancellation(t *testing.T) {
 	// Cancel context
 	cancel()
 
+	// Get the captured context from the channel
+	var capturedCtx context.Context
+	select {
+	case capturedCtx = <-ctxChan:
+		// Got the context
+	default:
+		t.Fatal("No context was captured")
+	}
+
 	// Verify client context is canceled
 	select {
-	case <-clientCtx.Done():
+	case <-capturedCtx.Done():
 		// Expected
 	case <-time.After(time.Second):
 		t.Error("Client context was not canceled")
@@ -329,13 +347,13 @@ func TestMessengerIntegrationSubscriptionReplacement(t *testing.T) {
 	var mu sync.Mutex
 	var contexts []context.Context
 
-	client := &MockClient{
-		SubscribeFunc: func(ctx context.Context) (<-chan *Envelope, error) {
+	client := &signal.MockClient{
+		SubscribeFunc: func(ctx context.Context) (<-chan *signal.Envelope, error) {
 			mu.Lock()
 			contexts = append(contexts, ctx)
 			mu.Unlock()
 
-			ch := make(chan *Envelope)
+			ch := make(chan *signal.Envelope)
 			go func() {
 				<-ctx.Done()
 				close(ch)
@@ -347,11 +365,11 @@ func TestMessengerIntegrationSubscriptionReplacement(t *testing.T) {
 		},
 	}
 
-	m := NewMessenger(client, "+1234567890")
+	m := signal.NewMessenger(client, "+1234567890")
 
 	// Create multiple subscriptions
 	subscriptionCount := 5
-	var channels []<-chan IncomingMessage
+	channels := make([]<-chan signal.IncomingMessage, 0, subscriptionCount)
 
 	for i := range subscriptionCount {
 		ctx := context.Background()
@@ -362,7 +380,22 @@ func TestMessengerIntegrationSubscriptionReplacement(t *testing.T) {
 		channels = append(channels, ch)
 	}
 
-	// All previous channels should be closed except the last one
+	// Verify channel states
+	verifyChannelStates(t, channels)
+
+	// Allow contexts to be processed
+	<-time.After(100 * time.Millisecond)
+
+	// Verify all contexts except the last are canceled
+	mu.Lock()
+	ctxs := contexts
+	mu.Unlock()
+
+	verifyContextStates(t, ctxs)
+}
+
+func verifyChannelStates(t *testing.T, channels []<-chan signal.IncomingMessage) {
+	t.Helper()
 	for i, ch := range channels {
 		if i < len(channels)-1 {
 			// Should be closed
@@ -384,15 +417,10 @@ func TestMessengerIntegrationSubscriptionReplacement(t *testing.T) {
 			}
 		}
 	}
+}
 
-	// Allow contexts to be processed
-	<-time.After(100 * time.Millisecond)
-
-	// Verify all contexts except the last are canceled
-	mu.Lock()
-	ctxs := contexts
-	mu.Unlock()
-
+func verifyContextStates(t *testing.T, ctxs []context.Context) {
+	t.Helper()
 	// The messenger creates its own derived contexts, so we just verify
 	// that previous subscriptions' contexts are canceled
 	for i, ctx := range ctxs {

@@ -79,7 +79,7 @@ type jsonUsage struct {
 func NewClient(config Config) (*Client, error) {
 	// Validate configuration
 	if config.Command == "" {
-		return nil, fmt.Errorf("command path cannot be empty")
+		return nil, fmt.Errorf("client creation failed: command path cannot be empty")
 	}
 
 	// Set default timeout if not specified
@@ -119,10 +119,10 @@ func (c *Client) Query(ctx context.Context, prompt string, sessionID string) (*L
 
 func validateQueryInputs(prompt, sessionID string) error {
 	if prompt == "" {
-		return fmt.Errorf("prompt cannot be empty")
+		return fmt.Errorf("query validation failed: prompt cannot be empty")
 	}
 	if sessionID == "" {
-		return fmt.Errorf("session ID cannot be empty")
+		return fmt.Errorf("query validation failed: session ID cannot be empty")
 	}
 	return nil
 }

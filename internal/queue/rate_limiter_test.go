@@ -1,4 +1,4 @@
-package queue
+package queue_test
 
 import (
 	"context"
@@ -8,11 +8,13 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Veraticus/mentat/internal/queue"
 )
 
 func TestTokenBucket_Allow(t *testing.T) {
 	// Create bucket with capacity 3, refill 1 token per 100ms
-	tb := NewTokenBucket(3, 1, 100*time.Millisecond)
+	tb := queue.NewTokenBucket(3, 1, 100*time.Millisecond)
 
 	// Should allow 3 requests immediately (full bucket)
 	for i := range 3 {
@@ -42,7 +44,7 @@ func TestTokenBucket_Allow(t *testing.T) {
 
 func TestTokenBucket_Wait(t *testing.T) {
 	// Create bucket with capacity 1, refill 1 token per 50ms
-	tb := NewTokenBucket(1, 1, 50*time.Millisecond)
+	tb := queue.NewTokenBucket(1, 1, 50*time.Millisecond)
 
 	// First request should succeed immediately
 	ctx := context.Background()
@@ -68,7 +70,7 @@ func TestTokenBucket_Wait(t *testing.T) {
 
 func TestTokenBucket_WaitCancel(t *testing.T) {
 	// Create bucket with no tokens and slow refill
-	tb := NewTokenBucket(1, 1, 10*time.Second)
+	tb := queue.NewTokenBucket(1, 1, 10*time.Second)
 	tb.Allow() // Consume the initial token
 
 	// Create cancellable context
@@ -97,7 +99,7 @@ func TestTokenBucket_WaitCancel(t *testing.T) {
 
 func TestTokenBucket_RefillCap(t *testing.T) {
 	// Create bucket with capacity 2, refill 3 tokens per period
-	tb := NewTokenBucket(2, 3, 50*time.Millisecond)
+	tb := queue.NewTokenBucket(2, 3, 50*time.Millisecond)
 
 	// Consume all tokens
 	tb.Allow()
@@ -120,7 +122,7 @@ func TestTokenBucket_RefillCap(t *testing.T) {
 }
 
 func TestRateLimiter_PerConversation(t *testing.T) {
-	rl := NewRateLimiter(2, 1, 50*time.Millisecond)
+	rl := queue.NewRateLimiter(2, 1, 50*time.Millisecond)
 
 	// Each conversation should have its own bucket
 	// Should allow 2 requests for conv1
@@ -151,7 +153,7 @@ func TestRateLimiter_PerConversation(t *testing.T) {
 // The rate limiting is now handled synchronously via Allow/Record
 /*
 func TestRateLimiter_Wait(t *testing.T) {
-	rl := NewRateLimiter(1, 1, 50*time.Millisecond)
+	rl := queue.NewRateLimiter(1, 1, 50*time.Millisecond)
 	ctx := context.Background()
 
 	// Use up token for conv1
@@ -171,11 +173,7 @@ func TestRateLimiter_Wait(t *testing.T) {
 */
 
 func TestRateLimiter_CleanupStale(t *testing.T) {
-	rlInterface := NewRateLimiter(1, 1, 50*time.Millisecond)
-	rl, ok := rlInterface.(*rateLimiter)
-	if !ok {
-		t.Fatal("NewRateLimiter did not return *rateLimiter")
-	}
+	rl := queue.NewRateLimiter(1, 1, 50*time.Millisecond)
 
 	// Create buckets for multiple conversations
 	rl.Allow("old1")
@@ -184,26 +182,26 @@ func TestRateLimiter_CleanupStale(t *testing.T) {
 	rl.Allow("new1")
 
 	// Should have 3 buckets
-	if len(rl.buckets) != 3 {
-		t.Errorf("Expected 3 buckets, got %d", len(rl.buckets))
+	if count := queue.GetRateLimiterBucketCount(rl); count != 3 {
+		t.Errorf("Expected 3 buckets, got %d", count)
 	}
 
 	// Cleanup buckets older than 80ms
 	rl.CleanupStale(80 * time.Millisecond)
 
 	// Should only have new1 left
-	if len(rl.buckets) != 1 {
-		t.Errorf("Expected 1 bucket after cleanup, got %d", len(rl.buckets))
+	if count := queue.GetRateLimiterBucketCount(rl); count != 1 {
+		t.Errorf("Expected 1 bucket after cleanup, got %d", count)
 	}
 
-	if _, exists := rl.buckets["new1"]; !exists {
+	if !queue.RateLimiterHasBucket(rl, "new1") {
 		t.Error("Expected new1 bucket to remain")
 	}
 }
 
 func TestRateLimiter_Concurrent(t *testing.T) {
 	// Use smaller capacity to make rate limiting more apparent
-	rl := NewRateLimiter(5, 1, 100*time.Millisecond)
+	rl := queue.NewRateLimiter(5, 1, 100*time.Millisecond)
 
 	var allowed int32
 	var denied int32
@@ -252,11 +250,7 @@ func TestRateLimiter_Concurrent(t *testing.T) {
 }
 
 func TestRateLimiter_Stats(t *testing.T) {
-	rlInterface := NewRateLimiter(3, 1, 50*time.Millisecond)
-	rl, ok := rlInterface.(*rateLimiter)
-	if !ok {
-		t.Fatal("Failed to cast to *rateLimiter")
-	}
+	rl := queue.NewRateLimiter(3, 1, 50*time.Millisecond)
 
 	// Create some buckets with different token counts
 	rl.Allow("conv1") // 2 tokens left
@@ -283,7 +277,7 @@ func TestRateLimiter_Stats(t *testing.T) {
 }
 
 func TestDefaultRateLimiter(t *testing.T) {
-	rl := DefaultRateLimiter()
+	rl := queue.DefaultRateLimiter()
 
 	// Should allow burst of 5
 	for i := range 5 {

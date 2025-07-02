@@ -1,4 +1,4 @@
-package queue
+package queue_test
 
 import (
 	"context"
@@ -7,18 +7,20 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Veraticus/mentat/internal/queue"
 )
 
 func TestManager_SubmitAndRequest(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	manager := NewManager(ctx)
+	manager := queue.NewManager(ctx)
 	go manager.Start(ctx)
 
 	// Submit messages
-	msg1 := NewMessage("msg-1", "conv-1", "sender1", "+1234567890", "hello")
-	msg2 := NewMessage("msg-2", "conv-2", "sender2", "+0987654321", "world")
+	msg1 := queue.NewMessage("msg-1", "conv-1", "sender1", "+1234567890", "hello")
+	msg2 := queue.NewMessage("msg-2", "conv-2", "sender2", "+0987654321", "world")
 
 	if err := manager.Submit(msg1); err != nil {
 		t.Fatalf("Failed to submit msg1: %v", err)
@@ -42,8 +44,8 @@ func TestManager_SubmitAndRequest(t *testing.T) {
 	}
 
 	// Should be in processing state
-	if received1.GetState() != StateProcessing {
-		t.Errorf("Expected state %s, got %s", StateProcessing, received1.GetState())
+	if received1.GetState() != queue.StateProcessing {
+		t.Errorf("Expected state %s, got %s", queue.StateProcessing, received1.GetState())
 	}
 
 	// Complete and request next
@@ -70,7 +72,7 @@ func TestManager_FairScheduling(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	manager := NewManager(ctx)
+	manager := queue.NewManager(ctx)
 	go manager.Start(ctx)
 
 	// Manager starts immediately
@@ -81,7 +83,7 @@ func TestManager_FairScheduling(t *testing.T) {
 
 	for _, convID := range conversations {
 		for i := range messagesPerConv {
-			msg := NewMessage(
+			msg := queue.NewMessage(
 				fmt.Sprintf("%s-msg-%d", convID, i),
 				convID,
 				"sender",
@@ -128,11 +130,11 @@ func TestManager_Shutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	manager := NewManager(ctx)
+	manager := queue.NewManager(ctx)
 	go manager.Start(ctx)
 
 	// Submit a message
-	msg := NewMessage("msg-1", "conv-1", "sender", "+1234567890", "test")
+	msg := queue.NewMessage("msg-1", "conv-1", "sender", "+1234567890", "test")
 	if err := manager.Submit(msg); err != nil {
 		t.Fatalf("Failed to submit message: %v", err)
 	}
@@ -144,7 +146,7 @@ func TestManager_Shutdown(t *testing.T) {
 	}
 
 	// Should not be able to submit after shutdown
-	err = manager.Submit(NewMessage("msg-2", "conv-1", "sender", "+1234567890", "test"))
+	err = manager.Submit(queue.NewMessage("msg-2", "conv-1", "sender", "+1234567890", "test"))
 	if err == nil {
 		t.Error("Expected error submitting after shutdown")
 	}
@@ -154,7 +156,7 @@ func TestManager_Stats(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	manager := NewManager(ctx)
+	manager := queue.NewManager(ctx)
 	go manager.Start(ctx)
 
 	// Initial stats
@@ -164,13 +166,13 @@ func TestManager_Stats(t *testing.T) {
 	}
 
 	// Submit messages
-	if err := manager.Submit(NewMessage("msg-1", "conv-1", "sender", "+1234567890", "test")); err != nil {
+	if err := manager.Submit(queue.NewMessage("msg-1", "conv-1", "sender", "+1234567890", "test")); err != nil {
 		t.Fatalf("Failed to submit msg-1: %v", err)
 	}
-	if err := manager.Submit(NewMessage("msg-2", "conv-1", "sender", "+1234567890", "test")); err != nil {
+	if err := manager.Submit(queue.NewMessage("msg-2", "conv-1", "sender", "+1234567890", "test")); err != nil {
 		t.Fatalf("Failed to submit msg-2: %v", err)
 	}
-	if err := manager.Submit(NewMessage("msg-3", "conv-2", "sender", "+0987654321", "test")); err != nil {
+	if err := manager.Submit(queue.NewMessage("msg-3", "conv-2", "sender", "+0987654321", "test")); err != nil {
 		t.Errorf("Failed to submit message: %v", err)
 	}
 
@@ -204,7 +206,7 @@ func TestManager_ConcurrentSubmit(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	manager := NewManager(ctx)
+	manager := queue.NewManager(ctx)
 	go manager.Start(ctx)
 
 	var wg sync.WaitGroup
@@ -217,7 +219,7 @@ func TestManager_ConcurrentSubmit(t *testing.T) {
 		go func(goroutineID int) {
 			defer wg.Done()
 			for j := range messagesPerGoroutine {
-				msg := NewMessage(
+				msg := queue.NewMessage(
 					fmt.Sprintf("g%d-m%d", goroutineID, j),
 					fmt.Sprintf("conv-%d", goroutineID%3), // 3 conversations
 					"sender",
@@ -246,11 +248,11 @@ func TestManager_CompleteNonExistentMessage(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	manager := NewManager(ctx)
+	manager := queue.NewManager(ctx)
 	go manager.Start(ctx)
 
 	// Try to complete a message that was never submitted
-	msg := NewMessage("fake", "fake-conv", "sender", "+1234567890", "test")
+	msg := queue.NewMessage("fake", "fake-conv", "sender", "+1234567890", "test")
 	err := manager.CompleteMessage(msg)
 	if err == nil {
 		t.Error("Expected error completing non-existent message")
@@ -261,7 +263,7 @@ func TestManager_RequestTimeout(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	manager := NewManager(ctx)
+	manager := queue.NewManager(ctx)
 	go manager.Start(ctx)
 
 	// Manager starts immediately

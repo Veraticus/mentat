@@ -50,18 +50,30 @@ func (t *testLLM) setError(key string, err error) {
 	t.errors[key] = err
 }
 
+type multiAgentValidatorTestCase struct {
+	name               string
+	request            string
+	response           string
+	llmResponse        string
+	llmError           error
+	expectedStatus     agent.ValidationStatus
+	expectedIssues     int
+	expectedConfidence float64
+	expectError        bool
+}
+
 func TestMultiAgentValidator_Validate(t *testing.T) {
-	tests := []struct {
-		name               string
-		request            string
-		response           string
-		llmResponse        string
-		llmError           error
-		expectedStatus     agent.ValidationStatus
-		expectedIssues     int
-		expectedConfidence float64
-		expectError        bool
-	}{
+	tests := getMultiAgentValidatorTestCases()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runMultiAgentValidatorTest(t, tt)
+		})
+	}
+}
+
+func getMultiAgentValidatorTestCases() []multiAgentValidatorTestCase {
+	return []multiAgentValidatorTestCase{
 		{
 			name:     "successful validation",
 			request:  "What's the weather today?",
@@ -142,36 +154,35 @@ suggestions: NONE`,
 			expectedConfidence: 0.85,
 		},
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			validator := agent.NewMultiAgentValidator()
-			mockLLM := newTestLLM()
+func runMultiAgentValidatorTest(t *testing.T, tt multiAgentValidatorTestCase) {
+	t.Helper()
+	validator := agent.NewMultiAgentValidator()
+	mockLLM := newTestLLM()
 
-			if tt.llmError != nil {
-				mockLLM.setError("*", tt.llmError)
-			} else {
-				mockLLM.setResponse("*", tt.llmResponse)
-			}
+	if tt.llmError != nil {
+		mockLLM.setError("*", tt.llmError)
+	} else {
+		mockLLM.setResponse("*", tt.llmResponse)
+	}
 
-			result := validator.Validate(context.Background(), tt.request, tt.response, mockLLM)
+	result := validator.Validate(context.Background(), tt.request, tt.response, mockLLM)
 
-			if result.Status != tt.expectedStatus {
-				t.Errorf("expected status %v, got %v", tt.expectedStatus, result.Status)
-			}
+	if result.Status != tt.expectedStatus {
+		t.Errorf("expected status %v, got %v", tt.expectedStatus, result.Status)
+	}
 
-			if len(result.Issues) != tt.expectedIssues {
-				t.Errorf("expected %d issues, got %d: %v", tt.expectedIssues, len(result.Issues), result.Issues)
-			}
+	if len(result.Issues) != tt.expectedIssues {
+		t.Errorf("expected %d issues, got %d: %v", tt.expectedIssues, len(result.Issues), result.Issues)
+	}
 
-			if result.Confidence != tt.expectedConfidence {
-				t.Errorf("expected confidence %v, got %v", tt.expectedConfidence, result.Confidence)
-			}
+	if result.Confidence != tt.expectedConfidence {
+		t.Errorf("expected confidence %v, got %v", tt.expectedConfidence, result.Confidence)
+	}
 
-			if tt.expectError && result.Metadata["error"] == "" {
-				t.Error("expected error in metadata, but none found")
-			}
-		})
+	if tt.expectError && result.Metadata["error"] == "" {
+		t.Error("expected error in metadata, but none found")
 	}
 }
 

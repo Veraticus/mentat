@@ -270,7 +270,7 @@ func (s *ScriptedLLM) simulateDelay(ctx context.Context, delay time.Duration) er
 		// Delay completed
 		return nil
 	case <-ctx.Done():
-		return fmt.Errorf("context cancelled during delay: %w", ctx.Err())
+		return fmt.Errorf("context canceled during delay: %w", ctx.Err())
 	}
 }
 

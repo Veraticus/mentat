@@ -1,4 +1,4 @@
-package signal
+package signal_test
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/Veraticus/mentat/internal/signal"
 )
 
 func TestMockTransport_Call(t *testing.T) {
@@ -70,7 +72,7 @@ func TestMockTransport_Call(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create mock transport
-			transport := NewMockTransport()
+			transport := signal.NewMockTransport()
 			if tt.mockResponse != nil {
 				transport.SetResponse(tt.method, tt.mockResponse, tt.mockError)
 			} else {
@@ -105,7 +107,7 @@ func TestMockTransport_Subscribe(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	transport := NewMockTransport()
+	transport := signal.NewMockTransport()
 
 	// Subscribe
 	notifications, err := transport.Subscribe(ctx)
@@ -114,7 +116,7 @@ func TestMockTransport_Subscribe(t *testing.T) {
 	}
 
 	// Simulate incoming notification
-	testNotif := &Notification{
+	testNotif := &signal.Notification{
 		JSONRPC: "2.0",
 		Method:  "receive",
 		Params: json.RawMessage(`{
@@ -155,7 +157,7 @@ func TestMockTransport_Subscribe(t *testing.T) {
 }
 
 func TestMockTransport_Close(t *testing.T) {
-	transport := NewMockTransport()
+	transport := signal.NewMockTransport()
 
 	// Subscribe to get a channel
 	ctx := context.Background()
@@ -193,7 +195,7 @@ func TestMockTransport_Close(t *testing.T) {
 }
 
 func TestMockTransport_ConcurrentCalls(t *testing.T) {
-	transport := NewMockTransport()
+	transport := signal.NewMockTransport()
 	transport.SetResponse("test", func() *json.RawMessage {
 		msg := json.RawMessage(`{"success": true}`)
 		return &msg
@@ -236,7 +238,7 @@ func TestMockTransport_ConcurrentCalls(t *testing.T) {
 }
 
 func TestMockTransport_ContextCancellation(t *testing.T) {
-	transport := NewMockTransport()
+	transport := signal.NewMockTransport()
 	transport.SetResponseDelay("slow", 500*time.Millisecond)
 	transport.SetResponse("slow", func() *json.RawMessage {
 		msg := json.RawMessage(`{"success": true}`)
