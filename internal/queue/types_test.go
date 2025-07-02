@@ -9,27 +9,7 @@ import (
 	"github.com/Veraticus/mentat/internal/queue"
 )
 
-func TestMessageStateConstants(t *testing.T) {
-	// Verify that MessageState constants have expected values
-	if queue.MessageStateQueued != 0 {
-		t.Error("Expected MessageStateQueued to be 0")
-	}
-	if queue.MessageStateProcessing != 1 {
-		t.Error("Expected MessageStateProcessing to be 1")
-	}
-	if queue.MessageStateValidating != 2 {
-		t.Error("Expected MessageStateValidating to be 2")
-	}
-	if queue.MessageStateCompleted != 3 {
-		t.Error("Expected MessageStateCompleted to be 3")
-	}
-	if queue.MessageStateFailed != 4 {
-		t.Error("Expected MessageStateFailed to be 4")
-	}
-	if queue.MessageStateRetrying != 5 {
-		t.Error("Expected MessageStateRetrying to be 5")
-	}
-}
+// TestMessageStateConstants is no longer needed as State is now a string type
 
 func TestStateConstants(t *testing.T) {
 	// Verify that State constants have expected string values
@@ -305,10 +285,10 @@ func TestMessageStateTransitions(t *testing.T) {
 	}
 
 	first := history[0]
-	if first.From != queue.MessageStateQueued {
+	if first.From != queue.StateQueued {
 		t.Error("Incorrect From state")
 	}
-	if first.To != queue.MessageStateProcessing {
+	if first.To != queue.StateProcessing {
 		t.Error("Incorrect To state")
 	}
 	if first.Reason != queue.StartingProcessingReason {

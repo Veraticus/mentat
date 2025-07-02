@@ -35,12 +35,12 @@ func TestMessageQueue_EnqueueAndGetNext(t *testing.T) {
 		t.Fatal("Expected to get a message, got nil")
 	}
 
-	if queuedMsg.From != msg.From {
-		t.Errorf("Expected from %s, got %s", msg.From, queuedMsg.From)
+	if queuedMsg.Sender != msg.From {
+		t.Errorf("Expected sender %s, got %s", msg.From, queuedMsg.Sender)
 	}
 
-	if queuedMsg.State != queue.MessageStateProcessing {
-		t.Errorf("Expected state %v, got %v", queue.MessageStateProcessing, queuedMsg.State)
+	if queuedMsg.State != queue.StateProcessing {
+		t.Errorf("Expected state %v, got %v", queue.StateProcessing, queuedMsg.State)
 	}
 
 	// Getting next should return nil (no more queued messages)
@@ -85,7 +85,7 @@ func TestMessageQueue_UpdateState(t *testing.T) {
 	}
 
 	// Update to retrying (valid transition from processing with error)
-	err = q.UpdateState(queuedMsg.ID, queue.MessageStateFailed, "failed")
+	err = q.UpdateState(queuedMsg.ID, queue.StateFailed, "failed")
 	if err != nil {
 		t.Fatalf("Failed to update state: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestMessageQueue_UpdateState(t *testing.T) {
 	}
 
 	// Try to update non-existent message
-	err = q.UpdateState("msg-999", queue.MessageStateFailed, "test")
+	err = q.UpdateState("msg-999", queue.StateFailed, "test")
 	if err == nil {
 		t.Error("Expected error for non-existent message")
 	}
@@ -173,7 +173,7 @@ func simulatePermanentFailure(t *testing.T, q queue.MessageQueue, msgID string) 
 	if err != nil {
 		t.Fatalf("Failed to set error: %v", err)
 	}
-	err = q.UpdateState(msgID, queue.MessageStateFailed, "permanently failed")
+	err = q.UpdateState(msgID, queue.StateFailed, "permanently failed")
 	if err != nil {
 		t.Fatalf("Failed to update state to failed: %v", err)
 	}
@@ -185,7 +185,7 @@ func simulateTemporaryFailure(t *testing.T, q queue.MessageQueue, msgID string) 
 	if err != nil {
 		t.Fatalf("Failed to set error: %v", err)
 	}
-	err = q.UpdateState(msgID, queue.MessageStateFailed, "error")
+	err = q.UpdateState(msgID, queue.StateFailed, "error")
 	if err != nil {
 		t.Fatalf("Failed to update state: %v", err)
 	}

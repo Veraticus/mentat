@@ -14,10 +14,10 @@ type MessageQueue interface {
 	Enqueue(msg signal.IncomingMessage) error
 
 	// GetNext returns the next message for a worker to process
-	GetNext(workerID string) (*QueuedMessage, error)
+	GetNext(workerID string) (*Message, error)
 
 	// UpdateState marks a message state transition
-	UpdateState(msgID string, state MessageState, reason string) error
+	UpdateState(msgID string, state State, reason string) error
 
 	// Stats returns queue statistics
 	Stats() Stats

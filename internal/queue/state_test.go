@@ -258,9 +258,9 @@ func TestStateMachine_StateHistory(t *testing.T) {
 		t.Fatalf("Expected 1 history entry, got %d", len(history))
 	}
 
-	if history[0].From != queue.MessageStateQueued || history[0].To != queue.MessageStateProcessing {
-		t.Errorf("Expected transition from %d to %d, got from %d to %d",
-			queue.MessageStateQueued, queue.MessageStateProcessing, history[0].From, history[0].To)
+	if history[0].From != queue.StateQueued || history[0].To != queue.StateProcessing {
+		t.Errorf("Expected transition from %s to %s, got from %s to %s",
+			queue.StateQueued, queue.StateProcessing, history[0].From, history[0].To)
 	}
 
 	if history[0].Reason != queue.StartingProcessingReason {

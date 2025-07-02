@@ -60,7 +60,7 @@ func (q *SimpleMessageQueue) Enqueue(msg signal.IncomingMessage) error {
 }
 
 // GetNext returns the next message for a worker to process.
-func (q *SimpleMessageQueue) GetNext(_ string) (*QueuedMessage, error) {
+func (q *SimpleMessageQueue) GetNext(_ string) (*Message, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -83,21 +83,11 @@ func (q *SimpleMessageQueue) GetNext(_ string) (*QueuedMessage, error) {
 		return nil, fmt.Errorf("failed to transition message to processing: %w", err)
 	}
 
-	// Convert to QueuedMessage
-	return &QueuedMessage{
-		ID:             oldestMsg.ID,
-		ConversationID: oldestMsg.ConversationID,
-		From:           oldestMsg.Sender,
-		Text:           oldestMsg.Text,
-		State:          MessageStateProcessing,
-		Priority:       PriorityNormal,
-		Attempts:       oldestMsg.Attempts,
-		QueuedAt:       oldestMsg.CreatedAt,
-	}, nil
+	return oldestMsg, nil
 }
 
 // UpdateState marks a message state transition.
-func (q *SimpleMessageQueue) UpdateState(msgID string, state MessageState, _ string) error {
+func (q *SimpleMessageQueue) UpdateState(msgID string, state State, _ string) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -106,27 +96,8 @@ func (q *SimpleMessageQueue) UpdateState(msgID string, state MessageState, _ str
 		return fmt.Errorf("message %s not found", msgID)
 	}
 
-	// Convert MessageState to State
-	var targetState State
-	switch state {
-	case MessageStateQueued:
-		targetState = StateQueued
-	case MessageStateProcessing:
-		targetState = StateProcessing
-	case MessageStateValidating:
-		targetState = StateValidating
-	case MessageStateCompleted:
-		targetState = StateCompleted
-	case MessageStateFailed:
-		targetState = StateFailed
-	case MessageStateRetrying:
-		targetState = StateRetrying
-	default:
-		return fmt.Errorf("unknown message state: %v", state)
-	}
-
 	// Use the state machine to transition
-	if err := q.stateMachine.Transition(msg, targetState); err != nil {
+	if err := q.stateMachine.Transition(msg, state); err != nil {
 		return fmt.Errorf("failed to transition message: %w", err)
 	}
 

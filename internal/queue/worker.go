@@ -212,18 +212,15 @@ func (w *worker) updateMessageState(ctx context.Context, msg *Message) {
 
 // updateStateViaQueue updates state through MessageQueue interface.
 func (w *worker) updateStateViaQueue(ctx context.Context, msg *Message) {
-	var state MessageState
 	var reason string
 
-	switch msg.GetState() {
+	state := msg.GetState()
+	switch state {
 	case StateRetrying:
-		state = MessageStateRetrying
 		reason = "Rate limited"
 	case StateFailed:
-		state = MessageStateFailed
 		reason = "Retry limit exceeded"
 	case StateCompleted:
-		state = MessageStateCompleted
 		reason = "Successfully processed"
 	case StateQueued, StateProcessing, StateValidating:
 		// These states are not updated via this method

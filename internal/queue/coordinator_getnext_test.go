@@ -88,14 +88,14 @@ func processAllMessages(
 			t.Fatal("Expected message but got nil")
 		}
 
-		timestamp := extractMessageTimestamp(msg, messageTimestamps[msg.From])
-		if processedOrder[msg.From] == nil {
-			processedOrder[msg.From] = []time.Time{}
+		timestamp := extractMessageTimestamp(msg, messageTimestamps[msg.Sender])
+		if processedOrder[msg.Sender] == nil {
+			processedOrder[msg.Sender] = []time.Time{}
 		}
-		processedOrder[msg.From] = append(processedOrder[msg.From], timestamp)
+		processedOrder[msg.Sender] = append(processedOrder[msg.Sender], timestamp)
 
 		// Mark as completed to allow next message from same conversation
-		if updateErr := coordinator.UpdateState(msg.ID, queue.MessageStateCompleted, "test completed"); updateErr != nil {
+		if updateErr := coordinator.UpdateState(msg.ID, queue.StateCompleted, "test completed"); updateErr != nil {
 			t.Fatalf("Failed to update state: %v", updateErr)
 		}
 	}
@@ -104,9 +104,9 @@ func processAllMessages(
 }
 
 // extractMessageTimestamp extracts the timestamp from a message ID.
-func extractMessageTimestamp(msg *queue.QueuedMessage, timestamps []time.Time) time.Time {
+func extractMessageTimestamp(msg *queue.Message, timestamps []time.Time) time.Time {
 	for _, ts := range timestamps {
-		if fmt.Sprintf("%d-%s", ts.UnixNano(), msg.From) == msg.ID {
+		if fmt.Sprintf("%d-%s", ts.UnixNano(), msg.Sender) == msg.ID {
 			return ts
 		}
 	}
@@ -215,15 +215,15 @@ func processAndTrackRounds(
 			t.Fatal("Expected message but got nil")
 		}
 
-		round = trackMessageRound(msg.From, processedInRound, round)
-		processedInRound[msg.From] = true
+		round = trackMessageRound(msg.Sender, processedInRound, round)
+		processedInRound[msg.Sender] = true
 
-		if conversationRounds[msg.From] == nil {
-			conversationRounds[msg.From] = []int{}
+		if conversationRounds[msg.Sender] == nil {
+			conversationRounds[msg.Sender] = []int{}
 		}
-		conversationRounds[msg.From] = append(conversationRounds[msg.From], round)
+		conversationRounds[msg.Sender] = append(conversationRounds[msg.Sender], round)
 
-		if updateErr := coordinator.UpdateState(msg.ID, queue.MessageStateCompleted, "test completed"); updateErr != nil {
+		if updateErr := coordinator.UpdateState(msg.ID, queue.StateCompleted, "test completed"); updateErr != nil {
 			t.Fatalf("Failed to update state: %v", updateErr)
 		}
 	}
@@ -385,7 +385,7 @@ func processMessagesWithTracking(
 			&maxMessagesBeforeLightProcessed,
 		)
 
-		if updateErr := coordinator.UpdateState(msg.ID, queue.MessageStateCompleted, "test completed"); updateErr != nil {
+		if updateErr := coordinator.UpdateState(msg.ID, queue.StateCompleted, "test completed"); updateErr != nil {
 			t.Fatalf("Failed to update state: %v", updateErr)
 		}
 
@@ -401,14 +401,14 @@ func processMessagesWithTracking(
 }
 
 func trackLightConversationProcessing(
-	msg *queue.QueuedMessage,
+	msg *queue.Message,
 	lightConvs []string,
 	lightProcessedTimes map[string]time.Time,
 	messageCount int,
 	maxMessages *int,
 ) {
 	for _, lightConv := range lightConvs {
-		if msg.From == lightConv && lightProcessedTimes[lightConv].IsZero() {
+		if msg.Sender == lightConv && lightProcessedTimes[lightConv].IsZero() {
 			lightProcessedTimes[lightConv] = time.Now()
 			if messageCount > *maxMessages {
 				*maxMessages = messageCount
@@ -507,14 +507,14 @@ func TestCoordinator_GetNextConversationAffinity(t *testing.T) {
 	// This should fail or return a message from a different conversation
 	worker2 := "worker2"
 	msg2, err := coordinator.GetNext(worker2)
-	if err == nil && msg2 != nil && msg2.From == from {
+	if err == nil && msg2 != nil && msg2.Sender == from {
 		t.Error(
 			"Second worker should not get message from same conversation while first is processing",
 		)
 	}
 
 	// Complete the first message
-	if updateErr := coordinator.UpdateState(msg1.ID, queue.MessageStateCompleted, "test completed"); updateErr != nil {
+	if updateErr := coordinator.UpdateState(msg1.ID, queue.StateCompleted, "test completed"); updateErr != nil {
 		t.Fatalf("Failed to update state: %v", updateErr)
 	}
 
@@ -526,8 +526,8 @@ func TestCoordinator_GetNextConversationAffinity(t *testing.T) {
 	if msg3 == nil {
 		t.Fatal("Expected message but got nil")
 	}
-	if msg3.From != from {
-		t.Errorf("Expected message from conversation %s, got %s", from, msg3.From)
+	if msg3.Sender != from {
+		t.Errorf("Expected message from conversation %s, got %s", from, msg3.Sender)
 	}
 }
 
@@ -642,7 +642,7 @@ func processWorkerMessages(
 		}
 
 		// Mark as completed
-		if updateErr := coordinator.UpdateState(msg.ID, queue.MessageStateCompleted, "test completed"); updateErr != nil {
+		if updateErr := coordinator.UpdateState(msg.ID, queue.StateCompleted, "test completed"); updateErr != nil {
 			t.Errorf("Worker %s failed to update state: %v", workerID, updateErr)
 		}
 	}
@@ -786,6 +786,6 @@ func benchmarkWorker(
 		}
 
 		// Immediately complete to allow more messages
-		_ = coordinator.UpdateState(msg.ID, queue.MessageStateCompleted, "benchmark")
+		_ = coordinator.UpdateState(msg.ID, queue.StateCompleted, "benchmark")
 	}
 }

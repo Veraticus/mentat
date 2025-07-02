@@ -16,9 +16,9 @@ type Storage interface {
 	GetConversationHistory(userID string, limit int) ([]*StoredMessage, error)
 
 	// Queue persistence
-	SaveQueueItem(item *queue.QueuedMessage) error
-	UpdateQueueItemState(itemID string, state queue.MessageState, metadata map[string]any) error
-	GetPendingQueueItems() ([]*queue.QueuedMessage, error)
+	SaveQueueItem(item *queue.Message) error
+	UpdateQueueItemState(itemID string, state queue.State, metadata map[string]any) error
+	GetPendingQueueItems() ([]*queue.Message, error)
 	GetQueueItemHistory(itemID string) ([]*StateTransition, error)
 
 	// LLM interaction tracking
@@ -94,8 +94,8 @@ type StateTransition struct {
 	ItemID    string
 	Reason    string
 	Metadata  json.RawMessage
-	FromState queue.MessageState
-	ToState   queue.MessageState
+	FromState queue.State
+	ToState   queue.State
 }
 
 // Session represents a conversation session.

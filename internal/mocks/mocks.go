@@ -523,8 +523,8 @@ func (m *MockAgentHandler) GetCalls() []signal.IncomingMessage {
 // MockMessageQueue is a test implementation of the queue.MessageQueue interface.
 type MockMessageQueue struct {
 	err      error
-	states   map[string]queue.MessageState
-	messages []*queue.QueuedMessage
+	states   map[string]queue.State
+	messages []*queue.Message
 	stats    queue.Stats
 	mu       sync.Mutex
 }
@@ -532,8 +532,8 @@ type MockMessageQueue struct {
 // NewMockMessageQueue creates a new mock message queue.
 func NewMockMessageQueue() *MockMessageQueue {
 	return &MockMessageQueue{
-		messages: make([]*queue.QueuedMessage, 0),
-		states:   make(map[string]queue.MessageState),
+		messages: make([]*queue.Message, 0),
+		states:   make(map[string]queue.State),
 		stats:    queue.Stats{},
 	}
 }
@@ -547,28 +547,26 @@ func (m *MockMessageQueue) Enqueue(msg signal.IncomingMessage) error {
 		return m.err
 	}
 
-	queuedMsg := &queue.QueuedMessage{
-		ID:             fmt.Sprintf("msg-%d", len(m.messages)),
-		ConversationID: msg.From,
-		From:           msg.From,
-		Text:           msg.Text,
-		State:          queue.MessageStateQueued,
-		Priority:       queue.PriorityNormal,
-		QueuedAt:       time.Now(),
-	}
+	queuedMsg := queue.NewMessage(
+		fmt.Sprintf("msg-%d", len(m.messages)),
+		msg.From, // conversationID
+		msg.From,
+		msg.FromNumber,
+		msg.Text,
+	)
 
 	m.messages = append(m.messages, queuedMsg)
-	m.states[queuedMsg.ID] = queue.MessageStateQueued
+	m.states[queuedMsg.ID] = queue.StateQueued
 	return nil
 }
 
 // GetNext implements the MessageQueue interface.
-func (m *MockMessageQueue) GetNext(_ string) (*queue.QueuedMessage, error) {
+func (m *MockMessageQueue) GetNext(_ string) (*queue.Message, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	for _, msg := range m.messages {
-		if m.states[msg.ID] == queue.MessageStateQueued {
+		if m.states[msg.ID] == queue.StateQueued {
 			return msg, nil
 		}
 	}
@@ -576,7 +574,7 @@ func (m *MockMessageQueue) GetNext(_ string) (*queue.QueuedMessage, error) {
 }
 
 // UpdateState implements the MessageQueue interface.
-func (m *MockMessageQueue) UpdateState(msgID string, state queue.MessageState, _ string) error {
+func (m *MockMessageQueue) UpdateState(msgID string, state queue.State, _ string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -704,7 +702,7 @@ func (m *MockStateMachine) IsTerminal(state queue.State) bool {
 type MockStorage struct {
 	err        error
 	messages   map[string]*storage.StoredMessage
-	queueItems map[string]*queue.QueuedMessage
+	queueItems map[string]*queue.Message
 	llmCalls   map[string][]*storage.LLMCall
 	sessions   map[string]*storage.Session
 	mu         sync.Mutex
@@ -714,7 +712,7 @@ type MockStorage struct {
 func NewMockStorage() *MockStorage {
 	return &MockStorage{
 		messages:   make(map[string]*storage.StoredMessage),
-		queueItems: make(map[string]*queue.QueuedMessage),
+		queueItems: make(map[string]*queue.Message),
 		llmCalls:   make(map[string][]*storage.LLMCall),
 		sessions:   make(map[string]*storage.Session),
 	}
@@ -772,7 +770,7 @@ func (m *MockStorage) GetConversationHistory(
 }
 
 // SaveQueueItem implements the Storage interface.
-func (m *MockStorage) SaveQueueItem(item *queue.QueuedMessage) error {
+func (m *MockStorage) SaveQueueItem(item *queue.Message) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -783,26 +781,26 @@ func (m *MockStorage) SaveQueueItem(item *queue.QueuedMessage) error {
 // UpdateQueueItemState implements the Storage interface.
 func (m *MockStorage) UpdateQueueItemState(
 	itemID string,
-	state queue.MessageState,
+	state queue.State,
 	_ map[string]any,
 ) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if item, ok := m.queueItems[itemID]; ok {
-		item.State = state
+		item.SetState(state)
 	}
 	return nil
 }
 
 // GetPendingQueueItems implements the Storage interface.
-func (m *MockStorage) GetPendingQueueItems() ([]*queue.QueuedMessage, error) {
+func (m *MockStorage) GetPendingQueueItems() ([]*queue.Message, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	var pending []*queue.QueuedMessage
+	var pending []*queue.Message
 	for _, item := range m.queueItems {
-		if item.State == queue.MessageStateQueued || item.State == queue.MessageStateProcessing {
+		if item.GetState() == queue.StateQueued || item.GetState() == queue.StateProcessing {
 			pending = append(pending, item)
 		}
 	}

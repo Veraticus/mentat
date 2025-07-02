@@ -70,8 +70,8 @@ func TestQueueManager_EnqueueAndGetNext(t *testing.T) {
 		t.Errorf("Expected message ID %s, got %s", expectedID, queuedMsg.ID)
 	}
 
-	if queuedMsg.State != queue.MessageStateProcessing {
-		t.Errorf("Expected state %d (processing), got %d", queue.MessageStateProcessing, queuedMsg.State)
+	if queuedMsg.State != queue.StateProcessing {
+		t.Errorf("Expected state %s (processing), got %s", queue.StateProcessing, queuedMsg.State)
 	}
 }
 
@@ -99,7 +99,7 @@ func TestQueueManager_UpdateState(t *testing.T) {
 	}
 
 	// Update state to completed
-	if updateErr := qm.UpdateState(expectedID, queue.MessageStateCompleted, "Processing completed"); updateErr != nil {
+	if updateErr := qm.UpdateState(expectedID, queue.StateCompleted, "Processing completed"); updateErr != nil {
 		t.Fatalf("Failed to update state: %v", updateErr)
 	}
 
@@ -180,7 +180,7 @@ func TestQueueManager_FairScheduling(t *testing.T) {
 
 	// Track which conversations we get messages from
 	convCounts := make(map[string]int)
-	messages := make([]*queue.QueuedMessage, 0, len(conversations))
+	messages := make([]*queue.Message, 0, len(conversations))
 
 	// First round - should get one from each conversation
 	// Get all messages first before completing any
@@ -195,7 +195,7 @@ func TestQueueManager_FairScheduling(t *testing.T) {
 
 	// Now complete all messages
 	for _, msg := range messages {
-		if err := qm.UpdateState(msg.ID, queue.MessageStateCompleted, "done"); err != nil {
+		if err := qm.UpdateState(msg.ID, queue.StateCompleted, "done"); err != nil {
 			t.Errorf("Failed to complete message: %v", err)
 		}
 	}
@@ -247,7 +247,7 @@ func (w *testWorker) processNextMessage() bool {
 	<-time.After(time.Millisecond)
 
 	// Mark as completed
-	if updateErr := w.qm.UpdateState(msg.ID, queue.MessageStateCompleted, "processed"); updateErr != nil {
+	if updateErr := w.qm.UpdateState(msg.ID, queue.StateCompleted, "processed"); updateErr != nil {
 		w.t.Errorf("Failed to update state: %v", updateErr)
 		return false
 	}
@@ -429,7 +429,7 @@ func TestQueueManager_UpdateStateInvalidMessage(t *testing.T) {
 	}()
 
 	// Try to update state of non-existent message
-	err := qm.UpdateState("non-existent-id", queue.MessageStateCompleted, "test")
+	err := qm.UpdateState("non-existent-id", queue.StateCompleted, "test")
 	if err == nil {
 		t.Error("Expected error when updating non-existent message")
 	}

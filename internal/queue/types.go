@@ -11,9 +11,6 @@ import (
 // State represents the current state of a message in the queue.
 type State string
 
-// MessageState represents the state machine states.
-type MessageState int
-
 const (
 	// defaultMessageMaxAttempts is the default maximum retry attempts for a message.
 	defaultMessageMaxAttempts = 3
@@ -39,27 +36,12 @@ const (
 
 // StateTransition represents a single state change in the message lifecycle.
 type StateTransition struct {
-	From      MessageState
-	To        MessageState
+	From      State
+	To        State
 	Timestamp time.Time
 	Reason    string
 	Error     error
 }
-
-const (
-	// MessageStateQueued indicates the message is waiting to be processed.
-	MessageStateQueued MessageState = iota
-	// MessageStateProcessing indicates the message is being processed.
-	MessageStateProcessing
-	// MessageStateValidating indicates the message is being validated.
-	MessageStateValidating
-	// MessageStateCompleted indicates processing completed successfully.
-	MessageStateCompleted
-	// MessageStateFailed indicates processing failed permanently.
-	MessageStateFailed
-	// MessageStateRetrying indicates the message will be retried.
-	MessageStateRetrying
-)
 
 // Priority represents message priority levels.
 type Priority int
@@ -78,6 +60,7 @@ type Message struct {
 	Error          error
 	ProcessedAt    *time.Time
 	NextRetryAt    *time.Time // When the message should be retried (if in retry state)
+	CompletedAt    *time.Time // When the message completed processing
 	Sender         string     // Display name of sender
 	SenderNumber   string     // Phone number of sender
 	ID             string
@@ -85,9 +68,11 @@ type Message struct {
 	Text           string
 	Response       string
 	State          State
+	Priority       Priority // Message priority for scheduling
 	Attempts       int
 	MaxAttempts    int
 	StateHistory   []StateTransition
+	ErrorHistory   []ErrorRecord // History of all errors encountered
 	mu             sync.RWMutex
 }
 
@@ -101,11 +86,13 @@ func NewMessage(id, conversationID, sender, senderNumber, text string) *Message 
 		SenderNumber:   senderNumber,
 		Text:           text,
 		State:          StateQueued,
+		Priority:       PriorityNormal,
 		Attempts:       0,
 		MaxAttempts:    defaultMessageMaxAttempts,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 		StateHistory:   []StateTransition{},
+		ErrorHistory:   []ErrorRecord{},
 	}
 }
 
@@ -133,12 +120,23 @@ func (m *Message) IncrementAttempts() int {
 	return m.Attempts
 }
 
-// SetError safely sets the error field.
+// SetError safely sets the error field and adds to error history.
 func (m *Message) SetError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.Error = err
 	m.UpdatedAt = time.Now()
+
+	// Add to error history if error is not nil
+	if err != nil {
+		errorRecord := ErrorRecord{
+			Timestamp: time.Now(),
+			State:     m.State,
+			Error:     err,
+			Attempt:   m.Attempts,
+		}
+		m.ErrorHistory = append(m.ErrorHistory, errorRecord)
+	}
 }
 
 // SetResponse safely sets the response and marks completion time.
@@ -149,6 +147,10 @@ func (m *Message) SetResponse(response string) {
 	now := time.Now()
 	m.ProcessedAt = &now
 	m.UpdatedAt = now
+	// Set CompletedAt when response is recorded
+	if m.State == StateCompleted {
+		m.CompletedAt = &now
+	}
 }
 
 // CanRetry checks if the message can be retried.
@@ -164,8 +166,8 @@ func (m *Message) AddStateTransition(from, to State, reason string) {
 	defer m.mu.Unlock()
 
 	transition := StateTransition{
-		From:      stateToMessageState(from),
-		To:        stateToMessageState(to),
+		From:      from,
+		To:        to,
 		Timestamp: time.Now(),
 		Reason:    reason,
 	}
@@ -197,26 +199,6 @@ func (m *Message) AtomicTransition(expectedState, newState State) bool {
 	m.State = newState
 	m.UpdatedAt = time.Now()
 	return true
-}
-
-// stateToMessageState converts a State to MessageState.
-func stateToMessageState(s State) MessageState {
-	switch s {
-	case StateQueued:
-		return MessageStateQueued
-	case StateProcessing:
-		return MessageStateProcessing
-	case StateValidating:
-		return MessageStateValidating
-	case StateCompleted:
-		return MessageStateCompleted
-	case StateFailed:
-		return MessageStateFailed
-	case StateRetrying:
-		return MessageStateRetrying
-	default:
-		return MessageStateQueued
-	}
 }
 
 // SetNextRetryAt safely sets the next retry time.
@@ -258,42 +240,55 @@ func (m *Message) IsReadyForRetry() bool {
 	return true
 }
 
-// QueuedMessage represents a message in the queue with comprehensive state tracking.
-// This type is designed to be immutable - state changes return new instances.
-type QueuedMessage struct {
-	// Core message fields
-	ID             string
-	ConversationID string
-	From           string
-	Text           string
-	Priority       Priority
+// SetPriority safely sets the message priority.
+func (m *Message) SetPriority(priority Priority) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Priority = priority
+	m.UpdatedAt = time.Now()
+}
 
-	// State tracking
-	State        MessageState
-	StateHistory []StateTransition
+// GetPriority safely gets the message priority.
+func (m *Message) GetPriority() Priority {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.Priority
+}
 
-	// Timing information
-	QueuedAt    time.Time
-	ProcessedAt *time.Time
-	CompletedAt *time.Time
+// SetCompletedAt safely sets the completion time.
+func (m *Message) SetCompletedAt(t time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.CompletedAt = &t
+	m.UpdatedAt = time.Now()
+}
 
-	// Error tracking
-	LastError    error
-	ErrorHistory []ErrorRecord
+// GetCompletedAt safely gets the completion time.
+func (m *Message) GetCompletedAt() *time.Time {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.CompletedAt == nil {
+		return nil
+	}
+	t := *m.CompletedAt
+	return &t
+}
 
-	// Attempt tracking
-	Attempts    int
-	MaxAttempts int
-	NextRetryAt *time.Time
+// GetErrorHistory returns a copy of the error history.
+func (m *Message) GetErrorHistory() []ErrorRecord {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
-	// Internal fields (not exposed)
-	mu sync.RWMutex
+	// Return a copy to prevent external modifications
+	history := make([]ErrorRecord, len(m.ErrorHistory))
+	copy(history, m.ErrorHistory)
+	return history
 }
 
 // ErrorRecord tracks an error that occurred during processing.
 type ErrorRecord struct {
 	Timestamp time.Time
-	State     MessageState
+	State     State
 	Error     error
 	Attempt   int
 }

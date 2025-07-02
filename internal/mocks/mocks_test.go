@@ -324,12 +324,12 @@ func TestMockMessageQueue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if queuedMsg.From != msg.From || queuedMsg.Text != msg.Text {
+	if queuedMsg.Sender != msg.From || queuedMsg.Text != msg.Text {
 		t.Errorf("unexpected message: %+v", queuedMsg)
 	}
 
 	// Test update state
-	err = mock.UpdateState(queuedMsg.ID, queue.MessageStateProcessing, "processing")
+	err = mock.UpdateState(queuedMsg.ID, queue.StateProcessing, "processing")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -451,10 +451,7 @@ func TestMockStorageQueue(t *testing.T) {
 	mock := mocks.NewMockStorage()
 
 	// Test queue item
-	queueItem := &queue.QueuedMessage{
-		ID:    "queue1",
-		State: queue.MessageStateQueued,
-	}
+	queueItem := queue.NewMessage("queue1", "conv1", "sender1", "+1234567890", "test message")
 	err := mock.SaveQueueItem(queueItem)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

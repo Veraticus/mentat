@@ -36,7 +36,6 @@ const (
 type Coordinator struct {
 	manager         *Manager
 	messages        sync.Map // messageID -> *Message mapping
-	queuedMessages  sync.Map // messageID -> *QueuedMessage mapping
 	stats           *queueStats
 	statsCollector  *StatsCollector // New comprehensive stats collector
 	stopped         int32
@@ -85,23 +84,11 @@ func (qm *Coordinator) Enqueue(msg signal.IncomingMessage) error {
 	// Create internal Message from IncomingMessage
 	internalMsg := NewMessage(msgID, conversationID, msg.From, msg.FromNumber, msg.Text)
 
+	// Add initial state transition
+	internalMsg.AddStateTransition(StateQueued, StateQueued, "message created")
+
 	// Store the message for later retrieval
 	qm.messages.Store(msgID, internalMsg)
-
-	// Create QueuedMessage
-	queuedMsg := &QueuedMessage{
-		ID:             msgID,
-		ConversationID: conversationID,
-		From:           msg.From,
-		Text:           msg.Text,
-		Priority:       PriorityNormal,
-		State:          MessageStateQueued,
-		StateHistory:   []StateTransition{},
-		QueuedAt:       time.Now(),
-		Attempts:       0,
-		MaxAttempts:    defaultMessageMaxAttempts,
-	}
-	qm.queuedMessages.Store(msgID, queuedMsg)
 
 	// Update stats
 	atomic.AddInt64(&qm.stats.totalQueued, 1)
@@ -124,7 +111,7 @@ func (qm *Coordinator) Enqueue(msg signal.IncomingMessage) error {
 //
 // The method uses a short timeout (50ms) to avoid blocking indefinitely,
 // allowing workers to check for shutdown signals periodically.
-func (qm *Coordinator) GetNext(workerID string) (*QueuedMessage, error) {
+func (qm *Coordinator) GetNext(workerID string) (*Message, error) {
 	if atomic.LoadInt32(&qm.stopped) == 1 {
 		return nil, fmt.Errorf("queue manager is stopped")
 	}
@@ -143,44 +130,27 @@ func (qm *Coordinator) GetNext(workerID string) (*QueuedMessage, error) {
 		return nil, err
 	}
 
-	// Get the QueuedMessage
-	value, ok := qm.queuedMessages.Load(msg.ID)
-	if !ok {
-		return nil, fmt.Errorf("queued message not found for ID: %s", msg.ID)
-	}
-
-	queuedMsg, ok := value.(*QueuedMessage)
-	if !ok {
-		return nil, fmt.Errorf("invalid queued message type for ID: %s", msg.ID)
-	}
-
 	// Update state and stats
-	queuedMsg.State = MessageStateProcessing
-	now := time.Now()
-	queuedMsg.ProcessedAt = &now
-	queuedMsg.StateHistory = append(queuedMsg.StateHistory, StateTransition{
-		From:      MessageStateQueued,
-		To:        MessageStateProcessing,
-		Timestamp: now,
-		Reason:    "Assigned to worker " + workerID,
-	})
+	msg.SetState(StateProcessing)
+	msg.AddStateTransition(StateQueued, StateProcessing, "Assigned to worker "+workerID)
 
+	now := time.Now()
 	atomic.AddInt64(&qm.stats.totalQueued, -1)
 	atomic.AddInt64(&qm.stats.totalProcessing, 1)
 	qm.stats.processingTimes.Store(msg.ID, now)
 
 	// Update comprehensive stats
 	qm.statsCollector.RecordStateTransition(StateQueued, StateProcessing)
-	if queuedMsg.QueuedAt.Before(now) {
-		qm.statsCollector.RecordQueueTime(now.Sub(queuedMsg.QueuedAt))
+	if msg.CreatedAt.Before(now) {
+		qm.statsCollector.RecordQueueTime(now.Sub(msg.CreatedAt))
 	}
 
-	return queuedMsg, nil
+	return msg, nil
 }
 
 // handleCompletedState handles the transition to completed state.
-func (qm *Coordinator) handleCompletedState(msgID string, msg *Message, queuedMsg *QueuedMessage, now time.Time) error {
-	queuedMsg.CompletedAt = &now
+func (qm *Coordinator) handleCompletedState(msgID string, msg *Message, now time.Time) error {
+	msg.SetCompletedAt(now)
 	qm.stats.completionTimes.Store(msgID, now)
 	atomic.AddInt64(&qm.stats.totalProcessing, -1)
 	atomic.AddInt64(&qm.stats.totalCompleted, 1)
@@ -231,18 +201,17 @@ func (qm *Coordinator) recordError(err error) {
 }
 
 // handleRetryingState handles the transition to retrying state.
-func (qm *Coordinator) handleRetryingState(msgID string, msg *Message, queuedMsg *QueuedMessage, now time.Time) error {
-	queuedMsg.Attempts++
-	qm.statsCollector.RecordRetryAttempt(queuedMsg.Attempts)
+func (qm *Coordinator) handleRetryingState(msgID string, msg *Message, now time.Time) error {
+	attempts := msg.IncrementAttempts()
+	qm.statsCollector.RecordRetryAttempt(attempts)
 
 	// Calculate retry delay
-	retryDelay := qm.calculateRetryDelay(msgID, queuedMsg)
+	retryDelay := qm.calculateRetryDelay(msgID, msg)
 
 	nextRetryTime := now.Add(retryDelay)
-	queuedMsg.NextRetryAt = &nextRetryTime
-
-	// Set the NextRetryAt on the internal message so ConversationQueue respects it
 	msg.SetNextRetryAt(nextRetryTime)
+
+	// Requeue the message
 	msg.SetState(StateQueued)
 	if err := qm.manager.Submit(msg); err != nil {
 		return fmt.Errorf("failed to requeue message for retry: %w", err)
@@ -254,38 +223,36 @@ func (qm *Coordinator) handleRetryingState(msgID string, msg *Message, queuedMsg
 }
 
 // calculateRetryDelay calculates the retry delay based on error type and attempt count.
-func (qm *Coordinator) calculateRetryDelay(msgID string, queuedMsg *QueuedMessage) time.Duration {
+func (qm *Coordinator) calculateRetryDelay(msgID string, msg *Message) time.Duration {
 	var retryDelay time.Duration
 
 	// Check if the last error was a rate limit error
-	if msgValue, ok := qm.messages.Load(msgID); ok {
-		if internalMsg, isMsg := msgValue.(*Message); isMsg && internalMsg.Error != nil {
-			if IsRateLimitError(internalMsg.Error) {
-				// For rate limit errors, use longer backoff
-				retryDelay = calculateRateLimitRetryDelay(queuedMsg.Attempts)
-				logger := slog.Default()
-				logger.InfoContext(context.TODO(), "Message rate limited",
-					slog.String("id", msgID),
-					slog.Duration("retry_delay", retryDelay),
-					slog.Int("attempt", queuedMsg.Attempts),
-					slog.Int("max_attempts", queuedMsg.MaxAttempts))
-			} else {
-				// For other errors, use standard exponential backoff
-				retryDelay = CalculateRetryDelay(queuedMsg.Attempts)
-			}
+	if msg.Error != nil {
+		if IsRateLimitError(msg.Error) {
+			// For rate limit errors, use longer backoff
+			retryDelay = calculateRateLimitRetryDelay(msg.Attempts)
+			logger := slog.Default()
+			logger.InfoContext(context.TODO(), "Message rate limited",
+				slog.String("id", msgID),
+				slog.Duration("retry_delay", retryDelay),
+				slog.Int("attempt", msg.Attempts),
+				slog.Int("max_attempts", msg.MaxAttempts))
+		} else {
+			// For other errors, use standard exponential backoff
+			retryDelay = CalculateRetryDelay(msg.Attempts)
 		}
 	}
 
 	// If no delay was calculated, use default
 	if retryDelay == 0 {
-		retryDelay = CalculateRetryDelay(queuedMsg.Attempts)
+		retryDelay = CalculateRetryDelay(msg.Attempts)
 	}
 
 	return retryDelay
 }
 
 // UpdateState marks a message state transition.
-func (qm *Coordinator) UpdateState(msgID string, state MessageState, reason string) error {
+func (qm *Coordinator) UpdateState(msgID string, state State, reason string) error {
 	if atomic.LoadInt32(&qm.stopped) == 1 {
 		return fmt.Errorf("queue manager is stopped")
 	}
@@ -300,44 +267,27 @@ func (qm *Coordinator) UpdateState(msgID string, state MessageState, reason stri
 		return fmt.Errorf("invalid message type for ID: %s", msgID)
 	}
 
-	// Get the QueuedMessage
-	qmValue, ok := qm.queuedMessages.Load(msgID)
-	if !ok {
-		return fmt.Errorf("queued message not found: %s", msgID)
-	}
-	queuedMsg, ok := qmValue.(*QueuedMessage)
-	if !ok {
-		return fmt.Errorf("invalid queued message type for ID: %s", msgID)
-	}
-
 	// Record state transition
-	oldState := queuedMsg.State
-	queuedMsg.State = state
+	oldState := msg.GetState()
+	msg.SetState(state)
+	msg.AddStateTransition(oldState, state, reason)
+
 	now := time.Now()
-	queuedMsg.StateHistory = append(queuedMsg.StateHistory, StateTransition{
-		From:      oldState,
-		To:        state,
-		Timestamp: now,
-		Reason:    reason,
-	})
 
 	// Record in comprehensive stats
-	qm.statsCollector.RecordStateTransition(messageStateToState(oldState), messageStateToState(state))
+	qm.statsCollector.RecordStateTransition(oldState, state)
 
 	// Update timing information
 	switch state {
-	case MessageStateCompleted:
-		return qm.handleCompletedState(msgID, msg, queuedMsg, now)
-	case MessageStateFailed:
+	case StateCompleted:
+		return qm.handleCompletedState(msgID, msg, now)
+	case StateFailed:
 		return qm.handleFailedState(msg, now)
-	case MessageStateRetrying:
-		return qm.handleRetryingState(msgID, msg, queuedMsg, now)
-	case MessageStateQueued, MessageStateProcessing, MessageStateValidating:
+	case StateRetrying:
+		return qm.handleRetryingState(msgID, msg, now)
+	case StateQueued, StateProcessing, StateValidating:
 		// These states don't require special handling
 	}
-
-	// Update the internal message state to match
-	msg.SetState(messageStateToState(state))
 
 	return nil
 }
@@ -381,26 +331,6 @@ func (qm *Coordinator) Stop() error {
 	}
 
 	return qm.manager.Shutdown(qm.shutdownTimeout)
-}
-
-// messageStateToState converts MessageState to State.
-func messageStateToState(ms MessageState) State {
-	switch ms {
-	case MessageStateQueued:
-		return StateQueued
-	case MessageStateProcessing:
-		return StateProcessing
-	case MessageStateValidating:
-		return StateValidating
-	case MessageStateCompleted:
-		return StateCompleted
-	case MessageStateFailed:
-		return StateFailed
-	case MessageStateRetrying:
-		return StateRetrying
-	default:
-		return StateQueued
-	}
 }
 
 // calculateRateLimitRetryDelay calculates the retry delay for rate-limited messages.
