@@ -212,6 +212,27 @@ func TestHandlerRetryLogic(t *testing.T) {
 			expectedFinalMessage: "I completed the first task.",
 			expectRetryAttempts:  0,
 		},
+		{
+			name: "partial_success_with_recovery",
+			incomingMessage: signal.IncomingMessage{
+				From: "user123",
+				Text: "Check my calendar and send an email to Bob",
+			},
+			initialResponse: claude.LLMResponse{
+				Message: "I found your calendar events.",
+			},
+			validationResults: []agent.ValidationResult{
+				{
+					Status:     agent.ValidationStatusPartial,
+					Confidence: 0.7,
+					Issues:     []string{"email service unavailable", "couldn't find Bob's email address"},
+				},
+			},
+			maxRetries:             2,
+			expectedFinalMessage:   "Recovery message",
+			expectRetryAttempts:    0,
+			expectRecoveryGenerate: true,
+		},
 	}
 
 	for _, tt := range tests {

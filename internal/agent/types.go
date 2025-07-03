@@ -40,3 +40,56 @@ type Config struct {
 	// ValidationThreshold is the minimum confidence for success.
 	ValidationThreshold float64
 }
+
+// ComplexityResult contains the analysis of request complexity.
+type ComplexityResult struct {
+	// Score represents the overall complexity (0.0 = simple, 1.0 = very complex)
+	Score float64
+
+	// Steps represents the estimated number of steps required
+	Steps int
+
+	// Factors lists the contributing complexity factors
+	Factors []ComplexityFactor
+
+	// Suggestions provides guidance for handling the complexity
+	Suggestions []string
+
+	// RequiresDecomposition indicates if the request should be broken down
+	RequiresDecomposition bool
+}
+
+// ComplexityFactor represents a factor contributing to request complexity.
+type ComplexityFactor struct {
+	// Type identifies the type of complexity factor
+	Type ComplexityFactorType
+
+	// Description provides detail about this factor
+	Description string
+
+	// Weight indicates how much this factor contributes to overall complexity
+	Weight float64
+}
+
+// ComplexityFactorType identifies different types of complexity factors.
+type ComplexityFactorType string
+
+const (
+	// ComplexityFactorMultiStep indicates multiple sequential actions needed.
+	ComplexityFactorMultiStep ComplexityFactorType = "multi_step"
+
+	// ComplexityFactorAmbiguous indicates unclear or vague requirements.
+	ComplexityFactorAmbiguous ComplexityFactorType = "ambiguous"
+
+	// ComplexityFactorTemporal indicates time-based complexity.
+	ComplexityFactorTemporal ComplexityFactorType = "temporal"
+
+	// ComplexityFactorConditional indicates conditional logic required.
+	ComplexityFactorConditional ComplexityFactorType = "conditional"
+
+	// ComplexityFactorDataIntegration indicates multiple data sources needed.
+	ComplexityFactorDataIntegration ComplexityFactorType = "data_integration"
+
+	// ComplexityFactorCoordination indicates coordination between multiple entities.
+	ComplexityFactorCoordination ComplexityFactorType = "coordination"
+)

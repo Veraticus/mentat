@@ -17,6 +17,12 @@ const (
 
 	// DefaultValidationThreshold is the default confidence threshold for validation success.
 	DefaultValidationThreshold = 0.8
+
+	// ComplexityThresholdMedium is the threshold for medium complexity requests.
+	ComplexityThresholdMedium = 0.5
+
+	// ComplexityThresholdHigh is the threshold for high complexity requests.
+	ComplexityThresholdHigh = 0.7
 )
 
 // handler implements the Handler interface for processing messages.
@@ -26,6 +32,7 @@ type handler struct {
 	intentEnhancer     IntentEnhancer
 	messenger          signal.Messenger
 	sessionManager     conversation.SessionManager
+	complexityAnalyzer ComplexityAnalyzer
 	config             Config
 	logger             *slog.Logger
 }
@@ -142,6 +149,17 @@ func WithSessionManager(manager conversation.SessionManager) HandlerOption {
 	}
 }
 
+// WithComplexityAnalyzer sets the complexity analyzer.
+func WithComplexityAnalyzer(analyzer ComplexityAnalyzer) HandlerOption {
+	return func(h *handler) error {
+		if analyzer == nil {
+			return fmt.Errorf("invalid option: complexity analyzer cannot be nil")
+		}
+		h.complexityAnalyzer = analyzer
+		return nil
+	}
+}
+
 // Process handles an incoming message through the agent pipeline.
 // It manages sessions, queries the LLM, and handles errors gracefully.
 func (h *handler) Process(ctx context.Context, msg signal.IncomingMessage) error {
@@ -156,17 +174,11 @@ func (h *handler) Process(ctx context.Context, msg signal.IncomingMessage) error
 		slog.String("session_id", sessionID),
 		slog.String("from", msg.From))
 
-	// Get session history for context
-	history := h.sessionManager.GetSessionHistory(sessionID)
-	h.logger.DebugContext(ctx, "retrieved session history",
-		slog.String("session_id", sessionID),
-		slog.Int("history_length", len(history)))
+	// Prepare the request with optional complexity guidance
+	requestToSend := h.prepareRequest(ctx, msg.Text, sessionID)
 
-	// Build context from history for multi-turn conversations
-	// Currently using single message context for simplicity
-
-	// Query Claude with the message
-	response, err := h.llm.Query(ctx, msg.Text, sessionID)
+	// Query Claude with the message (possibly enhanced with guidance)
+	response, err := h.llm.Query(ctx, requestToSend, sessionID)
 	if err != nil {
 		h.logger.ErrorContext(ctx, "LLM query failed",
 			slog.Any("error", err),
@@ -180,52 +192,7 @@ func (h *handler) Process(ctx context.Context, msg signal.IncomingMessage) error
 		slog.Int("response_length", len(response.Message)))
 
 	// Perform validation with retry logic
-	finalResponse := response
-	retryCount := 0
-
-	for {
-		// Validate the response
-		validationResult := h.validationStrategy.Validate(ctx, msg.Text, finalResponse.Message, h.llm)
-		h.logger.DebugContext(ctx, "validation result",
-			slog.String("status", string(validationResult.Status)),
-			slog.Float64("confidence", validationResult.Confidence),
-			slog.Any("issues", validationResult.Issues))
-
-		// Check if we should retry
-		if !h.validationStrategy.ShouldRetry(validationResult) || retryCount >= h.config.MaxRetries {
-			// No retry needed or max retries reached
-			if validationResult.Status == ValidationStatusFailed ||
-				(validationResult.Status == ValidationStatusIncompleteSearch && retryCount >= h.config.MaxRetries) {
-				// Generate recovery message
-				recoveryMsg := h.validationStrategy.GenerateRecovery(
-					ctx, msg.Text, finalResponse.Message, validationResult, h.llm)
-				if recoveryMsg != "" {
-					finalResponse.Message = recoveryMsg
-				}
-			}
-			break
-		}
-
-		// Perform retry with guided prompt
-		retryCount++
-		h.logger.InfoContext(ctx, "retrying with guided prompt",
-			slog.Int("retry_count", retryCount),
-			slog.String("reason", string(validationResult.Status)))
-
-		guidedPrompt := h.createGuidedPrompt(msg.Text, finalResponse.Message, validationResult)
-		retryResponse, retryErr := h.llm.Query(ctx, guidedPrompt, sessionID)
-		if retryErr != nil {
-			h.logger.ErrorContext(ctx, "retry query failed",
-				slog.Any("error", retryErr),
-				slog.Int("retry_count", retryCount))
-			// Keep the original response if retry fails
-			break
-		}
-
-		finalResponse = retryResponse
-		h.logger.DebugContext(ctx, "received retry response",
-			slog.Int("response_length", len(finalResponse.Message)))
-	}
+	finalResponse := h.validateAndRetry(ctx, msg.Text, response, sessionID)
 
 	// Send the response back via messenger
 	if sendErr := h.messenger.Send(ctx, msg.From, finalResponse.Message); sendErr != nil {
@@ -240,6 +207,124 @@ func (h *handler) Process(ctx context.Context, msg signal.IncomingMessage) error
 		slog.String("to", msg.From))
 
 	return nil
+}
+
+// prepareRequest prepares the request with optional complexity guidance.
+func (h *handler) prepareRequest(ctx context.Context, originalText string, sessionID string) string {
+	// Get session history for context
+	history := h.sessionManager.GetSessionHistory(sessionID)
+	h.logger.DebugContext(ctx, "retrieved session history",
+		slog.String("session_id", sessionID),
+		slog.Int("history_length", len(history)))
+
+	// Build context from history for multi-turn conversations
+	// Currently using single message context for simplicity
+
+	// Analyze request complexity and add gentle guidance if needed
+	if h.complexityAnalyzer == nil {
+		return originalText
+	}
+
+	complexityResult := h.complexityAnalyzer.Analyze(originalText)
+	// Consider complex if score > 0.5 or requires decomposition
+	if complexityResult.Score <= ComplexityThresholdMedium && !complexityResult.RequiresDecomposition {
+		return originalText
+	}
+
+	// Add gentle guidance based on complexity factors
+	guidedRequest := h.addComplexityGuidance(originalText, complexityResult)
+
+	h.logger.DebugContext(ctx, "added complexity guidance",
+		slog.Float64("complexity_score", complexityResult.Score),
+		slog.Int("estimated_steps", complexityResult.Steps),
+		slog.Any("factors", complexityResult.Factors))
+
+	return guidedRequest
+}
+
+// validateAndRetry performs validation with retry logic.
+func (h *handler) validateAndRetry(
+	ctx context.Context,
+	originalRequest string,
+	initialResponse *claude.LLMResponse,
+	sessionID string,
+) *claude.LLMResponse {
+	finalResponse := initialResponse
+	retryCount := 0
+
+	for {
+		// Validate the response
+		validationResult := h.validationStrategy.Validate(ctx, originalRequest, finalResponse.Message, h.llm)
+		h.logger.DebugContext(ctx, "validation result",
+			slog.String("status", string(validationResult.Status)),
+			slog.Float64("confidence", validationResult.Confidence),
+			slog.Any("issues", validationResult.Issues))
+
+		// Check if we should retry
+		if !h.validationStrategy.ShouldRetry(validationResult) || retryCount >= h.config.MaxRetries {
+			// Handle terminal states
+			if h.shouldGenerateRecovery(validationResult, retryCount) {
+				recoveryMsg := h.validationStrategy.GenerateRecovery(
+					ctx, originalRequest, finalResponse.Message, validationResult, h.llm)
+				if recoveryMsg != "" {
+					finalResponse.Message = recoveryMsg
+				}
+			}
+			break
+		}
+
+		// Perform retry
+		retryResponse, ok := h.performRetry(
+			ctx,
+			originalRequest,
+			finalResponse.Message,
+			validationResult,
+			sessionID,
+			retryCount,
+		)
+		if !ok {
+			break
+		}
+
+		finalResponse = retryResponse
+		retryCount++
+	}
+
+	return finalResponse
+}
+
+// shouldGenerateRecovery determines if a recovery message should be generated.
+func (h *handler) shouldGenerateRecovery(result ValidationResult, retryCount int) bool {
+	return result.Status == ValidationStatusFailed ||
+		result.Status == ValidationStatusPartial ||
+		(result.Status == ValidationStatusIncompleteSearch && retryCount >= h.config.MaxRetries)
+}
+
+// performRetry attempts to retry with a guided prompt.
+func (h *handler) performRetry(
+	ctx context.Context,
+	originalRequest, currentResponse string,
+	validationResult ValidationResult,
+	sessionID string,
+	retryCount int,
+) (*claude.LLMResponse, bool) {
+	h.logger.InfoContext(ctx, "retrying with guided prompt",
+		slog.Int("retry_count", retryCount+1),
+		slog.String("reason", string(validationResult.Status)))
+
+	guidedPrompt := h.createGuidedPrompt(originalRequest, currentResponse, validationResult)
+	retryResponse, err := h.llm.Query(ctx, guidedPrompt, sessionID)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "retry query failed",
+			slog.Any("error", err),
+			slog.Int("retry_count", retryCount+1))
+		return nil, false
+	}
+
+	h.logger.DebugContext(ctx, "received retry response",
+		slog.Int("response_length", len(retryResponse.Message)))
+
+	return retryResponse, true
 }
 
 // createGuidedPrompt creates a prompt that guides Claude to use the appropriate tools
@@ -290,4 +375,86 @@ func (h *handler) addToolHints(promptBuilder *strings.Builder, expectedTools str
 	if strings.Contains(expectedTools, "tasks") {
 		promptBuilder.WriteString("The user may be asking about pending tasks or todos. ")
 	}
+}
+
+// addComplexityGuidance adds gentle guidance based on detected complexity factors.
+// It provides thoroughness hints without micromanaging or prescribing specific tools.
+func (h *handler) addComplexityGuidance(originalRequest string, complexity ComplexityResult) string {
+	// Return early if not complex enough
+	if complexity.Score <= ComplexityThresholdMedium && !complexity.RequiresDecomposition {
+		return originalRequest
+	}
+
+	var promptBuilder strings.Builder
+	promptBuilder.WriteString(originalRequest)
+	promptBuilder.WriteString("\n\n")
+
+	// Build guidance based on complexity factors
+	guidance := h.buildComplexityGuidance(complexity)
+	promptBuilder.WriteString(guidance)
+
+	return promptBuilder.String()
+}
+
+// buildComplexityGuidance generates guidance text based on complexity factors.
+func (h *handler) buildComplexityGuidance(complexity ComplexityResult) string {
+	var guidanceBuilder strings.Builder
+
+	// Analyze factors
+	factorFlags := h.analyzeComplexityFactors(complexity.Factors)
+
+	// Add contextual hints based on detected patterns
+	if factorFlags.hasMultiStep && complexity.Steps > 3 {
+		guidanceBuilder.WriteString("This request may involve multiple steps. ")
+		guidanceBuilder.WriteString("Consider breaking it down into logical parts for thoroughness. ")
+	}
+
+	if factorFlags.hasTemporal {
+		guidanceBuilder.WriteString("Time-related information might be relevant to this request. ")
+	}
+
+	if factorFlags.hasDataIntegration {
+		guidanceBuilder.WriteString("Multiple sources of information may be helpful for a complete answer. ")
+	}
+
+	if factorFlags.hasCoordination {
+		guidanceBuilder.WriteString("This might involve coordinating information about multiple people or events. ")
+	}
+
+	// Add a general thoroughness reminder for complex requests
+	if complexity.Score > ComplexityThresholdHigh {
+		guidanceBuilder.WriteString("\nPlease be thorough in addressing all aspects of this request.")
+	}
+
+	return guidanceBuilder.String()
+}
+
+// complexityFactorFlags holds flags for different complexity factors.
+type complexityFactorFlags struct {
+	hasMultiStep       bool
+	hasTemporal        bool
+	hasDataIntegration bool
+	hasCoordination    bool
+}
+
+// analyzeComplexityFactors analyzes factors and returns flags.
+func (h *handler) analyzeComplexityFactors(factors []ComplexityFactor) complexityFactorFlags {
+	flags := complexityFactorFlags{}
+
+	for _, factor := range factors {
+		switch factor.Type {
+		case ComplexityFactorMultiStep:
+			flags.hasMultiStep = true
+		case ComplexityFactorTemporal:
+			flags.hasTemporal = true
+		case ComplexityFactorDataIntegration:
+			flags.hasDataIntegration = true
+		case ComplexityFactorCoordination:
+			flags.hasCoordination = true
+		case ComplexityFactorAmbiguous, ComplexityFactorConditional:
+			// These factors contribute to complexity but don't require specific guidance
+		}
+	}
+
+	return flags
 }

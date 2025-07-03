@@ -289,42 +289,42 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Go idiom: Fail gracefully after retries
 
 ### Recovery Generation
-- [ ] Implement natural recovery messages - Phase 41
+- [X] Implement natural recovery messages - Phase 41
   - Test: Recovery explains issues clearly
   - Location: `internal/agent/recovery.go`
   - Features: Context-aware explanations
   - Acceptance: Never exposes internal errors
   - Go idiom: User-friendly error messages
 
-- [ ] Add partial success handling - Phase 42
+- [X] Add partial success handling - Phase 42
   - Test: Partial successes explained properly
   - Features: What worked, what didn't
   - Acceptance: Users understand state
   - Go idiom: Be honest about failures
 
 ### Intent Enhancement
-- [ ] Implement SmartIntentEnhancer - Phase 43
+- [X] Implement SmartIntentEnhancer - Phase 43
   - Test: Enhances without being prescriptive
   - Location: `internal/agent/enhancer.go`
   - Features: Pattern matching, hint mapping
   - Acceptance: Hints guide but don't dictate
   - Go idiom: Keep hints data-driven
 
-- [ ] Add intent detection logic - Phase 44
+- [X] Add intent detection logic - Phase 44
   - Test: Detects common request patterns
   - Patterns: Scheduling, finding people, memory
   - Acceptance: >90% accuracy on common intents
   - Go idiom: Prefer simple over clever
 
 ### Complex Request Detection
-- [ ] Implement complexity analyzer - Phase 45
+- [X] Implement complexity analyzer - Phase 45
   - Test: Identifies multi-step requests
   - Location: `internal/agent/complex.go`
   - Features: Step counting, dependency detection
   - Acceptance: Catches compound requests
   - Go idiom: Make detection configurable
 
-- [ ] Add gentle guidance system - Phase 46
+- [X] Add gentle guidance system - Phase 46
   - Test: Guides without micromanaging
   - Features: Thoroughness hints
   - Acceptance: Claude remains autonomous

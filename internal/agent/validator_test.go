@@ -597,6 +597,108 @@ func TestParseList(t *testing.T) {
 	t.Skip("parseList is unexported and cannot be tested from the test package")
 }
 
+func TestMultiAgentValidator_GenerateRecovery_PartialSuccess(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name             string
+		request          string
+		response         string
+		validationResult agent.ValidationResult
+		llmResponse      string
+		llmError         error
+		expectedContains []string
+	}{
+		{
+			name:     "partial success with specific issues",
+			request:  "Check my calendar and send an email to Bob",
+			response: "I found 3 meetings on your calendar today.",
+			validationResult: agent.ValidationResult{
+				Status:     agent.ValidationStatusPartial,
+				Confidence: 0.7,
+				Issues:     []string{"email service unavailable", "couldn't find Bob's email address"},
+			},
+			llmResponse: "I checked your calendar and found 3 meetings today. However, I couldn't send the email to Bob because the email service is currently unavailable and I couldn't find Bob's email address.",
+			expectedContains: []string{
+				"3 meetings",
+				"email service",
+				"Bob",
+			},
+		},
+		{
+			name:     "partial success with LLM error fallback",
+			request:  "Update my task list and check weather",
+			response: "I updated your task list with 5 new items.",
+			validationResult: agent.ValidationResult{
+				Status:     agent.ValidationStatusPartial,
+				Confidence: 0.6,
+				Issues:     []string{"weather API timeout"},
+			},
+			llmError: fmt.Errorf("LLM timeout"),
+			expectedContains: []string{
+				"part of your request",
+				"limitations",
+			},
+		},
+		{
+			name:     "partial success with multiple issues",
+			request:  "Schedule meeting, book flight, and order lunch",
+			response: "I scheduled the meeting for tomorrow at 2 PM.",
+			validationResult: agent.ValidationResult{
+				Status:     agent.ValidationStatusPartial,
+				Confidence: 0.5,
+				Issues: []string{
+					"flight booking requires additional authorization",
+					"lunch ordering service is offline",
+					"payment method needs updating",
+				},
+			},
+			llmResponse: "I scheduled your meeting for tomorrow at 2 PM. I couldn't complete the flight booking as it requires additional authorization, and the lunch ordering service is currently offline.",
+			expectedContains: []string{
+				"scheduled",
+				"flight booking",
+				"lunch ordering",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create mock LLM
+			testLLM := newTestLLM()
+			if tt.llmError != nil {
+				testLLM.errors["*"] = tt.llmError
+			} else {
+				testLLM.responses["*"] = &claude.LLMResponse{Message: tt.llmResponse}
+			}
+
+			// Create validator
+			validator := agent.NewMultiAgentValidator()
+
+			// Generate recovery message
+			recovery := validator.GenerateRecovery(
+				ctx,
+				tt.request,
+				tt.response,
+				tt.validationResult,
+				testLLM,
+			)
+
+			// Check that recovery message contains expected content
+			for _, expected := range tt.expectedContains {
+				if !strings.Contains(recovery, expected) {
+					t.Errorf("expected recovery to contain '%s', but got: %s", expected, recovery)
+				}
+			}
+
+			// Verify it's not empty
+			if recovery == "" {
+				t.Error("expected non-empty recovery message for partial success")
+			}
+		})
+	}
+}
+
 func TestMultiAgentValidator_MetadataContainsExpectedTools(t *testing.T) {
 	tests := []struct {
 		name          string

@@ -34,3 +34,12 @@ type IntentEnhancer interface {
 	// ShouldEnhance determines if a request would benefit from enhancement
 	ShouldEnhance(request string) bool
 }
+
+// ComplexityAnalyzer identifies multi-step requests and analyzes request complexity.
+type ComplexityAnalyzer interface {
+	// Analyze examines a request and returns complexity information
+	Analyze(request string) ComplexityResult
+
+	// IsComplex determines if a request requires multi-step processing
+	IsComplex(request string) bool
+}

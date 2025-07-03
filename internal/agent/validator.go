@@ -138,9 +138,13 @@ func (v *MultiAgentValidator) GenerateRecovery(
 			`Generate a brief, natural message acknowledging partial completion of this request.
 Request: %s
 What was completed: %s
-Issues: %s
+Issues preventing full completion: %s
 
-Respond conversationally, mentioning what was done and what couldn't be completed.`,
+Create a clear, conversational response that:
+1. Acknowledges what was successfully completed
+2. Explains what couldn't be done and why (be specific but user-friendly)
+3. Maintains a helpful tone without being apologetic
+4. Keeps the message concise (2-3 sentences max)`,
 			request,
 			response,
 			strings.Join(result.Issues, ", "),
