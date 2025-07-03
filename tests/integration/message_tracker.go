@@ -29,7 +29,7 @@ type TrackedMessage struct {
 	Response       string
 
 	// State tracking
-	CurrentState queue.MessageState
+	CurrentState queue.State
 	StateHistory []StateTransition
 
 	// Timing
@@ -47,8 +47,8 @@ type TrackedMessage struct {
 // StateTransition represents a state change with metadata
 type StateTransition struct {
 	MessageID string
-	From      queue.MessageState
-	To        queue.MessageState
+	From      queue.State
+	To        queue.State
 	Timestamp time.Time
 	Reason    string
 	Error     error
@@ -59,7 +59,7 @@ type ErrorRecord struct {
 	Timestamp time.Time
 	Error     error
 	Attempt   int
-	State     queue.MessageState
+	State     queue.State
 }
 
 // NewMessageTracker creates a new message tracker
@@ -79,14 +79,14 @@ func (mt *MessageTracker) TrackMessage(id, conversationID, text string) {
 		ID:             id,
 		ConversationID: conversationID,
 		Text:           text,
-		CurrentState:   queue.MessageStateQueued,
+		CurrentState:   queue.StateQueued,
 		EnqueuedAt:     time.Now(),
 		StateHistory:   []StateTransition{},
 	}
 }
 
 // RecordStateChange records a state transition
-func (mt *MessageTracker) RecordStateChange(msgID string, from, to queue.MessageState, reason string, err error) {
+func (mt *MessageTracker) RecordStateChange(msgID string, from, to queue.State, reason string, err error) {
 	mt.mu.Lock()
 	defer mt.mu.Unlock()
 
@@ -105,19 +105,22 @@ func (mt *MessageTracker) RecordStateChange(msgID string, from, to queue.Message
 
 		// Update timing
 		switch to {
-		case queue.MessageStateProcessing:
+		case queue.StateProcessing:
 			now := time.Now()
 			msg.StartedAt = &now
-		case queue.MessageStateCompleted:
-			now := time.Now()
-			msg.CompletedAt = &now
-			if msg.StartedAt != nil {
-				msg.ProcessingTime = now.Sub(*msg.StartedAt)
+		case queue.StateCompleted:
+			// Only count as completed if not already completed
+			if msg.CompletedAt == nil {
+				now := time.Now()
+				msg.CompletedAt = &now
+				if msg.StartedAt != nil {
+					msg.ProcessingTime = now.Sub(*msg.StartedAt)
+				}
+				atomic.AddInt32(&mt.completed, 1)
 			}
-			atomic.AddInt32(&mt.completed, 1)
-		case queue.MessageStateFailed:
+		case queue.StateFailed:
 			atomic.AddInt32(&mt.failed, 1)
-		case queue.MessageStateRetrying:
+		case queue.StateRetrying:
 			atomic.AddInt32(&mt.retrying, 1)
 			msg.Attempts++
 		}
@@ -162,7 +165,7 @@ func (mt *MessageTracker) GetStats() MessageStats {
 		Completed: int(atomic.LoadInt32(&mt.completed)),
 		Failed:    int(atomic.LoadInt32(&mt.failed)),
 		Retrying:  int(atomic.LoadInt32(&mt.retrying)),
-		ByState:   make(map[queue.MessageState]int),
+		ByState:   make(map[queue.State]int),
 	}
 
 	for _, msg := range mt.messages {
@@ -178,5 +181,5 @@ type MessageStats struct {
 	Completed int
 	Failed    int
 	Retrying  int
-	ByState   map[queue.MessageState]int
+	ByState   map[queue.State]int
 }

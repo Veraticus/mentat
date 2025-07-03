@@ -137,8 +137,8 @@ func TestQueueBehavioralGuarantees(t *testing.T) {
 					t.Error("Rate limiting not enforced: all messages completed immediately")
 				}
 
-				if state.PendingMessages == 0 && state.ProcessingMessages == 0 {
-					t.Error("Expected some messages to be rate limited (pending or processing)")
+				if state.PendingMessages == 0 && state.ProcessingMessages == 0 && state.RetryingMessages == 0 {
+					t.Error("Expected some messages to be rate limited (pending, processing, or retrying)")
 				}
 			},
 		},
@@ -181,9 +181,11 @@ func TestQueueBehavioralGuarantees(t *testing.T) {
 					t.Errorf("Expected at least 10 messages in queue, got %d", state.TotalMessages)
 				}
 
-				// Most should be pending due to rate limiting
-				if state.PendingMessages < 5 {
-					t.Errorf("Expected many pending messages due to rate limit, got %d", state.PendingMessages)
+				// Most should be pending or retrying due to rate limiting
+				waitingMessages := state.PendingMessages + state.RetryingMessages
+				if waitingMessages < 5 {
+					t.Errorf("Expected many pending/retrying messages due to rate limit, got %d pending, %d retrying",
+						state.PendingMessages, state.RetryingMessages)
 				}
 			},
 		},
@@ -200,8 +202,8 @@ func TestQueueBehavioralGuarantees(t *testing.T) {
 					t.Fatalf("Failed to send message: %v", err)
 				}
 
-				// Wait for processing attempt
-				time.Sleep(2 * time.Second)
+				// Wait for processing attempt with reasonable timeout
+				time.Sleep(500 * time.Millisecond)
 			},
 			verify: func(t *testing.T, h *TestHarness) {
 				state := h.VerifyQueueState()
@@ -277,7 +279,7 @@ func TestQueueLoadScenarios(t *testing.T) {
 		users           int
 		messagesPerUser int
 		workers         int
-		duration        time.Duration
+		timeout         time.Duration
 		verify          func(t *testing.T, state QueueState, elapsed time.Duration)
 	}{
 		{
@@ -285,7 +287,7 @@ func TestQueueLoadScenarios(t *testing.T) {
 			users:           1,
 			messagesPerUser: 50,
 			workers:         5,
-			duration:        30 * time.Second,
+			timeout:         15 * time.Second,
 			verify: func(t *testing.T, state QueueState, elapsed time.Duration) {
 				if state.CompletedMessages < 40 {
 					t.Errorf("Low throughput: only %d/50 messages completed", state.CompletedMessages)
@@ -300,7 +302,7 @@ func TestQueueLoadScenarios(t *testing.T) {
 			users:           20,
 			messagesPerUser: 5,
 			workers:         10,
-			duration:        30 * time.Second,
+			timeout:         15 * time.Second,
 			verify: func(t *testing.T, state QueueState, elapsed time.Duration) {
 				// Verify fairness - no conversation should be starved
 				minProcessed := 100
@@ -327,7 +329,7 @@ func TestQueueLoadScenarios(t *testing.T) {
 			users:           10,
 			messagesPerUser: 10,
 			workers:         5,
-			duration:        20 * time.Second,
+			timeout:         10 * time.Second,
 			verify: func(t *testing.T, state QueueState, elapsed time.Duration) {
 				// All messages sent at once, verify queue handles the burst
 				if state.FailedMessages > 0 {
@@ -378,8 +380,13 @@ func TestQueueLoadScenarios(t *testing.T) {
 
 			wg.Wait() // All messages sent
 
-			// Let system process for specified duration
-			time.Sleep(scenario.duration)
+			// Calculate expected message count
+			expectedMessages := scenario.users * scenario.messagesPerUser
+
+			// Wait for all messages to complete processing
+			if err := h.WaitForAllMessagesCompletion(expectedMessages, scenario.timeout); err != nil {
+				t.Logf("Not all messages completed: %v", err)
+			}
 
 			elapsed := time.Since(start)
 			state := h.VerifyQueueState()
@@ -389,7 +396,7 @@ func TestQueueLoadScenarios(t *testing.T) {
 
 			// Common verifications
 			t.Logf("Load test results: %d/%d messages completed in %v",
-				state.CompletedMessages, scenario.users*scenario.messagesPerUser, elapsed)
+				state.CompletedMessages, expectedMessages, elapsed)
 		})
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/Veraticus/mentat/internal/claude"
 	"github.com/Veraticus/mentat/internal/conversation"
@@ -178,11 +179,56 @@ func (h *handler) Process(ctx context.Context, msg signal.IncomingMessage) error
 		slog.String("session_id", sessionID),
 		slog.Int("response_length", len(response.Message)))
 
-	// Validation can be added here in future iterations
-	// Currently trusting LLM responses without additional validation
+	// Perform validation with retry logic
+	finalResponse := response
+	retryCount := 0
+
+	for {
+		// Validate the response
+		validationResult := h.validationStrategy.Validate(ctx, msg.Text, finalResponse.Message, h.llm)
+		h.logger.DebugContext(ctx, "validation result",
+			slog.String("status", string(validationResult.Status)),
+			slog.Float64("confidence", validationResult.Confidence),
+			slog.Any("issues", validationResult.Issues))
+
+		// Check if we should retry
+		if !h.validationStrategy.ShouldRetry(validationResult) || retryCount >= h.config.MaxRetries {
+			// No retry needed or max retries reached
+			if validationResult.Status == ValidationStatusFailed ||
+				(validationResult.Status == ValidationStatusIncompleteSearch && retryCount >= h.config.MaxRetries) {
+				// Generate recovery message
+				recoveryMsg := h.validationStrategy.GenerateRecovery(
+					ctx, msg.Text, finalResponse.Message, validationResult, h.llm)
+				if recoveryMsg != "" {
+					finalResponse.Message = recoveryMsg
+				}
+			}
+			break
+		}
+
+		// Perform retry with guided prompt
+		retryCount++
+		h.logger.InfoContext(ctx, "retrying with guided prompt",
+			slog.Int("retry_count", retryCount),
+			slog.String("reason", string(validationResult.Status)))
+
+		guidedPrompt := h.createGuidedPrompt(msg.Text, finalResponse.Message, validationResult)
+		retryResponse, retryErr := h.llm.Query(ctx, guidedPrompt, sessionID)
+		if retryErr != nil {
+			h.logger.ErrorContext(ctx, "retry query failed",
+				slog.Any("error", retryErr),
+				slog.Int("retry_count", retryCount))
+			// Keep the original response if retry fails
+			break
+		}
+
+		finalResponse = retryResponse
+		h.logger.DebugContext(ctx, "received retry response",
+			slog.Int("response_length", len(finalResponse.Message)))
+	}
 
 	// Send the response back via messenger
-	if sendErr := h.messenger.Send(ctx, msg.From, response.Message); sendErr != nil {
+	if sendErr := h.messenger.Send(ctx, msg.From, finalResponse.Message); sendErr != nil {
 		h.logger.ErrorContext(ctx, "failed to send response",
 			slog.Any("error", sendErr),
 			slog.String("to", msg.From))
@@ -194,4 +240,54 @@ func (h *handler) Process(ctx context.Context, msg signal.IncomingMessage) error
 		slog.String("to", msg.From))
 
 	return nil
+}
+
+// createGuidedPrompt creates a prompt that guides Claude to use the appropriate tools
+// based on the validation result.
+func (h *handler) createGuidedPrompt(originalRequest, _ string, validationResult ValidationResult) string {
+	// Extract expected tools from metadata
+	expectedTools := ""
+	if tools, ok := validationResult.Metadata["expected_tools"]; ok {
+		expectedTools = tools
+	}
+
+	// Build a guided prompt that hints at tool usage without being prescriptive
+	var promptBuilder strings.Builder
+	promptBuilder.WriteString("The user asked: ")
+	promptBuilder.WriteString(originalRequest)
+	promptBuilder.WriteString("\n\n")
+
+	if validationResult.Status == ValidationStatusIncompleteSearch && expectedTools != "" {
+		promptBuilder.WriteString("Please help the user with their request. ")
+		h.addToolHints(&promptBuilder, expectedTools)
+		promptBuilder.WriteString("\n\nBe thorough in gathering all relevant information to provide a complete answer.")
+	} else {
+		// Generic retry prompt for other validation failures
+		promptBuilder.WriteString("Your previous response may not have fully addressed the request. ")
+		if len(validationResult.Issues) > 0 {
+			promptBuilder.WriteString("Issues identified: ")
+			promptBuilder.WriteString(strings.Join(validationResult.Issues, ", "))
+			promptBuilder.WriteString(". ")
+		}
+		promptBuilder.WriteString("\n\nPlease provide a more complete response.")
+	}
+
+	return promptBuilder.String()
+}
+
+// addToolHints adds hints based on expected tools to avoid nested complexity.
+func (h *handler) addToolHints(promptBuilder *strings.Builder, expectedTools string) {
+	// Add hints based on expected tools
+	if strings.Contains(expectedTools, "memory") {
+		promptBuilder.WriteString("Consider checking if there's any relevant context from previous conversations. ")
+	}
+	if strings.Contains(expectedTools, "calendar") {
+		promptBuilder.WriteString("The user may be asking about scheduled events or appointments. ")
+	}
+	if strings.Contains(expectedTools, "email") {
+		promptBuilder.WriteString("This might involve checking for relevant correspondence. ")
+	}
+	if strings.Contains(expectedTools, "tasks") {
+		promptBuilder.WriteString("The user may be asking about pending tasks or todos. ")
+	}
 }

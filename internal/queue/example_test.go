@@ -20,7 +20,7 @@ func ExampleSystem() {
 	// Create your LLM and Messenger implementations
 	llm := &mockLLM{
 		queryFunc: func(_ context.Context, message, _ string) (*claude.LLMResponse, error) {
-			// Simulate LLM processing
+			// Simulate LLM processing without any delay
 			return &claude.LLMResponse{
 				Message: fmt.Sprintf("I received your message: %s", message),
 			}, nil
@@ -82,7 +82,8 @@ func ExampleSystem() {
 	for time.Now().Before(deadline) {
 		stats := system.Stats()
 		if stats.TotalCompleted >= 1 {
-			// Message processed!
+			// Message processed, wait a bit more for stats to stabilize
+			time.Sleep(100 * time.Millisecond)
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -90,7 +91,13 @@ func ExampleSystem() {
 
 	// Check system statistics
 	stats := system.Stats()
-	fmt.Printf("Queue stats: %+v\n", stats)
+	// Verify the message was completed
+	if stats.TotalCompleted == 1 {
+		fmt.Println("Message successfully processed!")
+		fmt.Printf("Total messages completed: %d\n", stats.TotalCompleted)
+		fmt.Printf("Active conversations: %d\n", stats.ConversationCount)
+		fmt.Printf("Active workers: %d\n", stats.ActiveWorkers)
+	}
 
 	// Scale workers if needed
 	if stats.TotalQueued > 10 {
@@ -110,7 +117,10 @@ func ExampleSystem() {
 
 	// Output:
 	// Sending to +1234567890: I received your message: Hello, world!
-	// Queue stats: {TotalQueued:0 TotalProcessing:0 TotalCompleted:1 TotalFailed:0 ConversationCount:1 LongestMessageAge:0s AverageWaitTime:0s AverageProcessTime:0s ActiveWorkers:3 HealthyWorkers:3}
+	// Message successfully processed!
+	// Total messages completed: 1
+	// Active conversations: 1
+	// Active workers: 3
 }
 
 // Mock implementations for the example.

@@ -26,30 +26,15 @@ test:
 	@echo "Running all tests with coverage..."
 	@mkdir -p $(COVERAGE_DIR)
 	@echo "Running unit tests..."
-	@go test -race -coverprofile=$(COVERAGE_DIR)/coverage.out -covermode=atomic ./...
+	@go test -timeout 30s -race -coverprofile=$(COVERAGE_DIR)/coverage.out -covermode=atomic ./...
 	@echo "Running integration tests..."
-	@go test -race -tags=integration -coverprofile=$(COVERAGE_DIR)/coverage-integration.out -covermode=atomic ./tests/integration
+	@go test -timeout 30s -race -tags=integration -coverprofile=$(COVERAGE_DIR)/coverage-integration.out -covermode=atomic ./tests/integration
 	@echo "Merging coverage reports..."
 	@echo "mode: atomic" > $(COVERAGE_DIR)/coverage-combined.out
 	@tail -n +2 $(COVERAGE_DIR)/coverage.out >> $(COVERAGE_DIR)/coverage-combined.out 2>/dev/null || true
 	@tail -n +2 $(COVERAGE_DIR)/coverage-integration.out >> $(COVERAGE_DIR)/coverage-combined.out 2>/dev/null || true
 	@go tool cover -html=$(COVERAGE_DIR)/coverage-combined.out -o $(COVERAGE_DIR)/coverage.html
 	@echo "Coverage report generated at $(COVERAGE_DIR)/coverage.html"
-
-## test-unit: Run only unit tests (no integration tests)
-test-unit:
-	@echo "Running unit tests..."
-	@go test -race ./...
-
-## test-race: Run tests with race detector
-test-race:
-	@echo "Running tests with race detector..."
-	@go test -race ./...
-
-## test-integration: Run integration tests (requires Signal and Claude)
-test-integration:
-	@echo "Running integration tests..."
-	@go test -v -tags=integration ./tests/...
 
 ## fmt: Format Go code with gofmt
 fmt:

@@ -269,20 +269,20 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Acceptance: Strategies are pluggable
   - Go idiom: Strategy pattern with interfaces
 
-- [ ] Implement validation result parsing - Phase 38
+- [X] Implement validation result parsing - Phase 38
   - Test: Parses all status types correctly
   - Features: Confidence scores, issue extraction
   - Acceptance: Unknown responses default safely
   - Go idiom: Use switch for exhaustive matching
 
 ### Multi-Agent Validation Logic
-- [ ] Implement thoroughness checking - Phase 39
+- [X] Implement thoroughness checking - Phase 39
   - Test: Detects incomplete tool usage
   - Features: INCOMPLETE_SEARCH status
   - Acceptance: Catches missed memory checks
   - Go idiom: Be explicit about expectations
 
-- [ ] Add retry logic for incomplete searches - Phase 40  
+- [X] Add retry logic for incomplete searches - Phase 40  
   - Test: Retries lead to more complete results
   - Features: Guided retry prompts
   - Acceptance: Maximum 2 retry attempts

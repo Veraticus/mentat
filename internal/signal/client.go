@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -366,6 +367,7 @@ type MockClient struct {
 	incomingMessages chan *Envelope
 	SendError        error
 	closed           bool
+	mu               sync.Mutex // Protects concurrent access
 }
 
 // SentMessage records a sent message.
@@ -397,6 +399,9 @@ func NewMockClient() *MockClient {
 
 	// Set default implementations
 	m.SendFunc = func(_ context.Context, req *SendRequest) (*SendResponse, error) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+
 		if m.SendError != nil {
 			return nil, m.SendError
 		}
@@ -414,6 +419,9 @@ func NewMockClient() *MockClient {
 	}
 
 	m.SendTypingIndicatorFunc = func(_ context.Context, recipient string, stop bool) error {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+
 		m.TypingIndicators = append(m.TypingIndicators, MockTypingIndicator{
 			Recipient: recipient,
 			Stop:      stop,
@@ -422,6 +430,9 @@ func NewMockClient() *MockClient {
 	}
 
 	m.SendReceiptFunc = func(_ context.Context, recipient string, timestamp int64, receiptType string) error {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+
 		m.Receipts = append(m.Receipts, MockReceipt{
 			Recipient:   recipient,
 			Timestamp:   timestamp,
@@ -435,6 +446,9 @@ func NewMockClient() *MockClient {
 	}
 
 	m.CloseFunc = func() error {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+
 		if !m.closed {
 			m.closed = true
 			close(m.incomingMessages)
@@ -472,6 +486,9 @@ func (m *MockClient) Subscribe(ctx context.Context) (<-chan *Envelope, error) {
 
 // SimulateIncomingMessage simulates an incoming message.
 func (m *MockClient) SimulateIncomingMessage(msg *Envelope) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.closed {
 		m.incomingMessages <- msg
 	}

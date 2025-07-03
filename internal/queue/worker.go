@@ -51,6 +51,21 @@ func (w *worker) requestMessage(ctx context.Context) (*Message, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, messageRequestTimeout)
 	defer cancel()
 
+	// Use MessageQueue interface if available (for testing)
+	if w.config.MessageQueue != nil {
+		msg, err := w.config.MessageQueue.GetNext(strconv.Itoa(w.config.ID))
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				// No messages available, return nil message with no error
+				// The caller will check for nil message
+				return nil, fmt.Errorf("message queue timeout: %w", err)
+			}
+			return nil, fmt.Errorf("message queue error: %w", err)
+		}
+		return msg, nil
+	}
+
+	// Otherwise use QueueManager directly
 	msg, err := w.config.QueueManager.RequestMessage(reqCtx)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {

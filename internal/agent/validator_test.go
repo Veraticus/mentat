@@ -73,6 +73,13 @@ func TestMultiAgentValidator_Validate(t *testing.T) {
 }
 
 func getMultiAgentValidatorTestCases() []multiAgentValidatorTestCase {
+	cases := []multiAgentValidatorTestCase{}
+	cases = append(cases, getBasicValidationTestCases()...)
+	cases = append(cases, getThoroughnessCheckTestCases()...)
+	return cases
+}
+
+func getBasicValidationTestCases() []multiAgentValidatorTestCase {
 	return []multiAgentValidatorTestCase{
 		{
 			name:     "successful validation",
@@ -152,6 +159,71 @@ suggestions: NONE`,
 			expectedStatus:     agent.ValidationStatusSuccess,
 			expectedIssues:     0,
 			expectedConfidence: 0.85,
+		},
+	}
+}
+
+func getThoroughnessCheckTestCases() []multiAgentValidatorTestCase {
+	return []multiAgentValidatorTestCase{
+		{
+			name:     "thoroughness check - calendar query without tool use",
+			request:  "When is my meeting with John tomorrow?",
+			response: "I don't have access to your calendar information.",
+			llmResponse: `STATUS: INCOMPLETE_SEARCH
+CONFIDENCE: 0.8
+ISSUES: didn't check calendar tool, should have searched for meetings
+SUGGESTIONS: use calendar tool to find meeting with John`,
+			expectedStatus:     agent.ValidationStatusIncompleteSearch,
+			expectedIssues:     2,
+			expectedConfidence: 0.8,
+		},
+		{
+			name:     "thoroughness check - memory query without tool use",
+			request:  "What did we discuss last time about the project?",
+			response: "I don't recall our previous conversation.",
+			llmResponse: `STATUS: INCOMPLETE_SEARCH
+CONFIDENCE: 0.75
+ISSUES: didn't check memory tool for previous conversations
+SUGGESTIONS: use memory tool to retrieve past discussions`,
+			expectedStatus:     agent.ValidationStatusIncompleteSearch,
+			expectedIssues:     1,
+			expectedConfidence: 0.75,
+		},
+		{
+			name:     "thoroughness check - multiple tools needed",
+			request:  "Schedule a follow-up meeting based on our last discussion",
+			response: "I've scheduled a meeting for tomorrow at 2pm.",
+			llmResponse: `STATUS: INCOMPLETE_SEARCH
+CONFIDENCE: 0.6
+ISSUES: didn't check memory for context, didn't verify calendar availability
+SUGGESTIONS: check memory for discussion context, verify calendar slot is free`,
+			expectedStatus:     agent.ValidationStatusIncompleteSearch,
+			expectedIssues:     2,
+			expectedConfidence: 0.6,
+		},
+		{
+			name:     "thoroughness check - email query without tool use",
+			request:  "Did I get any emails from Sarah about the budget?",
+			response: "I can't access your email right now.",
+			llmResponse: `STATUS: INCOMPLETE_SEARCH
+CONFIDENCE: 0.85
+ISSUES: didn't search email for messages from Sarah
+SUGGESTIONS: use email tool to search for budget-related emails from Sarah`,
+			expectedStatus:     agent.ValidationStatusIncompleteSearch,
+			expectedIssues:     1,
+			expectedConfidence: 0.85,
+		},
+		{
+			name:     "thoroughness check - task query without tool use",
+			request:  "What tasks do I have pending for this week?",
+			response: "I don't have information about your tasks.",
+			llmResponse: `STATUS: INCOMPLETE_SEARCH
+CONFIDENCE: 0.9
+ISSUES: didn't check task list tool
+SUGGESTIONS: use task tool to retrieve pending tasks`,
+			expectedStatus:     agent.ValidationStatusIncompleteSearch,
+			expectedIssues:     1,
+			expectedConfidence: 0.9,
 		},
 	}
 }
@@ -523,6 +595,65 @@ func TestNoopValidator(t *testing.T) {
 // This test would need to be moved to the agent package or the method exported.
 func TestParseList(t *testing.T) {
 	t.Skip("parseList is unexported and cannot be tested from the test package")
+}
+
+func TestMultiAgentValidator_MetadataContainsExpectedTools(t *testing.T) {
+	tests := []struct {
+		name          string
+		request       string
+		expectedTools string
+	}{
+		{
+			name:          "calendar request",
+			request:       "When is my meeting with John?",
+			expectedTools: "calendar",
+		},
+		{
+			name:          "memory request",
+			request:       "What did we discuss last time?",
+			expectedTools: "memory",
+		},
+		{
+			name:          "email request",
+			request:       "Did I get any emails from Sarah?",
+			expectedTools: "email",
+		},
+		{
+			name:          "task request",
+			request:       "What tasks do I have pending?",
+			expectedTools: "tasks",
+		},
+		{
+			name:          "multiple tools request",
+			request:       "Schedule a meeting based on the email I received",
+			expectedTools: "calendar,email",
+		},
+		{
+			name:          "no tools request",
+			request:       "Tell me a joke",
+			expectedTools: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			validator := agent.NewMultiAgentValidator()
+			mockLLM := newTestLLM()
+
+			// Set a simple response
+			mockLLM.setResponse("*", `STATUS: SUCCESS
+CONFIDENCE: 0.9
+ISSUES: none
+SUGGESTIONS: none`)
+
+			result := validator.Validate(context.Background(), tt.request, "test response", mockLLM)
+
+			actualTools := result.Metadata["expected_tools"]
+			if actualTools != tt.expectedTools {
+				t.Errorf("expected tools '%s', got '%s'", tt.expectedTools, actualTools)
+			}
+		})
+	}
 }
 
 // TestParseConfidence is skipped because parseConfidence is unexported

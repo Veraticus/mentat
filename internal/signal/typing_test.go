@@ -152,10 +152,13 @@ func TestTypingIndicatorManager_Stop(t *testing.T) {
 	}
 }
 
-func TestTypingIndicatorManager_RefreshEvery10Seconds(t *testing.T) {
-	// This test verifies the 10-second refresh interval
+func TestTypingIndicatorManager_RefreshInterval(t *testing.T) {
+	// This test verifies the configurable refresh interval
 	messenger := &mockTypingMessenger{}
-	manager := signal.NewTypingIndicatorManager(messenger)
+
+	// Use a short interval for testing (500ms)
+	testInterval := 500 * time.Millisecond
+	manager := signal.NewTypingIndicatorManagerWithInterval(messenger, testInterval)
 
 	ctx := context.Background()
 	recipient := "+1234567890"
@@ -165,25 +168,25 @@ func TestTypingIndicatorManager_RefreshEvery10Seconds(t *testing.T) {
 		t.Fatalf("Failed to start typing indicator: %v", err)
 	}
 
-	// Run for 25 seconds to see at least 2 refreshes
+	// Run for 1.5 seconds to see at least 2 refreshes
 	// Initial + 2 refreshes = 3 calls minimum
-	<-time.After(25 * time.Second)
+	<-time.After(1500 * time.Millisecond)
 
 	manager.Stop(recipient)
 
 	calls := messenger.getCalls()
 
 	if len(calls) < 3 {
-		t.Errorf("Expected at least 3 calls over 25 seconds, got %d", len(calls))
+		t.Errorf("Expected at least 3 calls over 1.5 seconds with 500ms interval, got %d", len(calls))
 		return
 	}
 
-	// Verify timing between calls (should be ~10 seconds)
+	// Verify timing between calls (should be ~500ms)
 	for i := 1; i < len(calls); i++ {
 		diff := calls[i].timestamp.Sub(calls[i-1].timestamp)
-		// Allow 9.5-10.5 seconds to account for timing variations
-		if diff < 9500*time.Millisecond || diff > 10500*time.Millisecond {
-			t.Errorf("Call %d->%d: interval was %v, expected ~10s", i-1, i, diff)
+		// Allow 450-550ms to account for timing variations
+		if diff < 450*time.Millisecond || diff > 550*time.Millisecond {
+			t.Errorf("Call %d->%d: interval was %v, expected ~500ms", i-1, i, diff)
 		}
 	}
 }

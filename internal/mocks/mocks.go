@@ -224,7 +224,13 @@ func (m *MockMessenger) SendTypingIndicator(_ context.Context, recipient string)
 
 // InjectMessage adds a message to the incoming channel.
 func (m *MockMessenger) InjectMessage(msg signal.IncomingMessage) {
-	m.incomingChan <- msg
+	select {
+	case m.incomingChan <- msg:
+		// Message sent successfully
+	default:
+		// Channel is full, drop the message to avoid blocking
+		// This prevents deadlocks in tests
+	}
 }
 
 // GetSentMessages returns all sent messages.

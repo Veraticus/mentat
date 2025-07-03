@@ -14,75 +14,6 @@ issues:
   new: false
   # Don't skip generated files - we want quality everywhere
   exclude-generated: false
-  
-  # Use community-vetted exclusion presets
-  exclusions:
-    # Log a warning if an exclusion rule is unused
-    warn-unused: true
-    # Predefined exclusion rules for common patterns
-    presets:
-      - std-error-handling     # Excludes common error handling patterns
-      - common-false-positives  # Excludes known false positives
-    
-    # Exclude some patterns in specific contexts
-    rules:
-      # Test file exclusions
-      - path: _test\.go
-        linters:
-          - bodyclose      # HTTP response bodies in tests
-          - dupl          # Test code often has similar patterns
-          - errcheck      # Error checking might be relaxed in tests
-          - funlen        # Test functions can be longer
-          - gocyclo       # Test functions can be more complex
-          - gocognit      # Test complexity is less critical
-          - goconst       # Test strings don't need to be constants
-          - gosec         # Security checks can be relaxed in tests
-          - noctx         # Context might not be needed in tests
-          - wrapcheck     # Test error handling can be simpler
-          - containedctx  # Tests might store context for lifecycle
-          
-      # Allow time.Sleep in test files only
-      - path: _test\.go
-        text: "time.Sleep"
-        linters:
-          - forbidigo
-          
-      # Allow panic in main.go for CLI apps
-      - path: main\.go
-        text: "panic"
-        linters:
-          - forbidigo
-          
-      # Allow returning interfaces in mock implementations
-      - path: mock_.*\.go
-        linters:
-          - ireturn
-          
-      # Allow simpler error handling in generated code
-      - path: _generated\.go
-        linters:
-          - wrapcheck
-          - goconst
-          
-      # TODO comments don't need periods
-      - source: 'TODO'
-        linters: [ godot ]
-        
-      # Package comments can be TODO/nolint
-      - text: 'should have a package comment'
-        linters: [ revive ]
-      - text: 'package comment should be of the form ".+"'
-        source: '// ?(nolint|TODO)'
-        linters: [ revive ]
-        
-      # Allow new context for shutdown in main.go
-      - path: cmd/mentat/main\.go
-        text: "Non-inherited new context"
-        linters: [ contextcheck ]
-        
-      # Disable perfsprint error-format due to forbidigo conflict
-      - text: "fmt\\.Errorf can be replaced with errors\\.New"
-        linters: [ perfsprint ]
 
 # Formatters - automatically fix style issues
 formatters:
@@ -611,6 +542,40 @@ linters:
     # Miscellaneous settings
     misspell:
       locale: US
+      
+  # Defines a set of rules to ignore issues.
+  exclusions:
+    # Log a warning if an exclusion rule is unused
+    warn-unused: true
+    
+    # Excluding configuration per-path, per-linter, per-text and per-source
+    rules:
+      # Exclude some linters from running on tests files
+      - path: _test\.go
+        linters:
+          - bodyclose      # HTTP response bodies in tests
+          - dupl          # Test code often has similar patterns
+          - errcheck      # Error checking might be relaxed in tests
+          - funlen        # Test functions can be longer
+          - gocyclo       # Test functions can be more complex
+          - gocognit      # Test complexity is less critical
+          - goconst       # Test strings don't need to be constants
+          - gosec         # Security checks can be relaxed in tests
+          - noctx         # Context might not be needed in tests
+          - wrapcheck     # Test error handling can be simpler
+          - containedctx  # Tests might store context for lifecycle
+          
+      # Allow time.Sleep in test files only
+      - path: _test\.go
+        text: "time.Sleep"
+        linters:
+          - forbidigo
+          
+      # Allow panic in main.go for CLI apps
+      - path: main\.go
+        text: "panic"
+        linters:
+          - forbidigo
 
 run:
   # Timeout for analysis

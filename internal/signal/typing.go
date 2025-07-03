@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	// typingIndicatorInterval is the interval at which typing indicators are refreshed.
-	typingIndicatorInterval = 10 * time.Second
+	// DefaultTypingIndicatorInterval is the default interval at which typing indicators are refreshed.
+	DefaultTypingIndicatorInterval = 10 * time.Second
 )
 
 // TypingIndicatorManager manages typing indicators for multiple recipients.
@@ -35,13 +35,20 @@ type typingManager struct {
 	messenger  Messenger
 	indicators map[string]*typingIndicator
 	mu         sync.RWMutex
+	interval   time.Duration
 }
 
-// NewTypingIndicatorManager creates a new typing indicator manager.
+// NewTypingIndicatorManager creates a new typing indicator manager with default interval.
 func NewTypingIndicatorManager(messenger Messenger) TypingIndicatorManager {
+	return NewTypingIndicatorManagerWithInterval(messenger, DefaultTypingIndicatorInterval)
+}
+
+// NewTypingIndicatorManagerWithInterval creates a new typing indicator manager with custom interval.
+func NewTypingIndicatorManagerWithInterval(messenger Messenger, interval time.Duration) TypingIndicatorManager {
 	return &typingManager{
 		messenger:  messenger,
 		indicators: make(map[string]*typingIndicator),
+		interval:   interval,
 	}
 }
 
@@ -107,7 +114,7 @@ func (m *typingManager) runIndicator(ctx context.Context, recipient string) {
 	}
 
 	// Create ticker for periodic updates
-	ticker := time.NewTicker(typingIndicatorInterval)
+	ticker := time.NewTicker(m.interval)
 	defer ticker.Stop()
 
 	for {

@@ -112,7 +112,7 @@ func TestWriteMCPConfig(t *testing.T) {
 	}
 
 	// Test that written file contains valid JSON
-	data, err := os.ReadFile(configPath) //nolint:gosec // test path is controlled
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatalf("failed to read config file: %v", err)
 	}

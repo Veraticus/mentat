@@ -64,7 +64,7 @@ type mockQueue struct {
 
 func newMockQueue() *mockQueue {
 	return &mockQueue{
-		enqueued: make(chan struct{}, 100),
+		enqueued: make(chan struct{}, 10000), // Larger buffer for benchmarks
 	}
 }
 
@@ -258,15 +258,26 @@ func TestHandlerStart(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		// Start handler
-		started := make(chan struct{})
+		// Start handler in background
+		errCh := make(chan error, 1)
 		go func() {
-			close(started)
-			_ = setup.handler.Start(ctx)
+			errCh <- setup.handler.Start(ctx)
 		}()
-		<-started
 
-		// Try to start again
+		// Wait for handler to be running
+		for range 50 {
+			if setup.handler.IsRunning() {
+				break
+			}
+			<-time.After(10 * time.Millisecond)
+		}
+
+		// Verify handler is running
+		if !setup.handler.IsRunning() {
+			t.Fatal("handler should be running")
+		}
+
+		// Try to start again - this should fail
 		err := setup.handler.Start(ctx)
 		if err == nil {
 			t.Fatal("expected error but got nil")
@@ -275,7 +286,18 @@ func TestHandlerStart(t *testing.T) {
 			t.Errorf("unexpected error: %v", err)
 		}
 
+		// Clean up by canceling context
 		cancel()
+
+		// Wait for the first Start() to complete
+		select {
+		case handlerErr := <-errCh:
+			if handlerErr != nil {
+				t.Errorf("first Start() returned error: %v", handlerErr)
+			}
+		case <-time.After(time.Second):
+			t.Error("handler did not stop within timeout")
+		}
 	})
 }
 
@@ -397,12 +419,18 @@ func TestHandlerIsRunning(t *testing.T) {
 	defer cancel()
 
 	// Start handler
-	started := make(chan struct{})
+	errCh := make(chan error, 1)
 	go func() {
-		close(started)
-		_ = handler.Start(ctx)
+		errCh <- handler.Start(ctx)
 	}()
-	<-started
+
+	// Wait for handler to be running
+	for range 50 {
+		if handler.IsRunning() {
+			break
+		}
+		<-time.After(10 * time.Millisecond)
+	}
 
 	// Should be running
 	if !handler.IsRunning() {
@@ -474,31 +502,49 @@ func BenchmarkHandlerMessageProcessing(b *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	started := make(chan struct{})
+	errCh := make(chan error, 1)
 	go func() {
-		close(started)
-		_ = handler.Start(ctx)
+		errCh <- handler.Start(ctx)
 	}()
-	<-started
+
+	// Wait for handler to be running
+	for range 50 {
+		if handler.IsRunning() {
+			break
+		}
+		<-time.After(10 * time.Millisecond)
+	}
+
+	if !handler.IsRunning() {
+		b.Fatal("handler failed to start")
+	}
 
 	b.ResetTimer()
-	for range b.N {
+	for i := range b.N {
 		messenger.messages <- signal.IncomingMessage{
 			From:      "+1234567890",
 			Text:      "Benchmark message",
 			Timestamp: time.Now(),
 		}
-	}
 
-	// Wait for all messages to be processed
-	for range b.N {
+		// Wait for this message to be processed before sending the next
 		select {
 		case <-q.enqueued:
 		case <-time.After(time.Second):
-			b.Fatal("timeout waiting for message")
+			b.Fatalf("timeout waiting for message %d", i)
 		}
 	}
 	b.StopTimer()
 
 	cancel()
+
+	// Wait for handler to stop
+	select {
+	case handlerErr := <-errCh:
+		if handlerErr != nil {
+			b.Errorf("handler returned error: %v", handlerErr)
+		}
+	case <-time.After(time.Second):
+		b.Error("handler did not stop within timeout")
+	}
 }

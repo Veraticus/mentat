@@ -63,6 +63,23 @@ Guidelines:
 - UNCLEAR: Cannot determine if the response is adequate
 - INCOMPLETE_SEARCH: The assistant should have used more tools (e.g., memory, calendar) but didn't
 
+Thoroughness Checking:
+When evaluating, pay special attention to whether the assistant should have:
+1. Checked memory for relevant past conversations or context
+2. Looked at the calendar for scheduling-related queries
+3. Searched email for correspondence-related requests
+4. Consulted task lists for todo-related questions
+5. Used multiple tools to gather comprehensive information
+
+If the request implies needing information from tools but the assistant didn't use them, mark as INCOMPLETE_SEARCH.
+
+Examples that require tool usage:
+- "When is my meeting with John?" → Should check calendar
+- "What did we discuss last time?" → Should check memory
+- "What's on my schedule?" → Should check calendar
+- "Did I get an email about X?" → Should check email
+- "What tasks do I have?" → Should check task list
+
 Be specific about any issues or missing elements.`,
 	}
 }
@@ -73,6 +90,9 @@ func (v *MultiAgentValidator) Validate(
 	request, response string,
 	llm claude.LLM,
 ) ValidationResult {
+	// Detect if the request likely requires tool usage
+	requiredTools := v.detectToolRequirement(request)
+
 	// Create validation prompt
 	prompt := fmt.Sprintf(v.validationPromptTemplate, request, response)
 
@@ -88,7 +108,14 @@ func (v *MultiAgentValidator) Validate(
 	}
 
 	// Parse validation response
-	return v.parseValidationResponse(llmResponse.Message)
+	result := v.parseValidationResponse(llmResponse.Message)
+
+	// Add metadata about expected tools
+	if len(requiredTools) > 0 {
+		result.Metadata["expected_tools"] = strings.Join(requiredTools, ",")
+	}
+
+	return result
 }
 
 // ShouldRetry determines if we should retry based on the validation result.
@@ -189,6 +216,63 @@ func (v *MultiAgentValidator) parseValidationResponse(response string) Validatio
 	}
 
 	return result
+}
+
+// detectToolRequirement analyzes a request to determine if it likely requires tool usage.
+// This is used to enhance validation by providing hints about expected tool usage.
+func (v *MultiAgentValidator) detectToolRequirement(request string) []string {
+	lowerRequest := strings.ToLower(request)
+	requiredTools := []string{}
+
+	// Calendar-related keywords
+	calendarKeywords := []string{
+		"meeting", "schedule", "calendar", "appointment", "event",
+		"when is", "what time", "busy", "free time", "availability",
+	}
+	for _, keyword := range calendarKeywords {
+		if strings.Contains(lowerRequest, keyword) {
+			requiredTools = append(requiredTools, "calendar")
+			break
+		}
+	}
+
+	// Memory-related keywords
+	memoryKeywords := []string{
+		"last time", "previously", "before", "remember", "discussed",
+		"conversation", "what did", "history", "context", "mentioned",
+	}
+	for _, keyword := range memoryKeywords {
+		if strings.Contains(lowerRequest, keyword) {
+			requiredTools = append(requiredTools, "memory")
+			break
+		}
+	}
+
+	// Email-related keywords
+	emailKeywords := []string{
+		"email", "mail", "message", "correspondence", "sent", "received",
+		"inbox", "attachment", "reply", "forward",
+	}
+	for _, keyword := range emailKeywords {
+		if strings.Contains(lowerRequest, keyword) {
+			requiredTools = append(requiredTools, "email")
+			break
+		}
+	}
+
+	// Task-related keywords
+	taskKeywords := []string{
+		"task", "todo", "to do", "to-do", "checklist", "items",
+		"pending", "complete", "done", "assignment",
+	}
+	for _, keyword := range taskKeywords {
+		if strings.Contains(lowerRequest, keyword) {
+			requiredTools = append(requiredTools, "tasks")
+			break
+		}
+	}
+
+	return requiredTools
 }
 
 // parseStatus converts string status to ValidationStatus.

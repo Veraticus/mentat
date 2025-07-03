@@ -60,6 +60,7 @@ type DynamicWorkerPool struct {
 	workerDone chan string
 
 	// Synchronization
+	mu           sync.RWMutex // Protects workers map
 	cancel       context.CancelFunc
 	wg           sync.WaitGroup
 	workerCancel context.CancelFunc
@@ -115,9 +116,11 @@ func (p *DynamicWorkerPool) Start(ctx context.Context) error {
 	go p.manage(ctx)
 
 	// Start all initial workers
+	p.mu.RLock()
 	for id, wi := range p.workers {
 		p.startWorker(ctx, id, wi.worker)
 	}
+	p.mu.RUnlock()
 
 	return nil
 }
@@ -168,9 +171,11 @@ func (p *DynamicWorkerPool) createWorker(ctx context.Context) string {
 	worker := NewWorker(config)
 	workerID := worker.ID()
 
+	p.mu.Lock()
 	p.workers[workerID] = &workerInfo{
 		worker: worker,
 	}
+	p.mu.Unlock()
 
 	p.activeWorkers.Add(1)
 
@@ -218,7 +223,10 @@ func (p *DynamicWorkerPool) startWorker(ctx context.Context, id string, worker W
 
 // addWorkers adds the specified number of workers to the pool.
 func (p *DynamicWorkerPool) addWorkers(ctx context.Context, count int) error {
+	p.mu.RLock()
 	currentSize := len(p.workers)
+	p.mu.RUnlock()
+
 	maxAdd := p.config.MaxSize - currentSize
 
 	if maxAdd <= 0 {
@@ -233,22 +241,31 @@ func (p *DynamicWorkerPool) addWorkers(ctx context.Context, count int) error {
 		workerID := p.createWorker(ctx)
 
 		// Start the new worker
-		if wi, ok := p.workers[workerID]; ok {
+		p.mu.RLock()
+		wi, ok := p.workers[workerID]
+		p.mu.RUnlock()
+
+		if ok {
 			p.startWorker(ctx, workerID, wi.worker)
 		}
 	}
 
 	logger := slog.Default()
-	logger.InfoContext(ctx, "Added workers", slog.Int("count", count), slog.Int("pool_size", len(p.workers)))
+	p.mu.RLock()
+	poolSize := len(p.workers)
+	p.mu.RUnlock()
+	logger.InfoContext(ctx, "Added workers", slog.Int("count", count), slog.Int("pool_size", poolSize))
 	return nil
 }
 
 // removeWorkers removes the specified number of workers from the pool.
 func (p *DynamicWorkerPool) removeWorkers(ctx context.Context, count int) error {
+	p.mu.Lock()
 	currentSize := len(p.workers)
 	maxRemove := currentSize - p.config.MinSize
 
 	if maxRemove <= 0 {
+		p.mu.Unlock()
 		return fmt.Errorf("pool at minimum size (%d)", p.config.MinSize)
 	}
 
@@ -258,33 +275,48 @@ func (p *DynamicWorkerPool) removeWorkers(ctx context.Context, count int) error 
 
 	// Remove the least recently active workers
 	removed := 0
+	var toStop []*workerInfo
+	var toRemove []string
+
 	for id := range p.workers {
 		if removed >= count {
 			break
 		}
 
 		if wi, ok := p.workers[id]; ok {
-			if err := wi.worker.Stop(); err != nil {
-				logger := slog.Default()
-				logger.ErrorContext(ctx, "Failed to stop worker", slog.String("worker_id", id), slog.Any("error", err))
-			}
+			toStop = append(toStop, wi)
+			toRemove = append(toRemove, id)
 			delete(p.workers, id)
 			p.activeWorkers.Add(-1)
 			removed++
-			logger := slog.Default()
-			logger.InfoContext(ctx, "Removed worker", slog.String("worker_id", id))
 		}
+	}
+	poolSize := len(p.workers)
+	p.mu.Unlock()
+
+	// Stop workers outside the lock to avoid holding it during potentially blocking operations
+	for i, wi := range toStop {
+		if err := wi.worker.Stop(); err != nil {
+			logger := slog.Default()
+			logger.ErrorContext(ctx, "Failed to stop worker",
+				slog.String("worker_id", toRemove[i]),
+				slog.Any("error", err))
+		}
+		logger := slog.Default()
+		logger.InfoContext(ctx, "Removed worker", slog.String("worker_id", toRemove[i]))
 	}
 
 	logger := slog.Default()
-	logger.InfoContext(ctx, "Removed workers", slog.Int("count", removed), slog.Int("pool_size", len(p.workers)))
+	logger.InfoContext(ctx, "Removed workers", slog.Int("count", removed), slog.Int("pool_size", poolSize))
 	return nil
 }
 
 // handleWorkerDone handles a worker that has stopped.
 func (p *DynamicWorkerPool) handleWorkerDone(ctx context.Context, workerID string) {
+	p.mu.Lock()
 	_, ok := p.workers[workerID]
 	if !ok {
+		p.mu.Unlock()
 		return
 	}
 
@@ -295,13 +327,18 @@ func (p *DynamicWorkerPool) handleWorkerDone(ctx context.Context, workerID strin
 
 	// Replace the worker if we're below minimum size
 	if len(p.workers) >= p.config.MinSize {
+		p.mu.Unlock()
 		return
 	}
+	p.mu.Unlock()
 
 	newWorkerID := p.createWorker(ctx)
 
 	// Start the replacement worker
+	p.mu.RLock()
 	wi, ok := p.workers[newWorkerID]
+	p.mu.RUnlock()
+
 	if ok {
 		p.startWorker(ctx, newWorkerID, wi.worker)
 	}
@@ -310,13 +347,29 @@ func (p *DynamicWorkerPool) handleWorkerDone(ctx context.Context, workerID strin
 // stopAllWorkers stops all workers in the pool.
 func (p *DynamicWorkerPool) stopAllWorkers(ctx context.Context) {
 	logger := slog.Default()
+
+	p.mu.Lock()
 	logger.InfoContext(ctx, "Stopping all workers", slog.Int("count", len(p.workers)))
 
+	// Collect workers to stop
+	toStop := make([]struct {
+		id string
+		wi *workerInfo
+	}, 0, len(p.workers))
 	for id, wi := range p.workers {
-		if err := wi.worker.Stop(); err != nil {
-			logger.ErrorContext(ctx, "Failed to stop worker", slog.String("worker_id", id), slog.Any("error", err))
-		}
+		toStop = append(toStop, struct {
+			id string
+			wi *workerInfo
+		}{id: id, wi: wi})
 		delete(p.workers, id)
+	}
+	p.mu.Unlock()
+
+	// Stop workers outside the lock
+	for _, item := range toStop {
+		if err := item.wi.worker.Stop(); err != nil {
+			logger.ErrorContext(ctx, "Failed to stop worker", slog.String("worker_id", item.id), slog.Any("error", err))
+		}
 	}
 
 	p.activeWorkers.Store(0)

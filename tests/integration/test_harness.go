@@ -34,6 +34,7 @@ type TestHarness struct {
 	queueManager  *queue.Manager
 	workerPool    *queue.DynamicWorkerPool
 	signalHandler *signal.Handler
+	queueAdapter  *trackingQueueAdapter
 
 	// Message tracking
 	messageTracker *MessageTracker
@@ -111,26 +112,35 @@ func (h *TestHarness) Setup() error {
 	h.queueManager = queue.NewManager(h.ctx)
 
 	// Create queue adapter with tracking
-	queueAdapter := &trackingQueueAdapter{
+	adapterCtx, adapterCancel := context.WithCancel(h.ctx)
+	h.queueAdapter = &trackingQueueAdapter{
 		manager:        h.queueManager,
 		tracker:        h.messageTracker,
 		activeMessages: make(map[string]*queue.Message),
+		ctx:            adapterCtx,
+		cancel:         adapterCancel,
+		harness:        h,
 	}
 
 	// Create worker pool with real workers
+	minSize := 1
+	if h.config.WorkerCount == 0 {
+		// Special case for testing queue overflow - we want no workers
+		minSize = 0
+	}
 	workerConfig := queue.PoolConfig{
 		InitialSize:  h.config.WorkerCount,
-		MinSize:      1,
+		MinSize:      minSize,
 		MaxSize:      5,
 		LLM:          h.mockLLM,
 		Messenger:    h.mockMessenger,
 		QueueManager: h.queueManager,
-		MessageQueue: queueAdapter,
+		MessageQueue: h.queueAdapter,
 		RateLimiter:  limiter,
 	}
 
 	var err error
-	h.workerPool, err = queue.NewDynamicWorkerPool(workerConfig)
+	h.workerPool, err = queue.NewDynamicWorkerPool(h.ctx, workerConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create worker pool: %w", err)
 	}
@@ -139,6 +149,7 @@ func (h *TestHarness) Setup() error {
 	enqueuer := &trackingMessageEnqueuer{
 		queue:   h.queueManager,
 		tracker: h.messageTracker,
+		harness: h,
 	}
 
 	// Create signal handler
@@ -151,6 +162,7 @@ func (h *TestHarness) Setup() error {
 	h.queueMonitor.Start(h.ctx, 100*time.Millisecond, h.queueManager.Stats)
 
 	// Start resource monitoring
+	h.wg.Add(1)
 	go h.monitorResources()
 
 	// Start all components
@@ -175,7 +187,7 @@ func (h *TestHarness) Teardown() {
 
 	// Stop worker pool first (before cancelling context)
 	if h.workerPool != nil {
-		h.workerPool.Stop()
+		h.workerPool.Stop(context.Background())
 	}
 
 	// Shutdown queue manager
@@ -183,7 +195,17 @@ func (h *TestHarness) Teardown() {
 		h.queueManager.Shutdown(2 * time.Second)
 	}
 
-	// Cancel context to signal shutdown
+	// Cancel queue adapter context to signal monitoring goroutines to stop
+	if h.queueAdapter != nil && h.queueAdapter.cancel != nil {
+		h.queueAdapter.cancel()
+
+		// Wait for all monitoring goroutines to complete
+		// This prevents the race condition where goroutines are still
+		// reading from the context's done channel when it's closed
+		h.queueAdapter.Wait()
+	}
+
+	// Cancel main context to signal shutdown
 	h.cancel()
 
 	// Wait for all goroutines with timeout
@@ -200,6 +222,12 @@ func (h *TestHarness) Teardown() {
 		h.t.Error("Teardown timeout - some goroutines did not exit")
 	}
 
+	// Close test channels only after all goroutines have stopped
+	// This prevents races where goroutines try to send to closed channels
+	close(h.messagesSent)
+	close(h.stateChanges)
+	close(h.errors)
+
 	// Check for resource leaks
 	if err := h.resourceMonitor.CheckLeaks(); err != nil {
 		h.t.Errorf("Resource leak detected: %v", err)
@@ -213,11 +241,6 @@ func (h *TestHarness) Teardown() {
 			h.t.Logf("  - %s: %s", alert.Type, alert.Description)
 		}
 	}
-
-	// Close test channels
-	close(h.messagesSent)
-	close(h.stateChanges)
-	close(h.errors)
 }
 
 // SendMessage simulates receiving a Signal message
@@ -296,7 +319,7 @@ func (h *TestHarness) WaitForMessageCompletion(msgID string, timeout time.Durati
 
 	for time.Now().Before(deadline) {
 		msg, ok := h.messageTracker.GetMessage(msgID)
-		if ok && msg.CurrentState == queue.MessageStateCompleted {
+		if ok && msg.CurrentState == queue.StateCompleted {
 			return nil
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -311,18 +334,79 @@ func (h *TestHarness) WaitForMessageCompletion(msgID string, timeout time.Durati
 	return fmt.Errorf("message %s not found", msgID)
 }
 
+// WaitForAllMessagesCompletion waits for all tracked messages to complete processing
+func (h *TestHarness) WaitForAllMessagesCompletion(expectedCount int, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		stats := h.messageTracker.GetStats()
+		completed := stats.Completed
+		failed := stats.Failed
+		total := stats.Total
+
+		// Check if all messages have been processed (either completed or failed)
+		processedCount := completed + failed
+		if processedCount >= expectedCount {
+			// If we have the expected number, we're done
+			return nil
+		}
+
+		// Also check if all tracked messages are in a terminal state
+		if total > 0 && processedCount >= total {
+			// All messages that were submitted have been processed
+			if total < expectedCount {
+				// We didn't get all the messages we expected
+				return fmt.Errorf("only %d messages were tracked, expected %d", total, expectedCount)
+			}
+			return nil
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// Timeout - provide detailed state information
+	state := h.VerifyQueueState()
+	return fmt.Errorf("timeout waiting for %d messages to complete: completed=%d, failed=%d, pending=%d, processing=%d, retrying=%d",
+		expectedCount, state.CompletedMessages, state.FailedMessages,
+		state.PendingMessages, state.ProcessingMessages, state.RetryingMessages)
+}
+
 // VerifyQueueState checks the current queue state with full tracking
 func (h *TestHarness) VerifyQueueState() QueueState {
 	stats := h.messageTracker.GetStats()
 	managerStats := h.queueManager.Stats()
 
+	// Build conversation state from tracked messages
+	conversations := make(map[string]ConversationState)
+	h.messageTracker.mu.RLock()
+	for _, msg := range h.messageTracker.messages {
+		conv, exists := conversations[msg.ConversationID]
+		if !exists {
+			conv = ConversationState{
+				LastActivity: msg.EnqueuedAt,
+			}
+		}
+		if msg.CurrentState == queue.StateCompleted {
+			conv.ProcessedMsgs++
+		}
+		if msg.CurrentState == queue.StateQueued || msg.CurrentState == queue.StateProcessing {
+			conv.QueueDepth++
+		}
+		if msg.CompletedAt != nil && msg.CompletedAt.After(conv.LastActivity) {
+			conv.LastActivity = *msg.CompletedAt
+		}
+		conversations[msg.ConversationID] = conv
+	}
+	h.messageTracker.mu.RUnlock()
+
 	return QueueState{
 		TotalMessages:       stats.Total,
-		PendingMessages:     stats.ByState[queue.MessageStateQueued],
-		ProcessingMessages:  stats.ByState[queue.MessageStateProcessing],
+		PendingMessages:     stats.ByState[queue.StateQueued],
+		ProcessingMessages:  stats.ByState[queue.StateProcessing],
 		CompletedMessages:   stats.Completed,
 		FailedMessages:      stats.Failed,
-		Conversations:       make(map[string]ConversationState),
+		RetryingMessages:    stats.ByState[queue.StateRetrying],
+		Conversations:       conversations,
 		QueuedInManager:     managerStats["queued_messages"],
 		ProcessingInManager: managerStats["processing_messages"],
 	}
@@ -392,7 +476,9 @@ func (h *TestHarness) GetErrors() []error {
 // setupMockCallbacks configures mocks to record calls for verification
 func (h *TestHarness) setupMockCallbacks() {
 	// Set up a goroutine to monitor MockMessenger's sent messages
+	h.wg.Add(1)
 	go func() {
+		defer h.wg.Done()
 		ticker := time.NewTicker(50 * time.Millisecond)
 		defer ticker.Stop()
 		lastCount := 0
@@ -412,7 +498,8 @@ func (h *TestHarness) setupMockCallbacks() {
 					}
 					select {
 					case h.messagesSent <- msg:
-					default:
+					case <-h.ctx.Done():
+						return
 					}
 				}
 				lastCount = len(sent)
@@ -427,7 +514,7 @@ func (h *TestHarness) startComponents() {
 	h.wg.Add(1)
 	go func() {
 		defer h.wg.Done()
-		h.queueManager.Start()
+		h.queueManager.Start(h.ctx)
 	}()
 
 	// Start worker pool
@@ -474,6 +561,7 @@ func (h *TestHarness) trackMessageCompletions() {
 
 // monitorResources continuously tracks resource usage
 func (h *TestHarness) monitorResources() {
+	defer h.wg.Done()
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -520,6 +608,7 @@ type QueueState struct {
 	ProcessingMessages  int
 	CompletedMessages   int
 	FailedMessages      int
+	RetryingMessages    int
 	Conversations       map[string]ConversationState
 	QueuedInManager     int // From the actual queue manager
 	ProcessingInManager int // From the actual queue manager
@@ -572,6 +661,10 @@ type trackingQueueAdapter struct {
 	tracker        *MessageTracker
 	mu             sync.Mutex
 	activeMessages map[string]*queue.Message // Track messages being processed
+	ctx            context.Context
+	cancel         context.CancelFunc
+	harness        *TestHarness   // Back reference for state changes
+	wg             sync.WaitGroup // Track monitoring goroutines
 }
 
 // Enqueue implements queue.MessageQueue with tracking
@@ -590,30 +683,50 @@ func (a *trackingQueueAdapter) Enqueue(msg signal.IncomingMessage) error {
 		Sender:         msg.From,
 		CreatedAt:      msg.Timestamp,
 		State:          queue.StateQueued,
+		MaxAttempts:    3, // Allow retries for rate limiting
 	}
 
 	// Submit to queue
 	err := a.manager.Submit(queueMsg)
 
-	// Track state change
+	// Track state change and record harness state change
 	if err != nil {
-		a.tracker.RecordStateChange(msgID, queue.MessageStateQueued, queue.MessageStateFailed,
+		a.tracker.RecordStateChange(msgID, queue.StateQueued, queue.StateFailed,
 			"enqueue failed", err)
+	} else {
+		// Record successful enqueue for test verification
+		if a.harness != nil {
+			a.harness.recordStateChange("queue", "message_enqueued", map[string]any{
+				"message_id":      msgID,
+				"conversation_id": msg.FromNumber,
+			})
+		}
 	}
 
 	return err
 }
 
 // GetNext implements queue.MessageQueue with state tracking
-func (a *trackingQueueAdapter) GetNext(workerID string) (*queue.QueuedMessage, error) {
-	msg, err := a.manager.RequestMessage(context.Background())
+func (a *trackingQueueAdapter) GetNext(workerID string) (*queue.Message, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	msg, err := a.manager.RequestMessage(ctx)
 	if err != nil || msg == nil {
 		return nil, err
 	}
 
 	// Track state change
-	a.tracker.RecordStateChange(msg.ID, queue.MessageStateQueued, queue.MessageStateProcessing,
+	a.tracker.RecordStateChange(msg.ID, queue.StateQueued, queue.StateProcessing,
 		fmt.Sprintf("assigned to worker %s", workerID), nil)
+
+	// Record harness state change for test verification
+	if a.harness != nil {
+		a.harness.recordStateChange("queue", "message_processing", map[string]any{
+			"message_id": msg.ID,
+			"worker_id":  workerID,
+		})
+	}
 
 	// Keep reference to track completion
 	a.mu.Lock()
@@ -621,34 +734,51 @@ func (a *trackingQueueAdapter) GetNext(workerID string) (*queue.QueuedMessage, e
 	a.mu.Unlock()
 
 	// Start monitoring this message for completion
-	go a.monitorMessageCompletion(msg)
+	a.wg.Add(1)
+	go func() {
+		defer a.wg.Done()
+		a.monitorMessageCompletion(msg)
+	}()
 
-	// Convert to QueuedMessage
-	return &queue.QueuedMessage{
-		ID:             msg.ID,
-		ConversationID: msg.ConversationID,
-		From:           msg.Sender,
-		Text:           msg.Text,
-		Priority:       queue.PriorityNormal,
-		State:          queue.MessageStateProcessing,
-		QueuedAt:       msg.CreatedAt,
-		Attempts:       msg.Attempts,
-		MaxAttempts:    msg.MaxAttempts,
-	}, nil
+	// Return the message directly
+	return msg, nil
 }
 
 // UpdateState implements queue.MessageQueue with tracking
-func (a *trackingQueueAdapter) UpdateState(msgID string, state queue.MessageState, reason string) error {
+func (a *trackingQueueAdapter) UpdateState(msgID string, state queue.State, reason string) error {
 	// Track the state change
 	if msg, ok := a.tracker.GetMessage(msgID); ok {
 		a.tracker.RecordStateChange(msgID, msg.CurrentState, state, reason, nil)
 	}
 
 	// Remove from active if completed/failed
-	if state == queue.MessageStateCompleted || state == queue.MessageStateFailed {
+	if state == queue.StateCompleted || state == queue.StateFailed {
 		a.mu.Lock()
+		activeMsg, exists := a.activeMessages[msgID]
 		delete(a.activeMessages, msgID)
 		a.mu.Unlock()
+
+		// Record harness state change for test verification
+		if a.harness != nil {
+			if state == queue.StateCompleted {
+				a.harness.recordStateChange("queue", "message_completed", map[string]any{
+					"message_id": msgID,
+				})
+			} else if state == queue.StateFailed {
+				a.harness.recordStateChange("queue", "message_failed", map[string]any{
+					"message_id": msgID,
+					"reason":     reason,
+				})
+			}
+		}
+
+		// If the message was completed, we need to tell the queue manager
+		// so it can process the next message in the conversation
+		if exists && (state == queue.StateCompleted || state == queue.StateFailed) {
+			if err := a.manager.CompleteMessage(activeMsg); err != nil {
+				return fmt.Errorf("failed to complete message in manager: %w", err)
+			}
+		}
 	}
 
 	return nil
@@ -662,10 +792,16 @@ func (a *trackingQueueAdapter) monitorMessageCompletion(msg *queue.Message) {
 
 	for {
 		select {
+		case <-a.ctx.Done():
+			// Context cancelled, clean up
+			a.mu.Lock()
+			delete(a.activeMessages, msg.ID)
+			a.mu.Unlock()
+			return
 		case <-timeout:
 			// Timeout - mark as failed
-			a.tracker.RecordStateChange(msg.ID, queue.MessageStateProcessing,
-				queue.MessageStateFailed, "processing timeout", nil)
+			a.tracker.RecordStateChange(msg.ID, queue.StateProcessing,
+				queue.StateFailed, "processing timeout", nil)
 			a.mu.Lock()
 			delete(a.activeMessages, msg.ID)
 			a.mu.Unlock()
@@ -675,20 +811,8 @@ func (a *trackingQueueAdapter) monitorMessageCompletion(msg *queue.Message) {
 			currentState := msg.GetState()
 			if currentState != queue.StateProcessing {
 				// State changed - update tracker
-				var newState queue.MessageState
-				switch currentState {
-				case queue.StateCompleted:
-					newState = queue.MessageStateCompleted
-				case queue.StateFailed:
-					newState = queue.MessageStateFailed
-				case queue.StateRetrying:
-					newState = queue.MessageStateRetrying
-				default:
-					continue
-				}
-
-				a.tracker.RecordStateChange(msg.ID, queue.MessageStateProcessing,
-					newState, "state change detected", nil)
+				a.tracker.RecordStateChange(msg.ID, queue.StateProcessing,
+					currentState, "state change detected", nil)
 
 				a.mu.Lock()
 				delete(a.activeMessages, msg.ID)
@@ -703,8 +827,8 @@ func (a *trackingQueueAdapter) monitorMessageCompletion(msg *queue.Message) {
 				if stats["processing_messages"] == 0 {
 					// No messages processing, this one must have completed or failed
 					// Default to failed if we got here
-					a.tracker.RecordStateChange(msg.ID, queue.MessageStateProcessing,
-						queue.MessageStateFailed, "processing ended without state update", nil)
+					a.tracker.RecordStateChange(msg.ID, queue.StateProcessing,
+						queue.StateFailed, "processing ended without state update", nil)
 
 					a.mu.Lock()
 					delete(a.activeMessages, msg.ID)
@@ -730,10 +854,16 @@ func (a *trackingQueueAdapter) Stats() queue.Stats {
 	}
 }
 
+// Wait waits for all monitoring goroutines to complete
+func (a *trackingQueueAdapter) Wait() {
+	a.wg.Wait()
+}
+
 // trackingMessageEnqueuer tracks all enqueued messages
 type trackingMessageEnqueuer struct {
 	queue   *queue.Manager
 	tracker *MessageTracker
+	harness *TestHarness // Back reference for state changes
 }
 
 // Enqueue implements signal.MessageEnqueuer with tracking
@@ -752,9 +882,20 @@ func (e *trackingMessageEnqueuer) Enqueue(msg signal.IncomingMessage) error {
 		Sender:         msg.From,
 		CreatedAt:      msg.Timestamp,
 		State:          queue.StateQueued,
+		MaxAttempts:    3, // Allow retries for rate limiting
 	}
 
-	return e.queue.Submit(queueMsg)
+	err := e.queue.Submit(queueMsg)
+
+	// Record state change for test verification
+	if err == nil && e.harness != nil {
+		e.harness.recordStateChange("queue", "message_enqueued", map[string]any{
+			"message_id":      msgID,
+			"conversation_id": msg.FromNumber,
+		})
+	}
+
+	return err
 }
 
 // RunScenario executes a test scenario with proper setup/teardown
