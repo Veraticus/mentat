@@ -331,41 +331,41 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Go idiom: Trust but verify
 
 ### Session Management
-- [ ] Implement ConversationManager - Phase 47
+- [X] Implement ConversationManager - Phase 47
   - Test: Sessions expire after 5 minutes
   - Location: `internal/conversation/manager.go`
   - Features: Sliding window, thread safety
   - Acceptance: No race conditions
   - Go idiom: Use RWMutex for read-heavy loads
 
-- [ ] Add session history tracking - Phase 48
+- [X] Add session history tracking - Phase 48
   - Test: History maintains message order
   - Features: Message limit, context building
   - Acceptance: Old messages are pruned
   - Go idiom: Bounded data structures
 
 ### Session Cleanup
-- [ ] Implement periodic cleanup - Phase 49
+- [X] Implement periodic cleanup - Phase 49
   - Test: Expired sessions are removed
   - Location: `internal/conversation/cleanup.go`
   - Features: Background goroutine, graceful stop
   - Acceptance: No memory leaks
   - Go idiom: Always stop goroutines cleanly
 
-- [ ] Add session persistence interface - Phase 50
+- [X] Add session persistence interface - Phase 50
   - Test: Sessions can be saved/loaded
   - Features: JSON serialization
   - Acceptance: Restarts preserve context
   - Go idiom: Make persistence optional
 
 ### Full Agent Flow
-- [ ] Wire agent components together - Phase 51
+- [X] Wire agent components together - Phase 51
   - Test: Full flow from request to response
   - Features: Enhancement → Execution → Validation
   - Acceptance: Each step adds value
   - Go idiom: Compose behaviors
 
-- [ ] Add comprehensive error handling - Phase 52
+- [X] Add comprehensive error handling - Phase 52
   - Test: All error paths return messages
   - Features: User-friendly errors
   - Acceptance: No error left unhandled

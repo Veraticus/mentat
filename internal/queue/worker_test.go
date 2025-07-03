@@ -355,7 +355,7 @@ func TestWorkerPool_Start(t *testing.T) {
 	go queueMgr.Start(ctx)
 
 	// Create worker pool
-	pool := queue.NewWorkerPool(3, llm, messenger, queueMgr, rateLimiter)
+	pool := queue.NewWorkerPool(3, llm, messenger, queueMgr, rateLimiter, nil)
 
 	// Start pool
 	if err := pool.Start(ctx); err != nil {
@@ -400,7 +400,7 @@ func TestWorkerPool_Size(t *testing.T) {
 	queueMgr := queue.NewManager(ctx)
 	rateLimiter := queue.NewRateLimiter(10, 1, time.Second)
 
-	pool := queue.NewWorkerPool(5, llm, messenger, queueMgr, rateLimiter)
+	pool := queue.NewWorkerPool(5, llm, messenger, queueMgr, rateLimiter, nil)
 
 	if pool.Size() != 5 {
 		t.Errorf("Expected pool size 5, got %d", pool.Size())
@@ -590,7 +590,7 @@ func TestWorkerPool_GracefulShutdown(t *testing.T) {
 	go queueMgr.Start(ctx)
 
 	// Create worker pool
-	pool := queue.NewWorkerPool(2, llm, messenger, queueMgr, rateLimiter)
+	pool := queue.NewWorkerPool(2, llm, messenger, queueMgr, rateLimiter, nil)
 
 	// Start pool
 	if err := pool.Start(ctx); err != nil {
@@ -692,7 +692,7 @@ func TestWorker_MessageOrderWithinConversation(t *testing.T) {
 	}()
 
 	// Create worker pool with multiple workers
-	pool := queue.NewWorkerPool(3, llm, messenger, queueMgr, rateLimiter)
+	pool := queue.NewWorkerPool(3, llm, messenger, queueMgr, rateLimiter, nil)
 
 	// Start pool
 	poolCtx, poolCancel := context.WithCancel(ctx)

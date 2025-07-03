@@ -83,7 +83,7 @@ func TestRetryIntegration(t *testing.T) {
 	}()
 
 	// Create worker pool
-	pool := queue.NewWorkerPool(1, mockLLM, mockMessenger, manager, rateLimiter)
+	pool := queue.NewWorkerPool(1, mockLLM, mockMessenger, manager, rateLimiter, nil)
 	if err := pool.Start(ctx); err != nil {
 		t.Fatalf("Failed to start worker pool: %v", err)
 	}

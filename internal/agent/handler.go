@@ -163,28 +163,82 @@ func WithComplexityAnalyzer(analyzer ComplexityAnalyzer) HandlerOption {
 // Process handles an incoming message through the agent pipeline.
 // It manages sessions, queries the LLM, and handles errors gracefully.
 func (h *handler) Process(ctx context.Context, msg signal.IncomingMessage) error {
-	// Log the incoming message
-	h.logger.DebugContext(ctx, "processing message",
-		slog.String("from", msg.From),
-		slog.Int("text_length", len(msg.Text)))
+	// Create error handler for this process
+	errorHandler := NewProcessingErrorHandler(h.messenger)
 
-	// Get or create session for conversation continuity
-	sessionID := h.sessionManager.GetOrCreateSession(msg.From)
-	h.logger.DebugContext(ctx, "session determined",
+	// Wrap the entire process in error recovery
+	return errorHandler.WrapWithRecovery(ctx, msg.From, msg.Text, func() error {
+		// Log the incoming message
+		h.logger.DebugContext(ctx, "processing message",
+			slog.String("from", msg.From),
+			slog.Int("text_length", len(msg.Text)))
+
+		// Get or create session for conversation continuity
+		sessionID := h.sessionManager.GetOrCreateSession(msg.From)
+		h.logger.DebugContext(ctx, "session determined",
+			slog.String("session_id", sessionID),
+			slog.String("from", msg.From))
+
+		// Prepare the request with optional complexity guidance
+		requestToSend := h.prepareRequest(ctx, msg.Text, sessionID)
+
+		// Query Claude with the message (possibly enhanced with guidance)
+		response, err := h.llm.Query(ctx, requestToSend, sessionID)
+		if err != nil {
+			h.logger.ErrorContext(ctx, "LLM query failed",
+				slog.Any("error", err),
+				slog.String("session_id", sessionID),
+				slog.String("from", msg.From))
+			return fmt.Errorf("processing message from %s: LLM query failed: %w", msg.From, err)
+		}
+
+		h.logger.DebugContext(ctx, "received LLM response",
+			slog.String("session_id", sessionID),
+			slog.Int("response_length", len(response.Message)))
+
+		// Perform validation with retry logic
+		finalResponse := h.validateAndRetry(ctx, msg.Text, response, sessionID)
+
+		// Send the response back via messenger
+		if sendErr := h.messenger.Send(ctx, msg.From, finalResponse.Message); sendErr != nil {
+			h.logger.ErrorContext(ctx, "failed to send response",
+				slog.Any("error", sendErr),
+				slog.String("to", msg.From))
+			return fmt.Errorf("processing message from %s: failed to send response: %w", msg.From, sendErr)
+		}
+
+		h.logger.InfoContext(ctx, "successfully processed message",
+			slog.String("session_id", sessionID),
+			slog.String("to", msg.From))
+
+		return nil
+	})
+}
+
+// Query processes a request and returns the response without sending it.
+// This method is designed for queue-based systems that need to manage responses.
+func (h *handler) Query(ctx context.Context, request string, sessionID string) (claude.LLMResponse, error) {
+	// Create error recovery handler
+	errorRecovery := NewErrorRecovery()
+
+	// Log the query
+	h.logger.DebugContext(ctx, "processing query",
 		slog.String("session_id", sessionID),
-		slog.String("from", msg.From))
+		slog.Int("text_length", len(request)))
 
 	// Prepare the request with optional complexity guidance
-	requestToSend := h.prepareRequest(ctx, msg.Text, sessionID)
+	requestToSend := h.prepareRequest(ctx, request, sessionID)
 
 	// Query Claude with the message (possibly enhanced with guidance)
 	response, err := h.llm.Query(ctx, requestToSend, sessionID)
 	if err != nil {
 		h.logger.ErrorContext(ctx, "LLM query failed",
 			slog.Any("error", err),
-			slog.String("session_id", sessionID),
-			slog.String("from", msg.From))
-		return fmt.Errorf("processing message from %s: LLM query failed: %w", msg.From, err)
+			slog.String("session_id", sessionID))
+		// Return user-friendly error message in the response
+		return claude.LLMResponse{
+			Message: errorRecovery.GenerateContextualMessage(err, request),
+		}, fmt.Errorf("query failed: %w", err)
 	}
 
 	h.logger.DebugContext(ctx, "received LLM response",
@@ -192,21 +246,12 @@ func (h *handler) Process(ctx context.Context, msg signal.IncomingMessage) error
 		slog.Int("response_length", len(response.Message)))
 
 	// Perform validation with retry logic
-	finalResponse := h.validateAndRetry(ctx, msg.Text, response, sessionID)
+	finalResponse := h.validateAndRetry(ctx, request, response, sessionID)
 
-	// Send the response back via messenger
-	if sendErr := h.messenger.Send(ctx, msg.From, finalResponse.Message); sendErr != nil {
-		h.logger.ErrorContext(ctx, "failed to send response",
-			slog.Any("error", sendErr),
-			slog.String("to", msg.From))
-		return fmt.Errorf("processing message from %s: failed to send response: %w", msg.From, sendErr)
-	}
+	h.logger.InfoContext(ctx, "successfully processed query",
+		slog.String("session_id", sessionID))
 
-	h.logger.InfoContext(ctx, "successfully processed message",
-		slog.String("session_id", sessionID),
-		slog.String("to", msg.From))
-
-	return nil
+	return *finalResponse, nil
 }
 
 // prepareRequest prepares the request with optional complexity guidance.

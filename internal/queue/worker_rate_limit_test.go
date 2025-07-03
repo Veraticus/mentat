@@ -157,7 +157,7 @@ func TestRateLimitIntegration(t *testing.T) {
 	}
 
 	rateLimiter := queue.NewRateLimiter(10, 1, time.Second)
-	pool := queue.NewWorkerPool(1, mockLLM, mockMessenger, manager, rateLimiter)
+	pool := queue.NewWorkerPool(1, mockLLM, mockMessenger, manager, rateLimiter, nil)
 
 	// Start worker pool
 	poolCtx, cancel := context.WithCancel(ctx)

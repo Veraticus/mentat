@@ -490,14 +490,25 @@ func (m *MockIntentEnhancer) SetShouldEnhanceFunc(f func(string) bool) {
 // MockAgentHandler is a test implementation of the agent.Handler interface.
 type MockAgentHandler struct {
 	processErr error
+	queryResp  claude.LLMResponse
+	queryErr   error
 	calls      []signal.IncomingMessage
+	queryCalls []QueryCall
 	mu         sync.Mutex
+}
+
+// QueryCall records a call to Query.
+type QueryCall struct {
+	Request   string
+	SessionID string
 }
 
 // NewMockAgentHandler creates a new mock agent handler.
 func NewMockAgentHandler() *MockAgentHandler {
 	return &MockAgentHandler{
-		calls: make([]signal.IncomingMessage, 0),
+		calls:      make([]signal.IncomingMessage, 0),
+		queryCalls: make([]QueryCall, 0),
+		queryResp:  claude.LLMResponse{Message: "mock response"},
 	}
 }
 
@@ -523,6 +534,38 @@ func (m *MockAgentHandler) GetCalls() []signal.IncomingMessage {
 	defer m.mu.Unlock()
 	calls := make([]signal.IncomingMessage, len(m.calls))
 	copy(calls, m.calls)
+	return calls
+}
+
+// Query implements the agent.Handler interface.
+func (m *MockAgentHandler) Query(_ context.Context, request, sessionID string) (claude.LLMResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.queryCalls = append(m.queryCalls, QueryCall{Request: request, SessionID: sessionID})
+	return m.queryResp, m.queryErr
+}
+
+// SetQueryResponse sets the response to return from Query.
+func (m *MockAgentHandler) SetQueryResponse(resp claude.LLMResponse) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.queryResp = resp
+}
+
+// SetQueryError sets the error to return from Query.
+func (m *MockAgentHandler) SetQueryError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.queryErr = err
+}
+
+// GetQueryCalls returns all recorded query calls.
+func (m *MockAgentHandler) GetQueryCalls() []QueryCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	calls := make([]QueryCall, len(m.queryCalls))
+	copy(calls, m.queryCalls)
 	return calls
 }
 

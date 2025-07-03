@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Veraticus/mentat/internal/agent"
 	"github.com/Veraticus/mentat/internal/claude"
 	"github.com/Veraticus/mentat/internal/signal"
 )
@@ -29,6 +30,7 @@ type WorkerConfig struct {
 	QueueManager       *Manager
 	MessageQueue       MessageQueue // For updating state and getting messages
 	TypingIndicatorMgr signal.TypingIndicatorManager
+	AgentHandler       agent.Handler // Agent handler for processing messages
 	ID                 int
 }
 
@@ -406,6 +408,25 @@ func (w *worker) processMessage(ctx context.Context, msg *Message) (string, erro
 	// Create a session ID based on conversation
 	sessionID := "signal-" + msg.ConversationID
 
+	// Use agent handler if available
+	if w.config.AgentHandler != nil {
+		// Use the Query method which returns the response
+		llmResp, err := w.config.AgentHandler.Query(ctx, msg.Text, sessionID)
+		if err != nil {
+			// Check if it's an authentication error
+			if claude.IsAuthenticationError(err) {
+				// Return a user-friendly message about authentication
+				return "Claude Code authentication required. Please run the following command on the server to log in:\n\n" +
+					"sudo -u signal-cli /usr/local/bin/claude-mentat /login\n\n" +
+					"Once authenticated, I'll be able to respond to your messages.", nil
+			}
+			return "", fmt.Errorf("agent query failed: %w", err)
+		}
+
+		return llmResp.Message, nil
+	}
+
+	// Fallback to direct LLM query if no agent handler
 	// Query the LLM
 	llmResp, err := w.config.LLM.Query(ctx, msg.Text, sessionID)
 	if err != nil {
@@ -486,6 +507,7 @@ func NewWorkerPool(
 	messenger signal.Messenger,
 	queueMgr *Manager,
 	rateLimiter RateLimiter,
+	agentHandler agent.Handler,
 ) *WorkerPool {
 	workers := make([]Worker, size)
 
@@ -500,6 +522,7 @@ func NewWorkerPool(
 			QueueManager:       queueMgr,
 			RateLimiter:        rateLimiter,
 			TypingIndicatorMgr: typingMgr,
+			AgentHandler:       agentHandler,
 		}
 		workers[i] = NewWorker(config)
 	}

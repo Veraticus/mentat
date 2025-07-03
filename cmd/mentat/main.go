@@ -13,8 +13,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Veraticus/mentat/internal/agent"
 	"github.com/Veraticus/mentat/internal/claude"
 	"github.com/Veraticus/mentat/internal/config"
+	"github.com/Veraticus/mentat/internal/conversation"
 	"github.com/Veraticus/mentat/internal/queue"
 	signalpkg "github.com/Veraticus/mentat/internal/signal"
 )
@@ -22,6 +24,9 @@ import (
 const (
 	// ShutdownTimeout is the maximum time to wait for graceful shutdown.
 	ShutdownTimeout = 30 * time.Second
+
+	// SessionTimeout is the duration for conversation session windows.
+	SessionTimeout = 5 * time.Minute
 )
 
 //go:embed system-prompt.md
@@ -220,10 +225,28 @@ func initializeComponents(ctx context.Context) (*components, error) {
 	messageQueue := queue.NewMessageQueue()
 	rateLimiter := queue.NewRateLimiter(rateLimitCapacity, rateLimitRefill, rateLimitPeriod)
 
-	// 5. Initialize queue manager
+	// 5. Initialize agent handler components
+	sessionManager := conversation.NewManager(SessionTimeout)
+	validationStrategy := agent.NewMultiAgentValidator()
+	intentEnhancer := agent.NewSmartIntentEnhancer()
+	complexityAnalyzer := agent.NewRequestComplexityAnalyzer()
+
+	// 6. Create agent handler
+	agentHandler, err := agent.NewHandler(claudeClient,
+		agent.WithValidationStrategy(validationStrategy),
+		agent.WithIntentEnhancer(intentEnhancer),
+		agent.WithMessenger(messenger),
+		agent.WithSessionManager(sessionManager),
+		agent.WithComplexityAnalyzer(complexityAnalyzer),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create agent handler: %w", err)
+	}
+
+	// 7. Initialize queue manager
 	queueManager := queue.NewManager(ctx)
 
-	// 6. Initialize worker pool
+	// 8. Initialize worker pool
 	poolConfig := queue.PoolConfig{
 		InitialSize:  initialWorkers,
 		MinSize:      minWorkers,
@@ -233,6 +256,7 @@ func initializeComponents(ctx context.Context) (*components, error) {
 		QueueManager: queueManager,
 		MessageQueue: messageQueue,
 		RateLimiter:  rateLimiter,
+		AgentHandler: agentHandler,
 		PanicHandler: nil, // Use default panic handler
 	}
 

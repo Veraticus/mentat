@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Veraticus/mentat/internal/agent"
 	"github.com/Veraticus/mentat/internal/claude"
 	"github.com/Veraticus/mentat/internal/signal"
 )
@@ -33,7 +34,8 @@ type PoolConfig struct {
 	QueueManager *Manager
 	MessageQueue MessageQueue // For state updates and stats
 	RateLimiter  RateLimiter
-	PanicHandler PanicHandler // Optional: defaults to logging with stack trace
+	AgentHandler agent.Handler // Agent handler for processing messages
+	PanicHandler PanicHandler  // Optional: defaults to logging with stack trace
 }
 
 // workerInfo holds information about a worker.
@@ -166,6 +168,7 @@ func (p *DynamicWorkerPool) createWorker(ctx context.Context) string {
 		MessageQueue:       p.config.MessageQueue,
 		RateLimiter:        p.config.RateLimiter,
 		TypingIndicatorMgr: p.typingMgr,
+		AgentHandler:       p.config.AgentHandler,
 	}
 
 	worker := NewWorker(config)

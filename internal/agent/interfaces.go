@@ -12,6 +12,10 @@ import (
 type Handler interface {
 	// Process handles an incoming message through the agent pipeline
 	Process(ctx context.Context, msg signal.IncomingMessage) error
+
+	// Query processes a request and returns the response without sending it
+	// This is useful for queue-based systems that need to manage responses
+	Query(ctx context.Context, request string, sessionID string) (claude.LLMResponse, error)
 }
 
 // ValidationStrategy allows pluggable validation approaches.
