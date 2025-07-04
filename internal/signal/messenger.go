@@ -68,7 +68,6 @@ func (m *messenger) SendTypingIndicator(ctx context.Context, recipient string) e
 
 // Subscribe returns a channel of incoming messages.
 func (m *messenger) Subscribe(ctx context.Context) (<-chan IncomingMessage, error) {
-	debugLog("Subscribe called")
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -103,7 +102,6 @@ func (m *messenger) runSubscription(ctx context.Context, sub *subscription) {
 	defer close(sub.outCh) // Close channel from sender side only
 
 	// Subscribe to messages from the client
-	debugLog("Calling client.Subscribe")
 	msgCh, err := m.client.Subscribe(ctx)
 	if err != nil {
 		m.handleSubscriptionError(ctx, sub, err)
@@ -115,7 +113,6 @@ func (m *messenger) runSubscription(ctx context.Context, sub *subscription) {
 }
 
 func (m *messenger) handleSubscriptionError(ctx context.Context, sub *subscription, err error) {
-	debugLog("client.Subscribe error: %v", err)
 	// If we can't subscribe, send an error message on the channel
 	select {
 	case sub.outCh <- IncomingMessage{
@@ -135,7 +132,6 @@ func (m *messenger) processMessages(ctx context.Context, sub *subscription, msgC
 
 		case envelope, ok := <-msgCh:
 			if !ok {
-				debugLog("Message channel closed")
 				return
 			}
 			m.handleEnvelope(ctx, sub, envelope)
@@ -144,15 +140,10 @@ func (m *messenger) processMessages(ctx context.Context, sub *subscription, msgC
 }
 
 func (m *messenger) handleEnvelope(ctx context.Context, sub *subscription, envelope *Envelope) {
-	debugLog("Received envelope: %+v", envelope)
-
 	msg := m.convertEnvelope(envelope)
 	if msg == nil {
-		debugLog("Message conversion returned nil")
 		return
 	}
-
-	debugLog("Message converted successfully: from=%s, text=%q", msg.From, msg.Text)
 
 	// Send read receipt for data messages
 	if envelope.DataMessage != nil {
@@ -163,9 +154,7 @@ func (m *messenger) handleEnvelope(ctx context.Context, sub *subscription, envel
 
 	select {
 	case sub.outCh <- *msg:
-		debugLog("Message sent to output channel")
 	case <-ctx.Done():
-		debugLog("Context canceled while sending message")
 	}
 }
 
@@ -173,14 +162,11 @@ func (m *messenger) handleEnvelope(ctx context.Context, sub *subscription, envel
 func (m *messenger) convertEnvelope(env *Envelope) *IncomingMessage {
 	// Skip messages from self
 	if env.Source == m.selfPhone || env.SourceNumber == m.selfPhone {
-		debugLog("Skipping self message: source=%s, sourceNumber=%s, selfPhone=%s",
-			env.Source, env.SourceNumber, m.selfPhone)
 		return nil
 	}
 
 	// Handle data messages
 	if env.DataMessage != nil && env.DataMessage.Message != "" {
-		debugLog("Converting data message: %q", env.DataMessage.Message)
 		return &IncomingMessage{
 			Timestamp:  time.Unix(0, env.Timestamp*int64(time.Millisecond)),
 			From:       m.getSourceName(env),

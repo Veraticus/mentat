@@ -6,7 +6,6 @@ import (
 	_ "embed"
 	"fmt"
 	"log"
-	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
@@ -60,12 +59,6 @@ func main() {
 }
 
 func runMain() int {
-	// Enable debug logging if DEBUG_SIGNAL is set
-	if os.Getenv("DEBUG_SIGNAL") == "1" {
-		slog.SetLogLoggerLevel(slog.LevelDebug)
-		log.Println("Debug logging enabled")
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
