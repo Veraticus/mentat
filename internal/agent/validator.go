@@ -87,7 +87,7 @@ Be specific about any issues or missing elements.`,
 // Validate uses Claude to validate another Claude response.
 func (v *MultiAgentValidator) Validate(
 	ctx context.Context,
-	request, response string,
+	request, response, sessionID string,
 	llm claude.LLM,
 ) ValidationResult {
 	// Detect if the request likely requires tool usage
@@ -97,7 +97,7 @@ func (v *MultiAgentValidator) Validate(
 	prompt := fmt.Sprintf(v.validationPromptTemplate, request, response)
 
 	// Query Claude for validation
-	llmResponse, err := llm.Query(ctx, prompt, "")
+	llmResponse, err := llm.Query(ctx, prompt, sessionID)
 	if err != nil {
 		return ValidationResult{
 			Status:     ValidationStatusUnclear,
@@ -128,7 +128,7 @@ func (v *MultiAgentValidator) ShouldRetry(result ValidationResult) bool {
 // GenerateRecovery creates a natural recovery message for validation failures.
 func (v *MultiAgentValidator) GenerateRecovery(
 	ctx context.Context,
-	request, response string,
+	request, response, sessionID string,
 	result ValidationResult,
 	llm claude.LLM,
 ) string {
@@ -150,7 +150,7 @@ Create a clear, conversational response that:
 			strings.Join(result.Issues, ", "),
 		)
 
-		llmResponse, err := llm.Query(ctx, prompt, "")
+		llmResponse, err := llm.Query(ctx, prompt, sessionID)
 		if err != nil {
 			return "I was able to help with part of your request, but encountered some limitations."
 		}

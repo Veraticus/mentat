@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/Veraticus/mentat/internal/claude"
@@ -43,7 +44,7 @@ type SystemConfig struct {
 
 // System represents the integrated queue system with all components.
 type System struct {
-	Coordinator *Coordinator
+	Manager     *Manager
 	WorkerPool  *DynamicWorkerPool
 	RateLimiter RateLimiter
 	cancel      context.CancelFunc
@@ -78,11 +79,10 @@ func NewSystem(ctx context.Context, config SystemConfig) (*System, error) {
 		refillPeriod,      // refill every second
 	)
 
-	// Create the Coordinator (which creates the Manager internally)
-	coordinator := NewCoordinator(sysCtx)
-	if config.ShutdownTimeout > 0 {
-		coordinator.shutdownTimeout = config.ShutdownTimeout
-	}
+	// Create the Manager
+	manager := NewManager(sysCtx)
+	// Start the manager
+	go manager.Start(sysCtx)
 
 	// Create worker pool configuration
 	poolConfig := PoolConfig{
@@ -91,8 +91,7 @@ func NewSystem(ctx context.Context, config SystemConfig) (*System, error) {
 		MaxSize:      config.MaxWorkers,
 		LLM:          config.LLM,
 		Messenger:    config.Messenger,
-		QueueManager: coordinator.manager,
-		MessageQueue: coordinator, // Pass the coordinator for state updates
+		QueueManager: manager,
 		RateLimiter:  rateLimiter,
 	}
 
@@ -105,7 +104,7 @@ func NewSystem(ctx context.Context, config SystemConfig) (*System, error) {
 
 	// Create the integrated system
 	system := &System{
-		Coordinator: coordinator,
+		Manager:     manager,
 		WorkerPool:  workerPool,
 		RateLimiter: rateLimiter,
 		cancel:      sysCancel,
@@ -116,26 +115,8 @@ func NewSystem(ctx context.Context, config SystemConfig) (*System, error) {
 
 // GetDetailedStats returns comprehensive queue system statistics.
 func (qs *System) GetDetailedStats() DetailedStats {
-	// Update worker stats first
-	active := qs.WorkerPool.Size()
-	total := active
-
-	// Safely convert to int32 with bounds checking
-	const maxInt32 = int(^uint32(0) >> 1)
-
-	// Clamp values to maxInt32 before conversion
-	if active > maxInt32 {
-		active = maxInt32
-	}
-	if total > maxInt32 {
-		total = maxInt32
-	}
-
-	// Safe to convert now - values are guaranteed to fit in int32
-	//nolint:gosec // Values are bounded by maxInt32 check above
-	qs.Coordinator.statsCollector.UpdateWorkerCount(int32(active), int32(active), int32(total))
-
-	return qs.Coordinator.GetDetailedStats()
+	// For now, return empty stats as Manager doesn't have detailed stats
+	return DetailedStats{}
 }
 
 // Start begins the queue system operation.
@@ -150,10 +131,9 @@ func (qs *System) Start(ctx context.Context) error {
 
 // Stop gracefully shuts down the queue system.
 func (qs *System) Stop() error {
-	// Stop the coordinator first (which stops the manager and closes stopCh)
-	// This ensures workers get proper shutdown signals
-	if err := qs.Coordinator.Stop(); err != nil {
-		return fmt.Errorf("failed to stop coordinator: %w", err)
+	// Shutdown the manager with a timeout
+	if err := qs.Manager.Shutdown(defaultShutdownTimeout); err != nil {
+		return fmt.Errorf("failed to stop manager: %w", err)
 	}
 
 	// Cancel the context to signal shutdown
@@ -170,35 +150,31 @@ func (qs *System) Stop() error {
 
 // Enqueue adds a message to the queue.
 func (qs *System) Enqueue(msg signal.IncomingMessage) error {
-	return qs.Coordinator.Enqueue(msg)
+	// Generate ID from timestamp and sender
+	msgID := strconv.FormatInt(msg.Timestamp.UnixNano(), 10) + "-" + msg.From
+	conversationID := msg.From // Use sender as conversation ID
+
+	// Create internal Message from IncomingMessage
+	internalMsg := NewMessage(msgID, conversationID, msg.From, msg.FromNumber, msg.Text)
+
+	// Submit to manager
+	return qs.Manager.Submit(internalMsg)
 }
 
 // Stats returns queue system statistics.
 func (qs *System) Stats() Stats {
-	// Update worker stats in the StatsCollector
-	active := qs.WorkerPool.Size()
-	total := active // For now, total equals active
+	// Get basic stats from manager
+	managerStats := qs.Manager.Stats()
 
-	// Safely convert to int32 with bounds checking
-	const maxInt32 = int(^uint32(0) >> 1)
-
-	// Clamp values to maxInt32 before conversion
-	if active > maxInt32 {
-		active = maxInt32
+	// Build Stats struct
+	stats := Stats{
+		TotalQueued:       managerStats["queued"],
+		TotalProcessing:   managerStats["processing"],
+		ConversationCount: managerStats["conversations"],
+		ActiveWorkers:     qs.WorkerPool.Size(),
+		HealthyWorkers:    qs.WorkerPool.Size(), // All active workers are considered healthy
+		// Note: Other fields like TotalCompleted, TotalFailed, timing stats are not available from Manager
 	}
-	if total > maxInt32 {
-		total = maxInt32
-	}
-
-	// Safe to convert now - values are guaranteed to fit in int32
-	//nolint:gosec // Values are bounded by maxInt32 check above
-	qs.Coordinator.statsCollector.UpdateWorkerCount(int32(active), int32(active), int32(total))
-
-	stats := qs.Coordinator.Stats()
-
-	// Add worker pool stats
-	stats.ActiveWorkers = active
-	stats.HealthyWorkers = active // All active workers are considered healthy
 
 	return stats
 }

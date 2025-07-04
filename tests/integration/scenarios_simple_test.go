@@ -280,8 +280,8 @@ func TestRateLimiting(t *testing.T) {
 			stats.Total, stats.Completed, stats.Failed)
 
 		// We expect 2 completed (within rate limit) and 1 either pending, processing, or failed
-		if stats.Completed != 2 {
-			t.Errorf("Expected 2 messages to complete, got %d", stats.Completed)
+		if queueState.CompletedMessages != 2 {
+			t.Errorf("Expected 2 messages to complete, got %d", queueState.CompletedMessages)
 		}
 	})
 }

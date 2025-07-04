@@ -23,13 +23,15 @@ func TestMessageLifecycleTracking(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// Wait for processing
-		time.Sleep(2 * time.Second)
+		// Wait for message to be sent (completed)
+		if _, err := h.WaitForMessage(5 * time.Second); err != nil {
+			t.Fatalf("Message not sent: %v", err)
+		}
 
-		// Get message statistics
-		stats := h.GetMessageStats()
-		if stats.Completed != 1 {
-			t.Errorf("Expected 1 completed message, got %d", stats.Completed)
+		// Verify completion via queue state
+		state := h.VerifyQueueState()
+		if state.CompletedMessages != 1 {
+			t.Errorf("Expected 1 completed message, got %d", state.CompletedMessages)
 		}
 
 		// Verify queue metrics
@@ -77,21 +79,23 @@ func TestHighLoadPerformance(t *testing.T) {
 		}
 
 		// Wait for all to complete
-		time.Sleep(5 * time.Second)
+		if err := h.WaitForAllMessagesCompletion(messageCount, 10*time.Second); err != nil {
+			t.Logf("Warning: Not all messages completed: %v", err)
+		}
 
 		// Analyze performance
 		duration := time.Since(startTime)
-		stats := h.GetMessageStats()
+		state := h.VerifyQueueState()
 
 		t.Logf("Performance Summary:")
-		t.Logf("  Total messages: %d", stats.Total)
-		t.Logf("  Completed: %d", stats.Completed)
-		t.Logf("  Failed: %d", stats.Failed)
+		t.Logf("  Total messages: %d", state.TotalMessages)
+		t.Logf("  Completed: %d", state.CompletedMessages)
+		t.Logf("  Failed: %d", state.FailedMessages)
 		t.Logf("  Duration: %v", duration)
-		t.Logf("  Throughput: %.2f msg/sec", float64(stats.Completed)/duration.Seconds())
+		t.Logf("  Throughput: %.2f msg/sec", float64(state.CompletedMessages)/duration.Seconds())
 
 		// Verify completion rate
-		completionRate := float64(stats.Completed) / float64(messageCount)
+		completionRate := float64(state.CompletedMessages) / float64(messageCount)
 		if completionRate < 0.95 {
 			t.Errorf("Low completion rate: %.2f%%", completionRate*100)
 		}

@@ -91,7 +91,7 @@ func TestHandlerWithComplexityGuidance(t *testing.T) {
 			}
 
 			mockValidator := &guidanceMockValidationStrategy{
-				validateFunc: func(_ context.Context, _, _ string, _ claude.LLM) agent.ValidationResult {
+				validateFunc: func(_ context.Context, _, _, _ string, _ claude.LLM) agent.ValidationResult {
 					return agent.ValidationResult{
 						Status:     agent.ValidationStatusSuccess,
 						Confidence: 1.0,
@@ -242,18 +242,18 @@ func (m *guidanceMockSessionManager) GetLastSessionID(userID string) string {
 }
 
 type guidanceMockValidationStrategy struct {
-	validateFunc         func(ctx context.Context, request, response string, llm claude.LLM) agent.ValidationResult
+	validateFunc         func(ctx context.Context, request, response, sessionID string, llm claude.LLM) agent.ValidationResult
 	shouldRetryFunc      func(result agent.ValidationResult) bool
-	generateRecoveryFunc func(ctx context.Context, request, response string, result agent.ValidationResult, llm claude.LLM) string
+	generateRecoveryFunc func(ctx context.Context, request, response, sessionID string, result agent.ValidationResult, llm claude.LLM) string
 }
 
 func (m *guidanceMockValidationStrategy) Validate(
 	ctx context.Context,
-	request, response string,
+	request, response, sessionID string,
 	llm claude.LLM,
 ) agent.ValidationResult {
 	if m.validateFunc != nil {
-		return m.validateFunc(ctx, request, response, llm)
+		return m.validateFunc(ctx, request, response, sessionID, llm)
 	}
 	return agent.ValidationResult{Status: agent.ValidationStatusSuccess}
 }
@@ -267,12 +267,12 @@ func (m *guidanceMockValidationStrategy) ShouldRetry(result agent.ValidationResu
 
 func (m *guidanceMockValidationStrategy) GenerateRecovery(
 	ctx context.Context,
-	request, response string,
+	request, response, sessionID string,
 	result agent.ValidationResult,
 	llm claude.LLM,
 ) string {
 	if m.generateRecoveryFunc != nil {
-		return m.generateRecoveryFunc(ctx, request, response, result, llm)
+		return m.generateRecoveryFunc(ctx, request, response, sessionID, result, llm)
 	}
 	return ""
 }

@@ -65,6 +65,7 @@ func (h *Handler) Start(ctx context.Context) error {
 	h.mu.Unlock()
 
 	// Get the message channel from Signal
+	h.logger.InfoContext(ctx, "subscribing to Signal messages...")
 	messages, err := h.messenger.Subscribe(ctx)
 	if err != nil {
 		h.mu.Lock()
@@ -72,6 +73,7 @@ func (h *Handler) Start(ctx context.Context) error {
 		h.mu.Unlock()
 		return fmt.Errorf("failed to subscribe to messages: %w", err)
 	}
+	h.logger.InfoContext(ctx, "successfully subscribed to Signal messages")
 
 	h.logger.InfoContext(ctx, "signal handler started")
 
@@ -120,10 +122,12 @@ func (h *Handler) processMessages(ctx context.Context, messages <-chan IncomingM
 
 // handleMessage enqueues a single message without blocking.
 func (h *Handler) handleMessage(ctx context.Context, msg IncomingMessage) {
-	h.logger.DebugContext(ctx, "received message",
+	// Log at INFO level to make sure we see it
+	h.logger.InfoContext(ctx, "received message",
 		slog.String("from", msg.From),
 		slog.Time("timestamp", msg.Timestamp),
-		slog.Int("text_length", len(msg.Text)))
+		slog.Int("text_length", len(msg.Text)),
+		slog.String("text", msg.Text))
 
 	// Enqueue the message
 	if err := h.queue.Enqueue(msg); err != nil {
@@ -135,7 +139,7 @@ func (h *Handler) handleMessage(ctx context.Context, msg IncomingMessage) {
 		return
 	}
 
-	h.logger.DebugContext(ctx, "message enqueued successfully",
+	h.logger.InfoContext(ctx, "message enqueued successfully",
 		slog.String("from", msg.From),
 		slog.Time("timestamp", msg.Timestamp))
 }

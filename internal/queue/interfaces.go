@@ -4,24 +4,7 @@ package queue
 import (
 	"context"
 	"time"
-
-	"github.com/Veraticus/mentat/internal/signal"
 )
-
-// MessageQueue provides conversation-aware queuing.
-type MessageQueue interface {
-	// Enqueue adds a message to the queue
-	Enqueue(msg signal.IncomingMessage) error
-
-	// GetNext returns the next message for a worker to process
-	GetNext(workerID string) (*Message, error)
-
-	// UpdateState marks a message state transition
-	UpdateState(msgID string, state State, reason string) error
-
-	// Stats returns queue statistics
-	Stats() Stats
-}
 
 // Worker processes messages from the queue.
 type Worker interface {

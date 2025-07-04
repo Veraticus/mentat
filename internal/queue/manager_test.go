@@ -18,6 +18,9 @@ func TestManager_SubmitAndRequest(t *testing.T) {
 	manager := queue.NewManager(ctx)
 	go manager.Start(ctx)
 
+	// Wait for manager to be fully started
+	time.Sleep(10 * time.Millisecond)
+
 	// Submit messages
 	msg1 := queue.NewMessage("msg-1", "conv-1", "sender1", "+1234567890", "hello")
 	msg2 := queue.NewMessage("msg-2", "conv-2", "sender2", "+0987654321", "world")
@@ -75,14 +78,16 @@ func TestManager_FairScheduling(t *testing.T) {
 	manager := queue.NewManager(ctx)
 	go manager.Start(ctx)
 
-	// Manager starts immediately
+	// Wait for manager to be fully started
+	time.Sleep(10 * time.Millisecond)
 
 	// Submit multiple messages per conversation
 	conversations := []string{"conv-1", "conv-2", "conv-3"}
 	messagesPerConv := 3
 
-	for _, convID := range conversations {
-		for i := range messagesPerConv {
+	// Submit messages one by one with small delays to ensure consistent ordering
+	for i := range messagesPerConv {
+		for _, convID := range conversations {
 			msg := queue.NewMessage(
 				fmt.Sprintf("%s-msg-%d", convID, i),
 				convID,
@@ -96,10 +101,12 @@ func TestManager_FairScheduling(t *testing.T) {
 		}
 	}
 
-	// Messages are queued synchronously
+	// Wait a bit to ensure all messages are properly queued
+	time.Sleep(10 * time.Millisecond)
 
 	// Request messages and track which conversations we get
 	convCounts := make(map[string]int)
+	seenConversations := make(map[string]bool)
 	reqCtx, reqCancel := context.WithTimeout(ctx, 2*time.Second)
 	defer reqCancel()
 
@@ -109,12 +116,17 @@ func TestManager_FairScheduling(t *testing.T) {
 		if err != nil || msg == nil {
 			t.Fatalf("Failed to get message %d: %v", i, err)
 		}
+
+		// Check that we haven't seen this conversation yet in this round
+		if seenConversations[msg.ConversationID] {
+			t.Errorf("Conversation %s scheduled again before all conversations had a turn", msg.ConversationID)
+		}
+		seenConversations[msg.ConversationID] = true
 		convCounts[msg.ConversationID]++
+
 		if completeErr := manager.CompleteMessage(msg); completeErr != nil {
 			t.Errorf("Failed to complete message: %v", completeErr)
 		}
-
-		// Continue immediately
 	}
 
 	// Check fairness - each conversation should have been scheduled once

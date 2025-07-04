@@ -82,7 +82,7 @@ type mockValidationStrategy struct {
 
 func (m *mockValidationStrategy) Validate(
 	_ context.Context,
-	_, _ string,
+	_, _, _ string,
 	_ claude.LLM,
 ) agent.ValidationResult {
 	return m.result
@@ -94,7 +94,7 @@ func (m *mockValidationStrategy) ShouldRetry(_ agent.ValidationResult) bool {
 
 func (m *mockValidationStrategy) GenerateRecovery(
 	_ context.Context,
-	_, _ string,
+	_, _, _ string,
 	_ agent.ValidationResult,
 	_ claude.LLM,
 ) string {

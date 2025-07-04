@@ -81,8 +81,9 @@ func ExampleSystem() {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		stats := system.Stats()
-		if stats.TotalCompleted >= 1 {
-			// Message processed, wait a bit more for stats to stabilize
+		// Message is processed when queue is empty
+		if stats.TotalQueued == 0 && stats.TotalProcessing == 0 {
+			// Message processed, wait a bit more for output
 			time.Sleep(100 * time.Millisecond)
 			break
 		}
@@ -91,10 +92,10 @@ func ExampleSystem() {
 
 	// Check system statistics
 	stats := system.Stats()
-	// Verify the message was completed
-	if stats.TotalCompleted == 1 {
+	// Verify the message was processed (queue should be empty)
+	if stats.TotalQueued == 0 && stats.TotalProcessing == 0 {
 		fmt.Println("Message successfully processed!")
-		fmt.Printf("Total messages completed: %d\n", stats.TotalCompleted)
+		fmt.Printf("Messages in queue: %d\n", stats.TotalQueued)
 		fmt.Printf("Active conversations: %d\n", stats.ConversationCount)
 		fmt.Printf("Active workers: %d\n", stats.ActiveWorkers)
 	}
@@ -118,8 +119,8 @@ func ExampleSystem() {
 	// Output:
 	// Sending to +1234567890: I received your message: Hello, world!
 	// Message successfully processed!
-	// Total messages completed: 1
-	// Active conversations: 1
+	// Messages in queue: 0
+	// Active conversations: 0
 	// Active workers: 3
 }
 

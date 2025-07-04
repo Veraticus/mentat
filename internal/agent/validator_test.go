@@ -239,7 +239,7 @@ func runMultiAgentValidatorTest(t *testing.T, tt multiAgentValidatorTestCase) {
 		mockLLM.setResponse("*", tt.llmResponse)
 	}
 
-	result := validator.Validate(context.Background(), tt.request, tt.response, mockLLM)
+	result := validator.Validate(context.Background(), tt.request, tt.response, "test-session", mockLLM)
 
 	if result.Status != tt.expectedStatus {
 		t.Errorf("expected status %v, got %v", tt.expectedStatus, result.Status)
@@ -391,7 +391,7 @@ func TestMultiAgentValidator_GenerateRecovery(t *testing.T) {
 				mockLLM.setResponse("*", tt.llmResponse)
 			}
 
-			recovery := validator.GenerateRecovery(ctx, tt.request, tt.response, tt.result, mockLLM)
+			recovery := validator.GenerateRecovery(ctx, tt.request, tt.response, "test-session", tt.result, mockLLM)
 
 			if !strings.Contains(recovery, tt.expectedContains) {
 				t.Errorf("expected recovery to contain '%s', got: %s", tt.expectedContains, recovery)
@@ -680,6 +680,7 @@ func TestMultiAgentValidator_GenerateRecovery_PartialSuccess(t *testing.T) {
 				ctx,
 				tt.request,
 				tt.response,
+				"test-session",
 				tt.validationResult,
 				testLLM,
 			)
@@ -748,7 +749,7 @@ CONFIDENCE: 0.9
 ISSUES: none
 SUGGESTIONS: none`)
 
-			result := validator.Validate(context.Background(), tt.request, "test response", mockLLM)
+			result := validator.Validate(context.Background(), tt.request, "test response", "test-session", mockLLM)
 
 			actualTools := result.Metadata["expected_tools"]
 			if actualTools != tt.expectedTools {

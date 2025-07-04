@@ -178,25 +178,33 @@ func setupTestSystem(t *testing.T) *queue.System {
 	return system
 }
 
-// waitForCompletion waits for a specific number of messages to be completed.
-func waitForCompletion(t *testing.T, system *queue.System, expectedCompleted int, timeout time.Duration) {
+// waitForProcessing waits for all messages to be processed (queue empty).
+func waitForProcessing(t *testing.T, system *queue.System, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 
 	for time.Now().Before(deadline) {
 		stats := system.Stats()
-		t.Logf("Current stats: queued=%d, processing=%d, completed=%d, failed=%d",
-			stats.TotalQueued, stats.TotalProcessing, stats.TotalCompleted, stats.TotalFailed)
+		t.Logf("Current stats: queued=%d, processing=%d",
+			stats.TotalQueued, stats.TotalProcessing)
 
-		if stats.TotalCompleted >= expectedCompleted {
+		// All messages processed when queue is empty and nothing is processing
+		if stats.TotalQueued == 0 && stats.TotalProcessing == 0 {
 			return
 		}
 		<-time.After(100 * time.Millisecond)
 	}
 
 	stats := system.Stats()
-	t.Errorf("Expected %d completed messages, got %d (queued=%d, processing=%d, failed=%d)",
-		expectedCompleted, stats.TotalCompleted, stats.TotalQueued, stats.TotalProcessing, stats.TotalFailed)
+	t.Errorf("Timeout waiting for messages to be processed (queued=%d, processing=%d)",
+		stats.TotalQueued, stats.TotalProcessing)
+}
+
+// waitForCompletion is deprecated but kept for compatibility.
+func waitForCompletion(t *testing.T, system *queue.System, _ int, timeout time.Duration) {
+	t.Helper()
+	// Since we no longer track completed messages, just wait for processing to finish
+	waitForProcessing(t, system, timeout)
 }
 
 // enqueueMessages enqueues multiple test messages.

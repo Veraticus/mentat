@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
@@ -59,6 +60,12 @@ func main() {
 }
 
 func runMain() int {
+	// Enable debug logging if DEBUG_SIGNAL is set
+	if os.Getenv("DEBUG_SIGNAL") == "1" {
+		slog.SetLogLoggerLevel(slog.LevelDebug)
+		log.Println("Debug logging enabled")
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -222,7 +229,6 @@ func initializeComponents(ctx context.Context) (*components, error) {
 	}
 
 	// 4. Initialize support services
-	messageQueue := queue.NewMessageQueue()
 	rateLimiter := queue.NewRateLimiter(rateLimitCapacity, rateLimitRefill, rateLimitPeriod)
 
 	// 5. Initialize agent handler components
@@ -254,7 +260,6 @@ func initializeComponents(ctx context.Context) (*components, error) {
 		LLM:          claudeClient,
 		Messenger:    messenger,
 		QueueManager: queueManager,
-		MessageQueue: messageQueue,
 		RateLimiter:  rateLimiter,
 		AgentHandler: agentHandler,
 		PanicHandler: nil, // Use default panic handler
@@ -288,6 +293,11 @@ func startComponents(ctx context.Context, c *components) {
 		c.queueManager.Start(ctx)
 		log.Println("Queue manager stopped")
 	}()
+
+	// Wait for queue manager to be ready before starting workers
+	log.Println("Waiting for queue manager to be ready...")
+	c.queueManager.WaitForReady()
+	log.Println("Queue manager is ready")
 
 	// Start worker pool
 	c.wg.Add(1)

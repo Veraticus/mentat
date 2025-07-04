@@ -265,13 +265,13 @@ func TestHandlerRetryLogic(t *testing.T) {
 					return result.Status == agent.ValidationStatusIncompleteSearch ||
 						(result.Status == agent.ValidationStatusUnclear && result.Confidence < 0.3)
 				},
-				generateRecoveryFunc: func(_ context.Context, _, _ string, _ agent.ValidationResult, _ claude.LLM) string {
+				generateRecoveryFunc: func(_ context.Context, _, _, _ string, _ agent.ValidationResult, _ claude.LLM) string {
 					if tt.expectRecoveryGenerate {
 						return "Recovery message"
 					}
 					return ""
 				},
-				validateFunc: func(_ context.Context, _, _ string, _ claude.LLM) agent.ValidationResult {
+				validateFunc: func(_ context.Context, _, _, _ string, _ claude.LLM) agent.ValidationResult {
 					if validationIndex < len(tt.validationResults) {
 						result := tt.validationResults[validationIndex]
 						validationIndex++
@@ -325,18 +325,18 @@ func TestHandlerRetryLogic(t *testing.T) {
 // testMockValidationStrategy for testing.
 type testMockValidationStrategy struct {
 	validationResults    []agent.ValidationResult
-	validateFunc         func(context.Context, string, string, claude.LLM) agent.ValidationResult
+	validateFunc         func(context.Context, string, string, string, claude.LLM) agent.ValidationResult
 	shouldRetryFunc      func(agent.ValidationResult) bool
-	generateRecoveryFunc func(context.Context, string, string, agent.ValidationResult, claude.LLM) string
+	generateRecoveryFunc func(context.Context, string, string, string, agent.ValidationResult, claude.LLM) string
 }
 
 func (m *testMockValidationStrategy) Validate(
 	ctx context.Context,
-	request, response string,
+	request, response, sessionID string,
 	llm claude.LLM,
 ) agent.ValidationResult {
 	if m.validateFunc != nil {
-		return m.validateFunc(ctx, request, response, llm)
+		return m.validateFunc(ctx, request, response, sessionID, llm)
 	}
 	if len(m.validationResults) > 0 {
 		return m.validationResults[0]
@@ -353,12 +353,12 @@ func (m *testMockValidationStrategy) ShouldRetry(result agent.ValidationResult) 
 
 func (m *testMockValidationStrategy) GenerateRecovery(
 	ctx context.Context,
-	request, response string,
+	request, response, sessionID string,
 	result agent.ValidationResult,
 	llm claude.LLM,
 ) string {
 	if m.generateRecoveryFunc != nil {
-		return m.generateRecoveryFunc(ctx, request, response, result, llm)
+		return m.generateRecoveryFunc(ctx, request, response, sessionID, result, llm)
 	}
 	return ""
 }

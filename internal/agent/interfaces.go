@@ -21,13 +21,18 @@ type Handler interface {
 // ValidationStrategy allows pluggable validation approaches.
 type ValidationStrategy interface {
 	// Validate checks if Claude's response adequately addresses the request
-	Validate(ctx context.Context, request, response string, llm claude.LLM) ValidationResult
+	Validate(ctx context.Context, request, response, sessionID string, llm claude.LLM) ValidationResult
 
 	// ShouldRetry determines if validation should be retried based on the result
 	ShouldRetry(result ValidationResult) bool
 
 	// GenerateRecovery creates a natural recovery message for validation failures
-	GenerateRecovery(ctx context.Context, request, response string, result ValidationResult, llm claude.LLM) string
+	GenerateRecovery(
+		ctx context.Context,
+		request, response, sessionID string,
+		result ValidationResult,
+		llm claude.LLM,
+	) string
 }
 
 // IntentEnhancer provides gentle guidance without prescribing exact tools.

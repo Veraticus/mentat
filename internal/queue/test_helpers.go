@@ -98,50 +98,6 @@ func (m *TestMockMessenger) SendTypingIndicator(_ context.Context, _ string) err
 	return m.TypingErr
 }
 
-// GetMessageState is a test helper to access internal message state.
-// This is exported for use in black-box tests.
-func GetMessageState(q MessageQueue, msgID string) (State, error) {
-	if sq, ok := q.(*SimpleMessageQueue); ok {
-		sq.mu.RLock()
-		defer sq.mu.RUnlock()
-		if msg, exists := sq.messages[msgID]; exists {
-			return msg.GetState(), nil
-		}
-		return "", fmt.Errorf("message not found")
-	}
-	return "", fmt.Errorf("not a SimpleMessageQueue")
-}
-
-// SetMessageError is a test helper to set an error on a message.
-// This is exported for use in black-box tests.
-func SetMessageError(q MessageQueue, msgID string, err error) error {
-	if sq, ok := q.(*SimpleMessageQueue); ok {
-		sq.mu.Lock()
-		defer sq.mu.Unlock()
-		if msg, exists := sq.messages[msgID]; exists {
-			msg.SetError(err)
-			return nil
-		}
-		return fmt.Errorf("message not found")
-	}
-	return fmt.Errorf("not a SimpleMessageQueue")
-}
-
-// SetMessageMaxAttempts is a test helper to set a message's attempts to max.
-// This is exported for use in black-box tests.
-func SetMessageMaxAttempts(q MessageQueue, msgID string) error {
-	if sq, ok := q.(*SimpleMessageQueue); ok {
-		sq.mu.Lock()
-		defer sq.mu.Unlock()
-		if msg, exists := sq.messages[msgID]; exists {
-			msg.Attempts = msg.MaxAttempts
-			return nil
-		}
-		return fmt.Errorf("message not found")
-	}
-	return fmt.Errorf("not a SimpleMessageQueue")
-}
-
 // GetRateLimiterBucketCount is a test helper to get the number of rate limiter buckets.
 // This is exported for use in black-box tests.
 func GetRateLimiterBucketCount(r RateLimiter) int {

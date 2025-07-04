@@ -299,7 +299,7 @@ func (h *handler) validateAndRetry(
 
 	for {
 		// Validate the response
-		validationResult := h.validationStrategy.Validate(ctx, originalRequest, finalResponse.Message, h.llm)
+		validationResult := h.validationStrategy.Validate(ctx, originalRequest, finalResponse.Message, sessionID, h.llm)
 		h.logger.DebugContext(ctx, "validation result",
 			slog.String("status", string(validationResult.Status)),
 			slog.Float64("confidence", validationResult.Confidence),
@@ -310,7 +310,7 @@ func (h *handler) validateAndRetry(
 			// Handle terminal states
 			if h.shouldGenerateRecovery(validationResult, retryCount) {
 				recoveryMsg := h.validationStrategy.GenerateRecovery(
-					ctx, originalRequest, finalResponse.Message, validationResult, h.llm)
+					ctx, originalRequest, finalResponse.Message, sessionID, validationResult, h.llm)
 				if recoveryMsg != "" {
 					finalResponse.Message = recoveryMsg
 				}

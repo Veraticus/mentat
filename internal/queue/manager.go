@@ -72,14 +72,22 @@ func (m *Manager) Start(ctx context.Context) {
 	// Signal that we've started
 	close(m.started)
 
+	logger := slog.Default()
+	logger.InfoContext(ctx, "Queue manager started and processing")
+
 	for {
 		select {
 		case <-ctx.Done():
+			logger.WarnContext(ctx, "Queue manager stopping: context done")
 			return
 		case <-m.stopCh:
+			logger.WarnContext(ctx, "Queue manager stopping: stop signal")
 			return
 
 		case msg := <-m.incomingCh:
+			logger.InfoContext(ctx, "Queue manager received message",
+				slog.String("id", msg.ID),
+				slog.String("from", msg.SenderNumber))
 			// Add message to appropriate queue
 			if err := m.enqueue(msg); err != nil {
 				msg.SetError(err)
@@ -91,11 +99,15 @@ func (m *Manager) Start(ctx context.Context) {
 
 		case workerCh := <-m.requestCh:
 			// Worker is requesting a message
+			logger.InfoContext(ctx, "Queue manager received worker request")
 			msg := m.getNextMessage()
+			logger.DebugContext(ctx, "Queue manager getNextMessage returned",
+				slog.Bool("is_nil", msg == nil))
 			if msg != nil {
+				logger.InfoContext(ctx, "Dispatching message to worker",
+					slog.String("id", msg.ID))
 				// Transition to processing state
 				if err := m.stateMachine.Transition(msg, StateProcessing); err != nil {
-					logger := slog.Default()
 					logger.ErrorContext(ctx, "Failed to transition message to processing",
 						slog.String("id", msg.ID),
 						slog.Any("error", err))
@@ -103,12 +115,21 @@ func (m *Manager) Start(ctx context.Context) {
 				workerCh <- msg
 			} else {
 				// No messages available, add to waiting list
+				logger.InfoContext(ctx, "No messages available, adding worker to waiting list")
 				m.mu.Lock()
 				m.waitingWorkers = append(m.waitingWorkers, workerCh)
+				logger.InfoContext(ctx, "Current waiting workers count",
+					slog.Int("count", len(m.waitingWorkers)))
 				m.mu.Unlock()
+				logger.DebugContext(ctx, "Worker added to waiting list and will block until message available")
 			}
 		}
 	}
+}
+
+// WaitForReady blocks until the queue manager has started its event loop.
+func (m *Manager) WaitForReady() {
+	<-m.started
 }
 
 // Submit adds a message to the queue for processing.
@@ -162,11 +183,15 @@ func (m *Manager) Submit(msg *Message) error {
 // and will be fulfilled when a message becomes available.
 // The method respects the context timeout/cancellation.
 func (m *Manager) RequestMessage(ctx context.Context) (*Message, error) {
+	logger := slog.Default()
+	logger.DebugContext(ctx, "Worker requesting message")
+
 	respCh := make(chan *Message, 1)
 
 	select {
 	case m.requestCh <- respCh:
 		// Request sent
+		logger.DebugContext(ctx, "Worker request sent to queue manager")
 	case <-ctx.Done():
 		return nil, fmt.Errorf("context canceled while sending request: %w", ctx.Err())
 	case <-m.stopCh:
@@ -176,10 +201,18 @@ func (m *Manager) RequestMessage(ctx context.Context) (*Message, error) {
 	select {
 	case msg := <-respCh:
 		// Message state transition is handled by Start() method when dispatching
+		if msg != nil {
+			logger.DebugContext(ctx, "Worker received message",
+				slog.String("message_id", msg.ID))
+		} else {
+			logger.ErrorContext(ctx, "Worker received nil message - this should not happen!")
+		}
 		return msg, nil
 	case <-ctx.Done():
+		logger.DebugContext(ctx, "Worker request canceled by context")
 		return nil, fmt.Errorf("context canceled while waiting for message: %w", ctx.Err())
 	case <-m.stopCh:
+		logger.DebugContext(ctx, "Worker request canceled by queue shutdown")
 		return nil, fmt.Errorf("queue manager shutting down")
 	}
 }
@@ -451,6 +484,7 @@ func (m *Manager) removeConversationFromOrder(convID string) {
 
 // tryDispatch attempts to send a message to a waiting worker.
 func (m *Manager) tryDispatch(ctx context.Context) {
+	logger := slog.Default()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -458,8 +492,12 @@ func (m *Manager) tryDispatch(ctx context.Context) {
 		return
 	}
 
+	logger.InfoContext(ctx, "Trying to dispatch to waiting workers",
+		slog.Int("waiting_count", len(m.waitingWorkers)))
+
 	msg := m.getNextMessageLocked()
 	if msg == nil {
+		logger.InfoContext(ctx, "No messages available to dispatch")
 		return
 	}
 
@@ -467,9 +505,12 @@ func (m *Manager) tryDispatch(ctx context.Context) {
 	workerCh := m.waitingWorkers[0]
 	m.waitingWorkers = m.waitingWorkers[1:]
 
+	logger.InfoContext(ctx, "Dispatching message to waiting worker",
+		slog.String("message_id", msg.ID),
+		slog.Int("remaining_waiting", len(m.waitingWorkers)))
+
 	// Transition to processing state
 	if err := m.stateMachine.Transition(msg, StateProcessing); err != nil {
-		logger := slog.Default()
 		logger.ErrorContext(
 			ctx,
 			"Failed to transition message to processing",
@@ -487,7 +528,6 @@ func (m *Manager) tryDispatch(ctx context.Context) {
 		if queue, exists := m.queues[msg.ConversationID]; exists {
 			queue.Complete() // Reset processing state
 			if err := queue.Enqueue(msg); err != nil {
-				logger := slog.Default()
 				logger.ErrorContext(ctx, "Failed to requeue message", slog.String("id", msg.ID), slog.Any("error", err))
 			}
 		}
@@ -552,10 +592,14 @@ func (m *Manager) getNextMessageLocked() *Message {
 
 // cleanup releases resources when shutting down.
 func (m *Manager) cleanup() {
+	logger := slog.Default()
+	logger.Warn("Queue manager cleanup called - sending nil to waiting workers")
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	// Send nil to all waiting workers to unblock them
+	logger.Warn("Sending nil to waiting workers", slog.Int("count", len(m.waitingWorkers)))
 	for _, workerCh := range m.waitingWorkers {
 		select {
 		case workerCh <- nil:

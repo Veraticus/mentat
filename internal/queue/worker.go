@@ -16,8 +16,6 @@ import (
 
 // Worker constants.
 const (
-	// messageRequestTimeout is the timeout for requesting messages from queue.
-	messageRequestTimeout = 30 * time.Second
 	// typingIndicatorInterval is how often to send typing indicators.
 	typingIndicatorInterval = 10 * time.Second
 )
@@ -28,7 +26,6 @@ type WorkerConfig struct {
 	Messenger          signal.Messenger
 	RateLimiter        RateLimiter
 	QueueManager       *Manager
-	MessageQueue       MessageQueue // For updating state and getting messages
 	TypingIndicatorMgr signal.TypingIndicatorManager
 	AgentHandler       agent.Handler // Agent handler for processing messages
 	ID                 int
@@ -50,34 +47,23 @@ func NewWorker(config WorkerConfig) Worker {
 
 // requestMessage requests a message from the queue manager.
 func (w *worker) requestMessage(ctx context.Context) (*Message, error) {
-	reqCtx, cancel := context.WithTimeout(ctx, messageRequestTimeout)
-	defer cancel()
+	logger := slog.Default()
+	logger.DebugContext(ctx, "Worker requesting message", slog.Int("worker_id", w.config.ID))
 
-	// Use MessageQueue interface if available (for testing)
-	if w.config.MessageQueue != nil {
-		msg, err := w.config.MessageQueue.GetNext(strconv.Itoa(w.config.ID))
-		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				// No messages available, return nil message with no error
-				// The caller will check for nil message
-				return nil, fmt.Errorf("message queue timeout: %w", err)
-			}
-			return nil, fmt.Errorf("message queue error: %w", err)
-		}
-		return msg, nil
-	}
-
-	// Otherwise use QueueManager directly
-	msg, err := w.config.QueueManager.RequestMessage(reqCtx)
+	// Use QueueManager directly - block indefinitely waiting for work
+	msg, err := w.config.QueueManager.RequestMessage(ctx)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			// No messages available, return nil message with no error
-			// The caller will check for nil message
-			return nil, err
-		}
+		logger.ErrorContext(ctx, "Worker request failed",
+			slog.Int("worker_id", w.config.ID),
+			slog.Any("error", err))
 		return nil, err
 	}
 
+	if msg != nil {
+		logger.DebugContext(ctx, "Worker received message",
+			slog.Int("worker_id", w.config.ID),
+			slog.String("message_id", msg.ID))
+	}
 	return msg, nil
 }
 
@@ -123,23 +109,22 @@ func (w *worker) handleRetryMessage(ctx context.Context, msg *Message) {
 func (w *worker) processNextMessage(ctx context.Context) error {
 	msg, err := w.requestMessage(ctx)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			// No messages available, continue
-			return nil
-		}
+		// Only error should be context cancellation or queue shutdown
 		return err
 	}
 
 	if msg == nil {
-		// Queue manager shutting down
-		return nil
+		// This should never happen - RequestMessage should block or return an error
+		return fmt.Errorf("received nil message from queue manager - this is a bug")
 	}
 
 	// Process the message (message is already in processing state from Manager)
 	logger := slog.Default()
 	logger.InfoContext(ctx, "Worker processing message",
 		slog.Int("worker_id", w.config.ID),
-		slog.String("message_id", msg.ID))
+		slog.String("message_id", msg.ID),
+		slog.String("from", msg.SenderNumber),
+		slog.String("text", msg.Text))
 	if processErr := w.Process(ctx, msg); processErr != nil {
 		logger.ErrorContext(ctx,
 			"Worker error processing message",
@@ -218,38 +203,9 @@ func (w *worker) handleRateLimitRetry(ctx context.Context, msg *Message, reason 
 	msg.SetState(StateRetrying)
 }
 
-// updateMessageState updates the message state through the appropriate interface.
+// updateMessageState updates the message state through the queue manager.
 func (w *worker) updateMessageState(ctx context.Context, msg *Message) {
-	if w.config.MessageQueue != nil {
-		w.updateStateViaQueue(ctx, msg)
-	} else if w.config.QueueManager != nil {
-		w.updateStateViaManager(ctx, msg)
-	}
-}
-
-// updateStateViaQueue updates state through MessageQueue interface.
-func (w *worker) updateStateViaQueue(ctx context.Context, msg *Message) {
-	var reason string
-
-	state := msg.GetState()
-	switch state {
-	case StateRetrying:
-		reason = "Rate limited"
-	case StateFailed:
-		reason = "Retry limit exceeded"
-	case StateCompleted:
-		reason = "Successfully processed"
-	case StateQueued, StateProcessing, StateValidating:
-		// These states are not updated via this method
-		return
-	}
-
-	if err := w.config.MessageQueue.UpdateState(msg.ID, state, reason); err != nil {
-		logger := slog.Default()
-		logger.ErrorContext(ctx, "Failed to update state for message",
-			slog.String("message_id", msg.ID),
-			slog.Any("error", err))
-	}
+	w.updateStateViaManager(ctx, msg)
 }
 
 // updateStateViaManager updates state through QueueManager interface.

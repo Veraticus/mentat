@@ -32,7 +32,6 @@ type PoolConfig struct {
 	LLM          claude.LLM
 	Messenger    signal.Messenger
 	QueueManager *Manager
-	MessageQueue MessageQueue // For state updates and stats
 	RateLimiter  RateLimiter
 	AgentHandler agent.Handler // Agent handler for processing messages
 	PanicHandler PanicHandler  // Optional: defaults to logging with stack trace
@@ -165,7 +164,6 @@ func (p *DynamicWorkerPool) createWorker(ctx context.Context) string {
 		LLM:                p.config.LLM,
 		Messenger:          p.config.Messenger,
 		QueueManager:       p.config.QueueManager,
-		MessageQueue:       p.config.MessageQueue,
 		RateLimiter:        p.config.RateLimiter,
 		TypingIndicatorMgr: p.typingMgr,
 		AgentHandler:       p.config.AgentHandler,

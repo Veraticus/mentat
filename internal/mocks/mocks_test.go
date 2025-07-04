@@ -199,7 +199,7 @@ func TestMockValidationStrategy(t *testing.T) {
 	llm := mocks.NewMockLLM()
 
 	// Test default validation
-	result := mock.Validate(ctx, "request", "response", llm)
+	result := mock.Validate(ctx, "request", "response", "test-session", llm)
 	if result.Status != agent.ValidationStatusSuccess {
 		t.Errorf("expected success, got %v", result.Status)
 	}
@@ -214,7 +214,7 @@ func TestMockValidationStrategy(t *testing.T) {
 		Issues:     []string{"issue1", "issue2"},
 	}
 	mock.SetResult(customResult)
-	result = mock.Validate(ctx, "request", "response", llm)
+	result = mock.Validate(ctx, "request", "response", "test-session", llm)
 	if result.Status != customResult.Status {
 		t.Errorf("expected %v, got %v", customResult.Status, result.Status)
 	}
@@ -229,11 +229,11 @@ func TestMockValidationStrategy(t *testing.T) {
 	}
 
 	// Test recovery
-	if mock.GenerateRecovery(ctx, "req", "resp", result, llm) != "" {
+	if mock.GenerateRecovery(ctx, "req", "resp", "test-session", result, llm) != "" {
 		t.Error("expected empty recovery by default")
 	}
 	mock.SetRecovery("recovery message")
-	if mock.GenerateRecovery(ctx, "req", "resp", result, llm) != "recovery message" {
+	if mock.GenerateRecovery(ctx, "req", "resp", "test-session", result, llm) != "recovery message" {
 		t.Error("unexpected recovery message")
 	}
 }
@@ -302,56 +302,6 @@ func TestMockAgentHandler(t *testing.T) {
 	}
 	if calls[0].From != "user1" || calls[0].Text != "msg1" {
 		t.Errorf("unexpected first call: %+v", calls[0])
-	}
-}
-
-func TestMockMessageQueue(t *testing.T) {
-	mock := mocks.NewMockMessageQueue()
-
-	// Test enqueue
-	msg := signal.IncomingMessage{
-		From:      "user1",
-		Text:      "test message",
-		Timestamp: time.Now(),
-	}
-	err := mock.Enqueue(msg)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Test get next
-	queuedMsg, err := mock.GetNext("worker1")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if queuedMsg.Sender != msg.From || queuedMsg.Text != msg.Text {
-		t.Errorf("unexpected message: %+v", queuedMsg)
-	}
-
-	// Test update state
-	err = mock.UpdateState(queuedMsg.ID, queue.StateProcessing, "processing")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Test no more messages
-	_, err = mock.GetNext("worker1")
-	if err == nil {
-		t.Error("expected error for no messages")
-	}
-
-	// Test stats
-	stats := mock.Stats()
-	if stats.TotalQueued != 0 {
-		t.Errorf("unexpected stats: %+v", stats)
-	}
-
-	// Test error
-	expectedErr := fmt.Errorf("queue error")
-	mock.SetError(expectedErr)
-	err = mock.Enqueue(msg)
-	if !errors.Is(err, expectedErr) {
-		t.Errorf("expected error %v, got %v", expectedErr, err)
 	}
 }
 

@@ -33,7 +33,6 @@ var (
 	_ agent.ValidationStrategy    = (*MockValidationStrategy)(nil)
 	_ agent.IntentEnhancer        = (*MockIntentEnhancer)(nil)
 	_ agent.Handler               = (*MockAgentHandler)(nil)
-	_ queue.MessageQueue          = (*MockMessageQueue)(nil)
 	_ queue.Worker                = (*MockWorker)(nil)
 	_ queue.StateMachine          = (*MockStateMachine)(nil)
 	_ storage.Storage             = (*MockStorage)(nil)
@@ -417,7 +416,7 @@ func NewMockValidationStrategy() *MockValidationStrategy {
 // Validate implements the ValidationStrategy interface.
 func (m *MockValidationStrategy) Validate(
 	_ context.Context,
-	_, _ string,
+	_, _, _ string,
 	_ claude.LLM,
 ) agent.ValidationResult {
 	return m.result
@@ -431,7 +430,7 @@ func (m *MockValidationStrategy) ShouldRetry(_ agent.ValidationResult) bool {
 // GenerateRecovery implements the ValidationStrategy interface.
 func (m *MockValidationStrategy) GenerateRecovery(
 	_ context.Context,
-	_, _ string,
+	_, _, _ string,
 	_ agent.ValidationResult,
 	_ claude.LLM,
 ) string {
@@ -567,82 +566,6 @@ func (m *MockAgentHandler) GetQueryCalls() []QueryCall {
 	calls := make([]QueryCall, len(m.queryCalls))
 	copy(calls, m.queryCalls)
 	return calls
-}
-
-// MockMessageQueue is a test implementation of the queue.MessageQueue interface.
-type MockMessageQueue struct {
-	err      error
-	states   map[string]queue.State
-	messages []*queue.Message
-	stats    queue.Stats
-	mu       sync.Mutex
-}
-
-// NewMockMessageQueue creates a new mock message queue.
-func NewMockMessageQueue() *MockMessageQueue {
-	return &MockMessageQueue{
-		messages: make([]*queue.Message, 0),
-		states:   make(map[string]queue.State),
-		stats:    queue.Stats{},
-	}
-}
-
-// Enqueue implements the MessageQueue interface.
-func (m *MockMessageQueue) Enqueue(msg signal.IncomingMessage) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if m.err != nil {
-		return m.err
-	}
-
-	queuedMsg := queue.NewMessage(
-		fmt.Sprintf("msg-%d", len(m.messages)),
-		msg.From, // conversationID
-		msg.From,
-		msg.FromNumber,
-		msg.Text,
-	)
-
-	m.messages = append(m.messages, queuedMsg)
-	m.states[queuedMsg.ID] = queue.StateQueued
-	return nil
-}
-
-// GetNext implements the MessageQueue interface.
-func (m *MockMessageQueue) GetNext(_ string) (*queue.Message, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	for _, msg := range m.messages {
-		if m.states[msg.ID] == queue.StateQueued {
-			return msg, nil
-		}
-	}
-	return nil, fmt.Errorf("no messages available")
-}
-
-// UpdateState implements the MessageQueue interface.
-func (m *MockMessageQueue) UpdateState(msgID string, state queue.State, _ string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.states[msgID] = state
-	return nil
-}
-
-// Stats implements the MessageQueue interface.
-func (m *MockMessageQueue) Stats() queue.Stats {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.stats
-}
-
-// SetError sets the error to return.
-func (m *MockMessageQueue) SetError(err error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.err = err
 }
 
 // MockWorker is a test implementation of the queue.Worker interface.
