@@ -179,25 +179,50 @@ func (h *handler) Process(ctx context.Context, msg signal.IncomingMessage) error
 			slog.String("session_id", sessionID),
 			slog.String("from", msg.From))
 
-		// Prepare the request with optional complexity guidance
-		requestToSend := h.prepareRequest(ctx, msg.Text, sessionID)
-
-		// Query Claude with the message (possibly enhanced with guidance)
-		response, err := h.llm.Query(ctx, requestToSend, sessionID)
+		// Get initial response with progress check
+		initialResponse, err := h.getInitialResponse(ctx, msg.Text, sessionID)
 		if err != nil {
-			h.logger.ErrorContext(ctx, "LLM query failed",
+			h.logger.ErrorContext(ctx, "initial response failed",
 				slog.Any("error", err),
 				slog.String("session_id", sessionID),
 				slog.String("from", msg.From))
-			return fmt.Errorf("processing message from %s: LLM query failed: %w", msg.From, err)
+			return fmt.Errorf("processing message from %s: initial response failed: %w", msg.From, err)
 		}
 
-		h.logger.DebugContext(ctx, "received LLM response",
-			slog.String("session_id", sessionID),
-			slog.Int("response_length", len(response.Message)))
+		// Check if initial response needs continuation
+		var finalResponse *claude.LLMResponse
 
-		// Perform validation with retry logic
-		finalResponse := h.validateAndRetry(ctx, msg.Text, response, sessionID)
+		switch {
+		case initialResponse.Progress != nil && initialResponse.Progress.NeedsContinuation:
+			h.logger.InfoContext(ctx, "initial response needs continuation",
+				slog.String("session_id", sessionID),
+				slog.String("status", initialResponse.Progress.Status),
+				slog.String("from", msg.From))
+			// Handle multi-step processing
+			continuationResponse, continueErr := h.continueWithProgress(ctx, initialResponse, &msg, sessionID)
+			if continueErr != nil {
+				h.logger.ErrorContext(ctx, "continuation failed",
+					slog.Any("error", continueErr),
+					slog.String("session_id", sessionID))
+				return fmt.Errorf("processing message from %s: continuation failed: %w", msg.From, continueErr)
+			}
+			finalResponse = continuationResponse
+
+		case initialResponse.Progress != nil && !initialResponse.Progress.NeedsContinuation:
+			// Simple query completed without validation
+			h.logger.InfoContext(ctx, "simple query completed without validation",
+				slog.String("session_id", sessionID),
+				slog.String("status", initialResponse.Progress.Status),
+				slog.String("from", msg.From))
+			finalResponse = initialResponse
+
+		default:
+			// For complex queries or when progress info is missing, proceed with validation
+			h.logger.DebugContext(ctx, "proceeding with validation for complex query",
+				slog.String("session_id", sessionID),
+				slog.String("from", msg.From))
+			finalResponse = h.validateAndRetry(ctx, msg.Text, initialResponse, sessionID)
+		}
 
 		// Send the response back via messenger
 		if sendErr := h.messenger.Send(ctx, msg.From, finalResponse.Message); sendErr != nil {
@@ -226,13 +251,10 @@ func (h *handler) Query(ctx context.Context, request string, sessionID string) (
 		slog.String("session_id", sessionID),
 		slog.Int("text_length", len(request)))
 
-	// Prepare the request with optional complexity guidance
-	requestToSend := h.prepareRequest(ctx, request, sessionID)
-
-	// Query Claude with the message (possibly enhanced with guidance)
-	response, err := h.llm.Query(ctx, requestToSend, sessionID)
+	// Get initial response with progress check
+	initialResponse, err := h.getInitialResponse(ctx, request, sessionID)
 	if err != nil {
-		h.logger.ErrorContext(ctx, "LLM query failed",
+		h.logger.ErrorContext(ctx, "initial response failed",
 			slog.Any("error", err),
 			slog.String("session_id", sessionID))
 		// Return user-friendly error message in the response
@@ -241,17 +263,188 @@ func (h *handler) Query(ctx context.Context, request string, sessionID string) (
 		}, fmt.Errorf("query failed: %w", err)
 	}
 
-	h.logger.DebugContext(ctx, "received LLM response",
-		slog.String("session_id", sessionID),
-		slog.Int("response_length", len(response.Message)))
+	// Check if initial response needs continuation
+	var finalResponse *claude.LLMResponse
 
-	// Perform validation with retry logic
-	finalResponse := h.validateAndRetry(ctx, request, response, sessionID)
+	switch {
+	case initialResponse.Progress != nil && initialResponse.Progress.NeedsContinuation:
+		h.logger.InfoContext(ctx, "initial response needs continuation",
+			slog.String("session_id", sessionID),
+			slog.String("status", initialResponse.Progress.Status))
+		// Handle multi-step processing
+		msg := &signal.IncomingMessage{Text: request}
+		continuationResponse, continueErr := h.continueWithProgress(ctx, initialResponse, msg, sessionID)
+		if continueErr != nil {
+			h.logger.ErrorContext(ctx, "continuation failed",
+				slog.Any("error", continueErr),
+				slog.String("session_id", sessionID))
+			return claude.LLMResponse{
+				Message: errorRecovery.GenerateContextualMessage(continueErr, request),
+			}, fmt.Errorf("query continuation failed: %w", continueErr)
+		}
+		finalResponse = continuationResponse
+
+	case initialResponse.Progress != nil && !initialResponse.Progress.NeedsContinuation:
+		// Simple query completed without validation
+		h.logger.InfoContext(ctx, "simple query completed without validation",
+			slog.String("session_id", sessionID),
+			slog.String("status", initialResponse.Progress.Status))
+		return *initialResponse, nil
+
+	default:
+		// For complex queries or when progress info is missing, proceed with validation
+		h.logger.DebugContext(ctx, "proceeding with validation for complex query",
+			slog.String("session_id", sessionID))
+
+		// Perform validation with retry logic
+		finalResponse = h.validateAndRetry(ctx, request, initialResponse, sessionID)
+	}
 
 	h.logger.InfoContext(ctx, "successfully processed query",
 		slog.String("session_id", sessionID))
 
 	return *finalResponse, nil
+}
+
+// getInitialResponse queries Claude and returns the initial response with progress information.
+// This method is optimized for simple queries that can complete quickly without validation.
+func (h *handler) getInitialResponse(
+	ctx context.Context,
+	request string,
+	sessionID string,
+) (*claude.LLMResponse, error) {
+	// Prepare the request with optional complexity guidance
+	requestToSend := h.prepareRequest(ctx, request, sessionID)
+
+	// Query Claude with the message (possibly enhanced with guidance)
+	response, err := h.llm.Query(ctx, requestToSend, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("LLM query failed: %w", err)
+	}
+
+	h.logger.DebugContext(ctx, "received initial LLM response",
+		slog.String("session_id", sessionID),
+		slog.Int("response_length", len(response.Message)),
+		slog.Bool("has_progress", response.Progress != nil))
+
+	// Log progress information if available
+	if response.Progress != nil {
+		h.logger.DebugContext(ctx, "progress information",
+			slog.Bool("needs_continuation", response.Progress.NeedsContinuation),
+			slog.String("status", response.Progress.Status),
+			slog.String("message", response.Progress.Message),
+			slog.Int("estimated_remaining", response.Progress.EstimatedRemaining))
+	}
+
+	return response, nil
+}
+
+// continueWithProgress handles multi-step processing when Claude needs to continue.
+func (h *handler) continueWithProgress(
+	ctx context.Context,
+	initialResponse *claude.LLMResponse,
+	msg *signal.IncomingMessage,
+	sessionID string,
+) (*claude.LLMResponse, error) {
+	// Maximum number of continuations
+	const maxContinuations = 5
+
+	// Start with the initial response
+	currentResponse := initialResponse
+	continuationCount := 0
+
+	// Build conversation history
+	conversationHistory := []string{
+		fmt.Sprintf("User: %s", msg.Text),
+		fmt.Sprintf("Assistant: %s", currentResponse.Message),
+	}
+
+	// Continue while Claude needs to and we haven't hit the limit
+	for currentResponse.Progress != nil &&
+		currentResponse.Progress.NeedsContinuation &&
+		continuationCount < maxContinuations {
+		// Check context cancellation
+		select {
+		case <-ctx.Done():
+			h.logger.WarnContext(ctx, "Continuation canceled by context",
+				slog.String("session_id", sessionID),
+				slog.Int("continuation", continuationCount),
+			)
+			return currentResponse, fmt.Errorf("context canceled: %w", ctx.Err())
+		default:
+		}
+
+		continuationCount++
+
+		// Build continuation prompt
+		continuationPrompt := h.buildContinuationPrompt(conversationHistory, currentResponse.Progress)
+
+		h.logger.InfoContext(ctx, "Continuing multi-step processing",
+			slog.String("session_id", sessionID),
+			slog.Int("continuation", continuationCount),
+			slog.String("status", currentResponse.Progress.Status),
+		)
+
+		// Query Claude for continuation
+		nextResponse, err := h.llm.Query(ctx, continuationPrompt, sessionID)
+		if err != nil {
+			h.logger.ErrorContext(ctx, "Failed to get continuation",
+				slog.String("error", err.Error()),
+				slog.Int("continuation", continuationCount),
+			)
+			// Return what we have so far on error
+			return currentResponse, nil
+		}
+
+		// Update conversation history
+		conversationHistory = append(conversationHistory, fmt.Sprintf("Assistant: %s", nextResponse.Message))
+
+		// Log progress if available
+		if nextResponse.Progress != nil {
+			h.logger.InfoContext(ctx, "Continuation progress",
+				slog.String("session_id", sessionID),
+				slog.Int("continuation", continuationCount),
+				slog.Bool("needs_continuation", nextResponse.Progress.NeedsContinuation),
+				slog.String("status", nextResponse.Progress.Status),
+			)
+		}
+
+		currentResponse = nextResponse
+	}
+
+	// Log completion
+	if continuationCount > 0 {
+		h.logger.InfoContext(ctx, "Multi-step processing completed",
+			slog.String("session_id", sessionID),
+			slog.Int("total_continuations", continuationCount),
+		)
+	}
+
+	return currentResponse, nil
+}
+
+// buildContinuationPrompt creates a prompt for Claude to continue processing.
+func (h *handler) buildContinuationPrompt(
+	history []string,
+	progress *claude.ProgressInfo,
+) string {
+	// Build context from conversation history
+	context := "Here is our conversation so far:\n\n"
+	for _, entry := range history {
+		context += entry + "\n\n"
+	}
+
+	// Add current progress status
+	context += fmt.Sprintf("You indicated you need to continue processing with status: %s\n", progress.Status)
+
+	if progress.Message != "" {
+		context += fmt.Sprintf("Progress message: %s\n", progress.Message)
+	}
+
+	// Add continuation instruction
+	context += "\nPlease continue with the next steps. Remember to include a progress JSON block to indicate if further continuation is needed."
+
+	return context
 }
 
 // prepareRequest prepares the request with optional complexity guidance.

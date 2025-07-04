@@ -29,6 +29,9 @@ func TestSystemPromptIntegration(t *testing.T) {
 		"Tool Usage is Mandatory",
 		"Confirmation Specificity",
 		"Multi-Source Information Gathering",
+		"Progress Tracking",
+		"needs_continuation",
+		"progress",
 	}
 
 	for _, phrase := range expectedPhrases {

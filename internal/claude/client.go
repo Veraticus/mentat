@@ -47,6 +47,7 @@ type jsonResponse struct {
 	Metadata  jsonResponseMetadata `json:"metadata,omitempty"`
 	Usage     jsonUsage            `json:"usage,omitempty"`          // Usage stats
 	TotalCost float64              `json:"total_cost_usd,omitempty"` // Cost in USD
+	Progress  *jsonProgressInfo    `json:"progress,omitempty"`       // Progress information
 }
 
 // jsonToolCall is the JSON structure for tool calls.
@@ -73,6 +74,14 @@ type jsonUsage struct {
 	InputTokens     int `json:"input_tokens"`
 	OutputTokens    int `json:"output_tokens"`
 	CacheReadTokens int `json:"cache_read_input_tokens"`
+}
+
+// jsonProgressInfo is the JSON structure for progress information.
+type jsonProgressInfo struct {
+	NeedsContinuation  bool   `json:"needs_continuation"`
+	Status             string `json:"status"`
+	Message            string `json:"message"`
+	EstimatedRemaining int    `json:"estimated_remaining"`
 }
 
 // NewClient creates a new Claude CLI client.
@@ -248,6 +257,16 @@ func buildLLMResponse(jsonResp *jsonResponse) *LLMResponse {
 
 	// Convert tool calls
 	convertToolCalls(jsonResp, response)
+
+	// Convert progress information if present
+	if jsonResp.Progress != nil {
+		response.Progress = &ProgressInfo{
+			NeedsContinuation:  jsonResp.Progress.NeedsContinuation,
+			Status:             jsonResp.Progress.Status,
+			Message:            jsonResp.Progress.Message,
+			EstimatedRemaining: jsonResp.Progress.EstimatedRemaining,
+		}
+	}
 
 	return response
 }

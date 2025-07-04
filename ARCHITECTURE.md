@@ -75,6 +75,23 @@ type LLMResponse struct {
     Message   string
     ToolCalls []ToolCall  // For future tool call visibility
     Metadata  ResponseMetadata
+    // Structured response for progress tracking
+    Progress  *ProgressInfo `json:"progress,omitempty"`
+}
+
+// ProgressInfo provides structured progress tracking
+type ProgressInfo struct {
+    // Does the LLM need to continue processing?
+    NeedsContinuation bool   `json:"needs_continuation"`
+    // Why does it need to continue? (empty if complete)
+    ContinuationReason string `json:"continuation_reason,omitempty"`
+    // What's the next planned action?
+    NextAction string `json:"next_action,omitempty"`
+    // Is the user's intent fully satisfied?
+    IntentSatisfied bool `json:"intent_satisfied"`
+    // Does the LLM need clarification from user?
+    NeedsClarification bool   `json:"needs_clarification,omitempty"`
+    ClarificationPrompt string `json:"clarification_prompt,omitempty"`
 }
 
 type ResponseMetadata struct {
@@ -242,7 +259,137 @@ func (e *SmartIntentEnhancer) Enhance(originalRequest string) string {
 }
 ```
 
-### 6. MCP Server Integration
+### 6. Progressive Response Interface
+
+```go
+// ProgressReporter provides real-time user feedback during long operations
+type ProgressReporter interface {
+    // Report sends a progress update to the user
+    Report(ctx context.Context, recipient string, stage ProgressStage, detail string) error
+    // ReportError immediately sends error context to user
+    ReportError(ctx context.Context, recipient string, err error, context string) error
+    // ShouldContinue checks if the LLM needs to continue processing
+    ShouldContinue(progress *ProgressInfo) bool
+}
+
+type ProgressStage int
+
+const (
+    StageStarting ProgressStage = iota
+    StageSearching      // "Searching calendar..."
+    StageProcessing     // "Found your events, checking details..."
+    StageValidating     // "Verifying the information..."
+    StageRetrying       // "Let me check that again..."
+    StageCompleting     // "Almost done..."
+)
+
+// SignalProgressReporter sends natural language progress updates
+type SignalProgressReporter struct {
+    messenger Messenger
+    llm       LLM  // Use Claude to generate natural progress messages
+}
+
+func (r *SignalProgressReporter) Report(ctx context.Context, recipient string, stage ProgressStage, detail string) error {
+    // Generate natural progress message
+    prompt := fmt.Sprintf(`
+        Generate a brief, natural progress update for stage: %v
+        Context: %s
+        Keep it under 10 words and conversational.
+        Examples: "Checking your calendar...", "Found it, getting details..."
+    `, stage, detail)
+    
+    resp, err := r.llm.Query(ctx, prompt, "progress")
+    if err != nil {
+        // Fallback to simple message
+        return r.messenger.Send(ctx, recipient, "Working on it...")
+    }
+    
+    return r.messenger.Send(ctx, recipient, resp.Message)
+}
+
+func (r *SignalProgressReporter) ReportError(ctx context.Context, recipient string, err error, context string) error {
+    // Let Claude explain the error naturally
+    prompt := fmt.Sprintf(`
+        The user asked: %s
+        An error occurred: %v
+        
+        Explain this naturally and suggest what the user can do.
+        Be helpful and conversational, not technical.
+    `, context, err)
+    
+    resp, err := r.llm.Query(ctx, prompt, "error-recovery")
+    if err != nil {
+        return r.messenger.Send(ctx, recipient, 
+            "I'm having trouble with that request right now. Could you try again in a moment?")
+    }
+    
+    return r.messenger.Send(ctx, recipient, resp.Message)
+}
+
+func (r *SignalProgressReporter) ShouldContinue(progress *ProgressInfo) bool {
+    if progress == nil {
+        return true // Conservative default
+    }
+    
+    return progress.NeedsContinuation && 
+           !progress.NeedsClarification && 
+           !progress.IntentSatisfied
+}
+```
+
+### Enhanced Agent Handler Methods
+
+```go
+func (h *AgentHandler) continueWithProgress(
+    ctx context.Context,
+    msg IncomingMessage,
+    previousResponse *LLMResponse,
+    sessionID string,
+) {
+    // Send initial response
+    h.messenger.Send(ctx, msg.From, previousResponse.Message)
+    
+    // LLM naturally reports what it's doing in its response
+    
+    maxContinuations := 5
+    response := previousResponse
+    
+    for i := 0; i < maxContinuations && response.Progress.NeedsContinuation; i++ {
+        // Continue processing with the reason
+        continuationPrompt := fmt.Sprintf(`
+            Continue processing the user's request.
+            Previous status: %s
+            Next action: %s
+            
+            Complete the action and provide an update.
+            Include the same JSON progress structure in your response.
+        `, response.Progress.ContinuationReason, response.Progress.NextAction)
+        
+        nextResponse, err := h.llm.Query(ctx, continuationPrompt, sessionID)
+        if err != nil {
+            h.progress.ReportError(ctx, msg.From, err, "continuation failed")
+            break
+        }
+        
+        // Send incremental update
+        h.messenger.Send(ctx, msg.From, nextResponse.Message)
+        
+        // Check if we should continue
+        if nextResponse.Progress == nil || !h.progress.ShouldContinue(nextResponse.Progress) {
+            break
+        }
+        
+        response = nextResponse
+        
+        // LLM naturally reports what it's doing - no separate progress messages
+    }
+    
+    // Run validation on the final result
+    go h.validateInBackground(ctx, msg, response, sessionID)
+}
+```
+
+### 7. MCP Server Integration
 
 MCP servers run as HTTP services via podman containers, eliminating subprocess startup overhead:
 
@@ -475,6 +622,164 @@ Key integration points:
 - Typing indicators managed by workers during processing
 - Scheduler can enqueue high-priority tasks
 - All components remain testable through interfaces
+
+## Response Streaming and Progressive Enhancement
+
+The system provides real-time feedback during long operations to maintain user engagement and trust. This is critical given the multi-agent validation flow that can take 15-20 seconds.
+
+### Progressive Response Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                   Progressive Response Flow                  │
+│                                                              │
+│  User Message                                                │
+│       ↓                                                      │
+│  "Checking..." (immediate)                                   │
+│       ↓                                                      │
+│  "Found your calendar..." (2s)                               │
+│       ↓                                                      │
+│  "I see 3 events today..." (4s)                             │
+│       ↓                                                      │
+│  [Full detailed response] (6-8s)                             │
+│       ↓                                                      │
+│  [Validation corrections if needed] (async)                  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Implementation Strategy
+
+```go
+// Enhanced AgentHandler with progress reporting
+type ProgressiveAgentHandler struct {
+    *AgentHandler
+    progress ProgressReporter
+}
+
+func (h *ProgressiveAgentHandler) Process(ctx context.Context, msg IncomingMessage) error {
+    sessionID := h.sessions.GetOrCreateSession(msg.From)
+    
+    // Immediate acknowledgment
+    h.progress.Report(ctx, msg.From, StageStarting, msg.Text)
+    
+    // Enhance request
+    enhancedRequest := h.enhancer.Enhance(msg.Text)
+    
+    // Execute with progress callbacks
+    execution, err := h.executeWithProgress(ctx, enhancedRequest, sessionID, msg.From)
+    
+    if err != nil {
+        // Immediate error reporting with context
+        return h.progress.ReportError(ctx, msg.From, err, msg.Text)
+    }
+    
+    // Send initial response while validation happens
+    h.messenger.Send(ctx, msg.From, execution.Message)
+    
+    // Async validation with corrections
+    go h.validateAndCorrect(ctx, msg, execution)
+    
+    return nil
+}
+
+func (h *ProgressiveAgentHandler) executeWithProgress(
+    ctx context.Context, 
+    request string, 
+    sessionID string,
+    recipient string,
+) (*LLMResponse, error) {
+    // Create a wrapper LLM that reports progress based on tool usage
+    progressLLM := &ProgressTrackingLLM{
+        llm:      h.llm,
+        progress: h.progress,
+        recipient: recipient,
+    }
+    
+    return progressLLM.Query(ctx, request, sessionID)
+}
+```
+
+### Progress Tracking LLM Wrapper
+
+```go
+// ProgressTrackingLLM monitors tool usage and reports progress
+type ProgressTrackingLLM struct {
+    llm       LLM
+    progress  ProgressReporter
+    recipient string
+}
+
+func (p *ProgressTrackingLLM) Query(ctx context.Context, prompt string, sessionID string) (*LLMResponse, error) {
+    // Set up tool usage monitoring
+    monitorCtx, monitor := p.createToolMonitor(ctx)
+    
+    // Execute query with monitoring
+    responseChan := make(chan *LLMResponse, 1)
+    errChan := make(chan error, 1)
+    
+    go func() {
+        resp, err := p.llm.Query(monitorCtx, prompt, sessionID)
+        if err != nil {
+            errChan <- err
+        } else {
+            responseChan <- resp
+        }
+    }()
+    
+    // Monitor progress
+    for {
+        select {
+        case tool := <-monitor.ToolUsed:
+            p.reportToolProgress(ctx, tool)
+        case resp := <-responseChan:
+            return resp, nil
+        case err := <-errChan:
+            return nil, err
+        case <-ctx.Done():
+            return nil, ctx.Err()
+        }
+    }
+}
+
+func (p *ProgressTrackingLLM) reportToolProgress(ctx context.Context, tool ToolUsage) {
+    switch tool.Name {
+    case "google-calendar":
+        p.progress.Report(ctx, p.recipient, StageSearching, "calendar")
+    case "memory":
+        p.progress.Report(ctx, p.recipient, StageSearching, "memory")
+    case "gmail":
+        p.progress.Report(ctx, p.recipient, StageProcessing, "email")
+    }
+}
+```
+
+### Error Recovery Flow
+
+When MCP tools fail or Claude encounters errors, the system immediately pivots to user-friendly error handling:
+
+```go
+func (h *ProgressiveAgentHandler) handleMCPError(ctx context.Context, err error, tool string, recipient string) error {
+    // Check error type
+    switch {
+    case isConnectionError(err):
+        return h.progress.ReportError(ctx, recipient, err, 
+            fmt.Sprintf("I couldn't connect to %s", tool))
+    
+    case isPermissionError(err):
+        return h.progress.ReportError(ctx, recipient, err,
+            fmt.Sprintf("I need permission to access %s", tool))
+    
+    case isTimeoutError(err):
+        return h.progress.ReportError(ctx, recipient, err,
+            fmt.Sprintf("%s is taking too long to respond", tool))
+    
+    default:
+        // Let Claude generate a natural explanation
+        return h.progress.ReportError(ctx, recipient, err, 
+            fmt.Sprintf("Issue with %s", tool))
+    }
+}
+```
 
 ## Persistence Layer (SQLite)
 
@@ -1175,13 +1480,87 @@ func (w *QueueWorker) maintainTypingIndicator(ctx context.Context, recipient str
 ### 4. Multi-Agent Validation Process
 
 ```go
+// ParallelValidationOrchestrator runs multiple validation strategies concurrently
+type ParallelValidationOrchestrator struct {
+    strategies []ValidationStrategy
+    timeout    time.Duration
+}
+
+func (o *ParallelValidationOrchestrator) ValidateParallel(
+    ctx context.Context, 
+    request, response string, 
+    llm LLM,
+) ValidationResult {
+    ctx, cancel := context.WithTimeout(ctx, o.timeout)
+    defer cancel()
+    
+    results := make(chan ValidationResult, len(o.strategies))
+    
+    // Launch parallel validations
+    for _, strategy := range o.strategies {
+        go func(s ValidationStrategy) {
+            results <- s.Validate(ctx, request, response, llm)
+        }(strategy)
+    }
+    
+    // Collect results and return most conservative
+    var collected []ValidationResult
+    for i := 0; i < len(o.strategies); i++ {
+        select {
+        case result := <-results:
+            collected = append(collected, result)
+            
+            // Early exit on critical failures
+            if result.Status == FAILED {
+                return result
+            }
+        case <-ctx.Done():
+            // Timeout - return best result so far
+            return o.bestResult(collected)
+        }
+    }
+    
+    return o.bestResult(collected)
+}
+
+func (o *ParallelValidationOrchestrator) bestResult(results []ValidationResult) ValidationResult {
+    // Return the most conservative (worst) result
+    // Priority: FAILED > INCOMPLETE_SEARCH > PARTIAL > UNCLEAR > SUCCESS
+    worst := ValidationResult{Status: SUCCESS}
+    
+    for _, r := range results {
+        if r.Status < worst.Status { // Lower enum values = worse outcomes
+            worst = r
+        }
+    }
+    
+    return worst
+}
+
+// Enhanced Process method with parallel validation
 func (h *AgentHandler) Process(ctx context.Context, msg IncomingMessage) error {
     sessionID := h.sessions.GetOrCreateSession(msg.From)
     
-    // Enhance request with gentle guidance
+    // Immediate acknowledgment/response (2-3 seconds)
+    // This might be the ONLY response for simple queries
+    ackResponse, err := h.getInitialResponse(ctx, msg, sessionID)
+    if err != nil {
+        return h.handleServiceError(ctx, err, msg.From)
+    }
+    
+    // Send the initial response
+    h.messenger.Send(ctx, msg.From, ackResponse.Message)
+    
+    // Check if we're done (no continuation needed)
+    if ackResponse.Progress != nil && !ackResponse.Progress.NeedsContinuation {
+        // Complete! No further processing needed
+        return nil
+    }
+    
+    // We need to continue - enhance request with gentle guidance
     enhancedRequest := h.enhancer.Enhance(msg.Text)
     
-    // Call 1: Primary execution with enhancement
+    // Continue with full execution since initial response indicated continuation needed
     execution, err := h.llm.Query(ctx, fmt.Sprintf(`
         %s
         
@@ -1190,24 +1569,152 @@ func (h *AgentHandler) Process(ctx context.Context, msg IncomingMessage) error {
         - Include any IDs, confirmations, or results
         - If you encounter issues, explain them naturally
         - Be transparent about partial successes
+        
+        IMPORTANT: Include a JSON object at the end of your response with this structure:
+        ```json
+        {
+            "progress": {
+                "needs_continuation": boolean,
+                "continuation_reason": "why you need to continue (if applicable)",
+                "next_action": "what you plan to do next (if continuing)",
+                "intent_satisfied": boolean,
+                "needs_clarification": boolean,
+                "clarification_prompt": "what to ask the user (if clarification needed)"
+            }
+        }
+        ```
+        
+        Set needs_continuation to true ONLY if:
+        - You need to call more tools to complete the request
+        - The current tool call is incomplete
+        - You're gathering information across multiple sources
+        
+        Set needs_continuation to false if:
+        - You've completed the user's request
+        - You cannot access required tools
+        - You need the user to clarify their intent
+        - The task is impossible to complete
     `, enhancedRequest), sessionID)
     
     if err != nil {
-        // Only use canned response when Claude itself is broken
+        // Immediate error feedback to user
+        if h.progress != nil {
+            return h.progress.ReportError(ctx, msg.From, err, msg.Text)
+        }
         return h.handleServiceError(ctx, err, msg.From)
     }
     
-    // Call 2: Validation with thoroughness check
-    validation := h.validator.Validate(ctx, msg.Text, execution.Message, h.llm)
+    // Check if LLM needs to continue
+    if execution.Progress != nil && h.progress != nil {
+        if !h.progress.ShouldContinue(execution.Progress) {
+            // LLM is done - send final response
+            if execution.Progress.NeedsClarification {
+                // Include clarification prompt
+                finalMsg := fmt.Sprintf("%s\n\n%s", 
+                    execution.Message, 
+                    execution.Progress.ClarificationPrompt)
+                return h.messenger.Send(ctx, msg.From, finalMsg)
+            }
+            // Simple completion
+            return h.messenger.Send(ctx, msg.From, execution.Message)
+        }
+        
+        // LLM needs to continue - start progress tracking
+        go h.continueWithProgress(ctx, msg, execution, sessionID)
+    } else {
+        // Fallback to original flow if no progress info
+        h.messenger.Send(ctx, msg.From, execution.Message)
+        go h.validateInBackground(ctx, msg, execution, sessionID)
+    }
     
-    // Call 3+: Handle based on validation
+    return nil
+}
+
+func (h *AgentHandler) getInitialResponse(ctx context.Context, msg IncomingMessage, sessionID string) (*LLMResponse, error) {
+    // Generate initial response in 2-3 seconds
+    // This might be the complete response for simple queries!
+    initialPrompt := fmt.Sprintf(`
+        The user said: "%s"
+        
+        Respond naturally and conversationally. For simple questions or chat, 
+        provide the complete answer. For complex requests that need tools,
+        acknowledge and indicate you'll need to look things up.
+        
+        IMPORTANT: Include the progress JSON at the end of your response:
+        ```json
+        {
+            "progress": {
+                "needs_continuation": boolean,
+                "continuation_reason": "why you need to continue (if applicable)",
+                "next_action": "what you plan to do next (if continuing)",
+                "intent_satisfied": boolean,
+                "needs_clarification": boolean,
+                "clarification_prompt": "what to ask the user (if clarification needed)"
+            }
+        }
+        ```
+        
+        Set needs_continuation to false if:
+        - This is a simple question you can answer without tools
+        - This is casual conversation
+        - You need clarification from the user
+        - The request is impossible to fulfill
+        
+        Set needs_continuation to true ONLY if:
+        - You need to use tools (calendar, memory, etc)
+        - You need to look up information
+        - Multiple steps are required
+    `, msg.Text)
+    
+    // Use short timeout for quick response
+    ackCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+    defer cancel()
+    
+    resp, err := h.llm.Query(ackCtx, initialPrompt, sessionID)
+    if err != nil {
+        // Return error to be handled by caller
+        return nil, err
+    }
+    
+    return resp, nil
+}
+
+func (h *AgentHandler) validateInBackground(
+    ctx context.Context, 
+    msg IncomingMessage, 
+    execution *LLMResponse,
+    sessionID string,
+) {
+    // Report validation stage
+    if h.progress != nil {
+        h.progress.Report(ctx, msg.From, StageValidating, "response accuracy")
+    }
+    
+    // Run parallel validation
+    orchestrator := &ParallelValidationOrchestrator{
+        strategies: []ValidationStrategy{
+            &MultiAgentValidator{},      // Thoroughness check
+            &ToolUsageValidator{},       // Verify tools were used
+            &ResponseCompleteValidator{}, // Check completeness
+        },
+        timeout: 5 * time.Second,
+    }
+    
+    validation := orchestrator.ValidateParallel(ctx, msg.Text, execution.Message, h.llm)
+    
+    // Handle validation results
     switch validation.Status {
     case SUCCESS:
-        return h.messenger.Send(ctx, msg.From, execution.Message)
+        // Nothing to do - original response was good
+        return
         
     case INCOMPLETE_SEARCH:
-        // Help Claude be more thorough
-        thoroughRetry, _ := h.llm.Query(ctx, fmt.Sprintf(`
+        // Send follow-up with additional information
+        if h.progress != nil {
+            h.progress.Report(ctx, msg.From, StageRetrying, "more information")
+        }
+        
+        thoroughRetry, err := h.llm.Query(ctx, fmt.Sprintf(`
             The request was: "%s"
             
             You may have missed some information sources.
@@ -1215,21 +1722,18 @@ func (h *AgentHandler) Process(ctx context.Context, msg IncomingMessage) error {
             Please check those tools and provide a comprehensive answer.
         `, msg.Text), sessionID)
         
-        // Validate the retry
-        retryValidation := h.validator.Validate(ctx, msg.Text, thoroughRetry.Message, h.llm)
-        if retryValidation.Status == SUCCESS {
-            return h.messenger.Send(ctx, msg.From, thoroughRetry.Message)
+        if err == nil {
+            h.messenger.Send(ctx, msg.From, fmt.Sprintf(
+                "I found some additional information:\n\n%s", 
+                thoroughRetry.Message))
         }
-        // Fall through to recovery if still not complete
         
     case PARTIAL, FAILED, UNCLEAR:
-        // Let Claude explain what happened conversationally
+        // Send correction/clarification
         recovery := h.validator.GenerateRecovery(ctx, msg.Text, execution.Message, validation, h.llm)
-        return h.messenger.Send(ctx, msg.From, recovery)
+        h.messenger.Send(ctx, msg.From, fmt.Sprintf(
+            "Let me clarify that:\n\n%s", recovery))
     }
-    
-    // Default to original response
-    return h.messenger.Send(ctx, msg.From, execution.Message)
 }
 ```
 
@@ -1272,7 +1776,29 @@ func (s *ScriptedLLM) Query(ctx context.Context, prompt string, sessionID string
         }
     }
     
+    // Parse progress info from response if present
+    if resp.Response != nil && strings.Contains(resp.Response.Message, `"progress":`) {
+        // Extract and parse the JSON progress block
+        resp.Response.Progress = s.extractProgress(resp.Response.Message)
+    }
+    
     return resp.Response, resp.Error
+}
+
+func (s *ScriptedLLM) extractProgress(message string) *ProgressInfo {
+    // Simple extraction for testing - real implementation would be more robust
+    start := strings.Index(message, `"progress":`) 
+    if start == -1 {
+        return nil
+    }
+    
+    // Find the matching closing brace
+    // ... parsing logic ...
+    
+    return &ProgressInfo{
+        NeedsContinuation: false,
+        IntentSatisfied: true,
+    }
 }
 ```
 
@@ -1581,7 +2107,7 @@ func TestStateMachine(t *testing.T) {
 
 ## System Prompt Engineering
 
-Critical for reliable tool use:
+Critical for reliable tool use and efficient processing:
 
 ```markdown
 # Mentat System Prompt
@@ -1642,6 +2168,20 @@ You are Mentat, a personal assistant with access to various tools via MCP.
 - Save important information from conversations
 - Use memory to track patterns and relationships
 - Remember that memory complements other tools, not replaces them
+
+## Response Efficiency:
+
+**ALWAYS include the progress JSON structure in EVERY response** to indicate:
+- Whether you need to continue processing
+- Why continuation is needed (if applicable)
+- What your next action will be (if continuing)
+- Whether the user's intent is satisfied
+
+This allows the system to:
+- Complete simple queries in 2-3 seconds
+- Avoid unnecessary processing
+- Provide immediate value to users
+- Scale processing based on request complexity
 ```
 
 ## MCP Server Deployment
@@ -2055,6 +2595,20 @@ scripts/
 15. **SQLite for persistence**: Embedded database provides ACID guarantees with zero operational overhead, perfect for single-instance deployment
 
 16. **Comprehensive audit trail**: Every LLM interaction, state transition, and system decision is persisted for debugging and compliance
+
+17. **Progressive response streaming**: Users receive immediate feedback with incremental updates during long operations, maintaining engagement throughout the 15-20 second validation process
+
+18. **Parallel validation strategies**: Multiple validation approaches run concurrently with fast-fail semantics, reducing validation latency while maintaining thoroughness
+
+19. **Immediate error recovery**: MCP and system errors trigger immediate LLM-generated explanations rather than exposing internal error messages to users
+
+20. **Optimistic response pattern**: Initial responses sent immediately with background validation and async corrections, balancing speed with accuracy
+
+21. **Structured progress tracking**: LLM responses include JSON metadata indicating whether continuation is needed, avoiding unnecessary processing when requests are complete
+
+22. **Intent-aware completion**: System understands when user intent is satisfied, tool access has failed, or clarification is needed, terminating processing appropriately
+
+23. **Smart initial response**: First LLM call determines if continuation is needed, enabling 2-3 second completion for simple queries while maintaining full capability for complex requests
 
 ## Future Enhancements
 

@@ -92,6 +92,8 @@ func (r *ErrorRecovery) ClassifyError(err error) ErrorType {
 		return ErrorTypeValidation
 	case strings.Contains(errMsg, "config"):
 		return ErrorTypeConfiguration
+	case strings.Contains(errMsg, "authentication") || strings.Contains(errMsg, "auth"):
+		return ErrorTypeAuthentication
 	case strings.Contains(errMsg, "messenger") || strings.Contains(errMsg, "signal"):
 		return ErrorTypeMessenger
 	case strings.Contains(errMsg, "llm") || strings.Contains(errMsg, "claude"):

@@ -16,6 +16,15 @@ type LLMResponse struct {
 	ToolCalls []ToolCall       // Tool invocations made by Claude
 	Message   string           // Text response from Claude
 	Metadata  ResponseMetadata // Response metadata
+	Progress  *ProgressInfo    // Progress information for multi-step operations
+}
+
+// ProgressInfo contains information about the progress of a multi-step operation.
+type ProgressInfo struct {
+	NeedsContinuation  bool   // Whether Claude needs to continue processing
+	Status             string // Current processing status (e.g., "searching", "analyzing", "complete")
+	Message            string // Optional progress message for the user
+	EstimatedRemaining int    // Estimated number of continuations needed (0 if done)
 }
 
 // ToolCall represents a tool invocation by Claude.

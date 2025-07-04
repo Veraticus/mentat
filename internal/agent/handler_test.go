@@ -902,3 +902,626 @@ func contains(s, substr string) bool {
 	return substr != "" && len(s) >= len(substr) &&
 		(s == substr || len(s) > len(substr) && (s[:len(substr)] == substr || contains(s[1:], substr)))
 }
+
+// TestSmartInitialResponse tests the smart initial response system for Phase 56.
+func TestSmartInitialResponse(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name             string
+		request          string
+		setupLLM         func(*mockLLM)
+		expectValidation bool
+		verifyFn         func(*testing.T, *claude.LLMResponse, error)
+	}{
+		{
+			name:    "simple query completes without validation",
+			request: "What time is it?",
+			setupLLM: func(llm *mockLLM) {
+				llm.queryFunc = func(_ context.Context, _, _ string) (*claude.LLMResponse, error) {
+					return &claude.LLMResponse{
+						Message: "It's 3:00 PM.",
+						Progress: &claude.ProgressInfo{
+							NeedsContinuation:  false,
+							Status:             "complete",
+							Message:            "Simple time query answered",
+							EstimatedRemaining: 0,
+						},
+					}, nil
+				}
+			},
+			expectValidation: false,
+			verifyFn: func(t *testing.T, resp *claude.LLMResponse, err error) {
+				t.Helper()
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if resp.Message != "It's 3:00 PM." {
+					t.Errorf("expected message 'It's 3:00 PM.', got %s", resp.Message)
+				}
+			},
+		},
+		{
+			name:    "complex query with needs_continuation skips validation",
+			request: "Schedule a meeting with John next week",
+			setupLLM: func(llm *mockLLM) {
+				callCount := 0
+				llm.queryFunc = func(_ context.Context, _, _ string) (*claude.LLMResponse, error) {
+					callCount++
+					if callCount == 1 {
+						return &claude.LLMResponse{
+							Message: "I'll help you schedule that meeting...",
+							Progress: &claude.ProgressInfo{
+								NeedsContinuation:  true,
+								Status:             "searching",
+								Message:            "Looking up John's availability",
+								EstimatedRemaining: 1,
+							},
+						}, nil
+					}
+					// Continuation response
+					return &claude.LLMResponse{
+						Message: "I've scheduled the meeting with John for next Tuesday at 2 PM.",
+						Progress: &claude.ProgressInfo{
+							NeedsContinuation: false,
+							Status:            "complete",
+						},
+					}, nil
+				}
+			},
+			expectValidation: false, // Continuation flow skips validation
+			verifyFn: func(t *testing.T, resp *claude.LLMResponse, err error) {
+				t.Helper()
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if resp == nil || resp.Message != "I've scheduled the meeting with John for next Tuesday at 2 PM." {
+					t.Errorf("unexpected response: %v", resp)
+				}
+			},
+		},
+		{
+			name:    "complex query without progress info triggers validation",
+			request: "Schedule a meeting with John next week",
+			setupLLM: func(llm *mockLLM) {
+				llm.queryFunc = func(_ context.Context, _, _ string) (*claude.LLMResponse, error) {
+					return &claude.LLMResponse{
+						Message: "I'll help you schedule that meeting...",
+						// No Progress info, so validation is triggered
+					}, nil
+				}
+			},
+			expectValidation: true,
+			verifyFn: func(t *testing.T, _ *claude.LLMResponse, err error) {
+				t.Helper()
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				// Response should come from validation/retry
+			},
+		},
+		{
+			name:    "missing progress info triggers validation",
+			request: "Find emails from yesterday",
+			setupLLM: func(llm *mockLLM) {
+				llm.queryFunc = func(_ context.Context, _, _ string) (*claude.LLMResponse, error) {
+					return &claude.LLMResponse{
+						Message:  "Let me search for those emails...",
+						Progress: nil, // No progress info
+					}, nil
+				}
+			},
+			expectValidation: true,
+			verifyFn: func(t *testing.T, _ *claude.LLMResponse, err error) {
+				t.Helper()
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			},
+		},
+		{
+			name:    "chat query completes quickly",
+			request: "How are you today?",
+			setupLLM: func(llm *mockLLM) {
+				llm.queryFunc = func(_ context.Context, _, _ string) (*claude.LLMResponse, error) {
+					return &claude.LLMResponse{
+						Message: "I'm doing well, thank you for asking!",
+						Progress: &claude.ProgressInfo{
+							NeedsContinuation:  false,
+							Status:             "complete",
+							Message:            "Chat response",
+							EstimatedRemaining: 0,
+						},
+					}, nil
+				}
+			},
+			expectValidation: false,
+			verifyFn: func(t *testing.T, resp *claude.LLMResponse, err error) {
+				t.Helper()
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if resp.Message != "I'm doing well, thank you for asking!" {
+					t.Errorf("unexpected response: %s", resp.Message)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Track if validation was called
+			validationCalled := false
+
+			llm := &mockLLM{}
+			if tt.setupLLM != nil {
+				tt.setupLLM(llm)
+			}
+
+			messenger := &mockMessenger{}
+			sessionMgr := newMockSessionManager()
+			strategy := &mockValidationStrategy{
+				result: agent.ValidationResult{Status: agent.ValidationStatusSuccess},
+			}
+
+			// Wrap validation strategy to track calls
+			wrappedStrategy := &trackingValidationStrategy{
+				base:     strategy,
+				onCalled: func() { validationCalled = true },
+			}
+
+			handler, err := agent.NewHandler(llm,
+				agent.WithValidationStrategy(wrappedStrategy),
+				agent.WithMessenger(messenger),
+				agent.WithSessionManager(sessionMgr),
+			)
+			if err != nil {
+				t.Fatalf("unexpected error creating handler: %v", err)
+			}
+
+			// Test Query method
+			resp, err := handler.Query(ctx, tt.request, "test-session")
+
+			// Verify validation was called as expected
+			if tt.expectValidation && !validationCalled {
+				t.Error("expected validation to be called but it wasn't")
+			}
+			if !tt.expectValidation && validationCalled {
+				t.Error("expected validation to be skipped but it was called")
+			}
+
+			// Run custom verification
+			if tt.verifyFn != nil {
+				tt.verifyFn(t, &resp, err)
+			}
+		})
+	}
+}
+
+// TestProcessWithSmartInitialResponse tests Process method with smart initial response.
+func TestProcessWithSmartInitialResponse(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name             string
+		msg              signal.IncomingMessage
+		setupLLM         func(*mockLLM)
+		expectValidation bool
+		verifySent       func(*testing.T, *mockMessenger)
+	}{
+		{
+			name: "simple message skips validation",
+			msg: signal.IncomingMessage{
+				From: "+1234567890",
+				Text: "What's 2+2?",
+			},
+			setupLLM: func(llm *mockLLM) {
+				llm.queryFunc = func(_ context.Context, _, _ string) (*claude.LLMResponse, error) {
+					return &claude.LLMResponse{
+						Message: "2+2 equals 4.",
+						Progress: &claude.ProgressInfo{
+							NeedsContinuation:  false,
+							Status:             "complete",
+							Message:            "Math calculation complete",
+							EstimatedRemaining: 0,
+						},
+					}, nil
+				}
+			},
+			expectValidation: false,
+			verifySent: func(t *testing.T, messenger *mockMessenger) {
+				t.Helper()
+				if len(messenger.sentMessages) != 1 {
+					t.Errorf("expected 1 sent message, got %d", len(messenger.sentMessages))
+					return
+				}
+				if messenger.sentMessages[0].message != "2+2 equals 4." {
+					t.Errorf("unexpected message: %s", messenger.sentMessages[0].message)
+				}
+			},
+		},
+		{
+			name: "complex message with needs_continuation skips validation",
+			msg: signal.IncomingMessage{
+				From: "+1234567890",
+				Text: "Book a flight to New York next Friday",
+			},
+			setupLLM: func(llm *mockLLM) {
+				callCount := 0
+				llm.queryFunc = func(_ context.Context, _, _ string) (*claude.LLMResponse, error) {
+					callCount++
+					if callCount == 1 {
+						// Initial response needs continuation
+						return &claude.LLMResponse{
+							Message: "I'll help you book that flight...",
+							Progress: &claude.ProgressInfo{
+								NeedsContinuation:  true,
+								Status:             "searching",
+								Message:            "Checking flight availability",
+								EstimatedRemaining: 1,
+							},
+						}, nil
+					}
+					// Continuation response
+					return &claude.LLMResponse{
+						Message: "I found several flights to New York next Friday. Here are the options...",
+						Progress: &claude.ProgressInfo{
+							NeedsContinuation: false,
+							Status:            "complete",
+						},
+					}, nil
+				}
+			},
+			expectValidation: false, // Continuation flow doesn't trigger validation
+			verifySent: func(t *testing.T, messenger *mockMessenger) {
+				t.Helper()
+				if len(messenger.sentMessages) != 1 {
+					t.Errorf("expected 1 sent message, got %d", len(messenger.sentMessages))
+				}
+			},
+		},
+		{
+			name: "complex message without progress info triggers validation",
+			msg: signal.IncomingMessage{
+				From: "+1234567890",
+				Text: "Book a flight to New York next Friday",
+			},
+			setupLLM: func(llm *mockLLM) {
+				llm.queryFunc = func(_ context.Context, _, _ string) (*claude.LLMResponse, error) {
+					return &claude.LLMResponse{
+						Message: "I'll help you book that flight...",
+						// No Progress info, so validation is triggered
+					}, nil
+				}
+			},
+			expectValidation: true,
+			verifySent: func(t *testing.T, messenger *mockMessenger) {
+				t.Helper()
+				if len(messenger.sentMessages) != 1 {
+					t.Errorf("expected 1 sent message, got %d", len(messenger.sentMessages))
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Track if validation was called
+			validationCalled := false
+
+			llm := &mockLLM{}
+			if tt.setupLLM != nil {
+				tt.setupLLM(llm)
+			}
+
+			messenger := &mockMessenger{}
+			sessionMgr := newMockSessionManager()
+			strategy := &mockValidationStrategy{
+				result: agent.ValidationResult{Status: agent.ValidationStatusSuccess},
+			}
+
+			// Wrap validation strategy to track calls
+			wrappedStrategy := &trackingValidationStrategy{
+				base:     strategy,
+				onCalled: func() { validationCalled = true },
+			}
+
+			handler, err := agent.NewHandler(llm,
+				agent.WithValidationStrategy(wrappedStrategy),
+				agent.WithMessenger(messenger),
+				agent.WithSessionManager(sessionMgr),
+			)
+			if err != nil {
+				t.Fatalf("unexpected error creating handler: %v", err)
+			}
+
+			// Test Process method
+			err = handler.Process(ctx, tt.msg)
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+
+			// Verify validation was called as expected
+			if tt.expectValidation && !validationCalled {
+				t.Error("expected validation to be called but it wasn't")
+			}
+			if !tt.expectValidation && validationCalled {
+				t.Error("expected validation to be skipped but it was called")
+			}
+
+			// Verify sent messages
+			if tt.verifySent != nil {
+				tt.verifySent(t, messenger)
+			}
+		})
+	}
+}
+
+// trackingValidationStrategy wraps a ValidationStrategy to track when it's called.
+type trackingValidationStrategy struct {
+	base     agent.ValidationStrategy
+	onCalled func()
+}
+
+func (t *trackingValidationStrategy) Validate(
+	ctx context.Context,
+	originalRequest, response, sessionID string,
+	llm claude.LLM,
+) agent.ValidationResult {
+	if t.onCalled != nil {
+		t.onCalled()
+	}
+	return t.base.Validate(ctx, originalRequest, response, sessionID, llm)
+}
+
+func (t *trackingValidationStrategy) ShouldRetry(result agent.ValidationResult) bool {
+	return t.base.ShouldRetry(result)
+}
+
+func (t *trackingValidationStrategy) GenerateRecovery(
+	ctx context.Context,
+	originalRequest, response, sessionID string,
+	result agent.ValidationResult,
+	llm claude.LLM,
+) string {
+	return t.base.GenerateRecovery(ctx, originalRequest, response, sessionID, result, llm)
+}
+
+// TestContinueWithProgress tests the continueWithProgress method.
+func TestContinueWithProgress(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name                  string
+		initialResponse       *claude.LLMResponse
+		continuationResponses []*claude.LLMResponse
+		expectedMessage       string
+		expectedContinuations int
+		expectError           bool
+		contextTimeout        bool
+	}{
+		{
+			name: "single continuation needed",
+			initialResponse: &claude.LLMResponse{
+				Message: "Starting processing...",
+				Progress: &claude.ProgressInfo{
+					NeedsContinuation: true,
+					Status:            "searching",
+					Message:           "Searching for information",
+				},
+			},
+			continuationResponses: []*claude.LLMResponse{
+				{
+					Message: "Found the information",
+					Progress: &claude.ProgressInfo{
+						NeedsContinuation: false,
+						Status:            "complete",
+					},
+				},
+			},
+			expectedMessage:       "Found the information",
+			expectedContinuations: 1,
+		},
+		{
+			name: "multiple continuations needed",
+			initialResponse: &claude.LLMResponse{
+				Message: "Starting complex task...",
+				Progress: &claude.ProgressInfo{
+					NeedsContinuation:  true,
+					Status:             "step1",
+					EstimatedRemaining: 3,
+				},
+			},
+			continuationResponses: []*claude.LLMResponse{
+				{
+					Message: "Step 1 complete",
+					Progress: &claude.ProgressInfo{
+						NeedsContinuation:  true,
+						Status:             "step2",
+						EstimatedRemaining: 2,
+					},
+				},
+				{
+					Message: "Step 2 complete",
+					Progress: &claude.ProgressInfo{
+						NeedsContinuation:  true,
+						Status:             "step3",
+						EstimatedRemaining: 1,
+					},
+				},
+				{
+					Message: "All steps complete",
+					Progress: &claude.ProgressInfo{
+						NeedsContinuation: false,
+						Status:            "complete",
+					},
+				},
+			},
+			expectedMessage:       "All steps complete",
+			expectedContinuations: 3,
+		},
+		{
+			name: "max continuations reached",
+			initialResponse: &claude.LLMResponse{
+				Message: "Starting endless task...",
+				Progress: &claude.ProgressInfo{
+					NeedsContinuation: true,
+					Status:            "processing",
+				},
+			},
+			continuationResponses: func() []*claude.LLMResponse {
+				var responses []*claude.LLMResponse
+				for i := 1; i <= 5; i++ {
+					responses = append(responses, &claude.LLMResponse{
+						Message: fmt.Sprintf("Still processing %d", i),
+						Progress: &claude.ProgressInfo{
+							NeedsContinuation: true,
+							Status:            "processing",
+						},
+					})
+				}
+				return responses
+			}(),
+			expectedMessage:       "Still processing 5",
+			expectedContinuations: 5, // Max is 5
+		},
+		{
+			name: "no continuation needed",
+			initialResponse: &claude.LLMResponse{
+				Message: "Already complete",
+				Progress: &claude.ProgressInfo{
+					NeedsContinuation: false,
+					Status:            "complete",
+				},
+			},
+			continuationResponses: []*claude.LLMResponse{},
+			expectedMessage:       "Already complete",
+			expectedContinuations: 0,
+		},
+		{
+			name: "continuation error recovery",
+			initialResponse: &claude.LLMResponse{
+				Message: "Starting with error...",
+				Progress: &claude.ProgressInfo{
+					NeedsContinuation: true,
+					Status:            "processing",
+				},
+			},
+			continuationResponses: []*claude.LLMResponse{
+				nil, // This will cause an error
+			},
+			expectedMessage:       "Starting with error...", // Should return initial response on error
+			expectedContinuations: 1,
+		},
+		{
+			name: "context cancellation",
+			initialResponse: &claude.LLMResponse{
+				Message: "Starting context test...",
+				Progress: &claude.ProgressInfo{
+					NeedsContinuation: true,
+					Status:            "processing",
+				},
+			},
+			continuationResponses: []*claude.LLMResponse{},
+			expectedMessage:       "The request was canceled", // Error recovery will generate a cancellation message
+			contextTimeout:        true,
+			expectError:           true,
+			expectedContinuations: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Set up mock LLM
+			callCount := 0
+			mockLLM := &mockLLM{
+				queryFunc: func(_ context.Context, prompt, _ string) (*claude.LLMResponse, error) {
+					// Check if this is a continuation prompt
+					if contains(prompt, "continue") {
+						if callCount < len(tt.continuationResponses) {
+							resp := tt.continuationResponses[callCount]
+							callCount++
+							if resp == nil {
+								return nil, fmt.Errorf("mock error")
+							}
+							return resp, nil
+						}
+					}
+					return &claude.LLMResponse{
+						Message: "Unexpected call",
+					}, nil
+				},
+			}
+
+			// Create handler with the private continueWithProgress method
+			// We'll need to test through the public Process or Query methods
+			handler, err := agent.NewHandler(
+				mockLLM,
+				agent.WithMessenger(&mockMessenger{}),
+				agent.WithSessionManager(&mockSessionManager{
+					sessions: make(map[string]string),
+					history:  make(map[string][]conversation.Message),
+				}),
+				agent.WithValidationStrategy(&mockValidationStrategy{}),
+				agent.WithLogger(slog.Default()),
+			)
+			if err != nil {
+				t.Fatalf("Failed to create handler: %v", err)
+			}
+
+			// Create context
+			ctx := context.Background()
+			if tt.contextTimeout {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel() // Cancel immediately
+			}
+
+			// Test through Query method which uses continueWithProgress
+			// Set up the mock to return the initial response first
+			queryCount := 0
+			mockLLM.queryFunc = func(_ context.Context, _, _ string) (*claude.LLMResponse, error) {
+				if queryCount == 0 {
+					queryCount++
+					return tt.initialResponse, nil
+				}
+				// Subsequent calls are continuations
+				if callCount < len(tt.continuationResponses) {
+					resp := tt.continuationResponses[callCount]
+					callCount++
+					if resp == nil {
+						return nil, fmt.Errorf("mock error")
+					}
+					return resp, nil
+				}
+				return &claude.LLMResponse{
+					Message: "Unexpected call",
+				}, nil
+			}
+
+			// Call Query which will trigger continueWithProgress if needed
+			response, err := handler.Query(ctx, "Test message", "test-session")
+
+			// Verify results
+			if tt.expectError {
+				if err == nil {
+					t.Error("Expected error but got none")
+				}
+			} else {
+				if err != nil && !tt.expectError {
+					t.Errorf("Unexpected error: %v", err)
+				}
+			}
+
+			if !contains(response.Message, tt.expectedMessage) {
+				t.Errorf("Expected message to contain %q, got %q", tt.expectedMessage, response.Message)
+			}
+
+			if callCount != tt.expectedContinuations {
+				t.Errorf("Expected %d continuations, got %d", tt.expectedContinuations, callCount)
+			}
+		})
+	}
+}
