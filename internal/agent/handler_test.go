@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -926,6 +927,7 @@ func TestSmartInitialResponse(t *testing.T) {
 							Status:             "complete",
 							Message:            "Simple time query answered",
 							EstimatedRemaining: 0,
+							NeedsValidation:    false,
 						},
 					}, nil
 				}
@@ -956,6 +958,7 @@ func TestSmartInitialResponse(t *testing.T) {
 								Status:             "searching",
 								Message:            "Looking up John's availability",
 								EstimatedRemaining: 1,
+								NeedsValidation:    false,
 							},
 						}, nil
 					}
@@ -965,6 +968,7 @@ func TestSmartInitialResponse(t *testing.T) {
 						Progress: &claude.ProgressInfo{
 							NeedsContinuation: false,
 							Status:            "complete",
+							NeedsValidation:   false,
 						},
 					}, nil
 				}
@@ -1031,6 +1035,7 @@ func TestSmartInitialResponse(t *testing.T) {
 							Status:             "complete",
 							Message:            "Chat response",
 							EstimatedRemaining: 0,
+							NeedsValidation:    false,
 						},
 					}, nil
 				}
@@ -1124,6 +1129,7 @@ func TestProcessWithSmartInitialResponse(t *testing.T) {
 							Status:             "complete",
 							Message:            "Math calculation complete",
 							EstimatedRemaining: 0,
+							NeedsValidation:    false,
 						},
 					}, nil
 				}
@@ -1159,6 +1165,7 @@ func TestProcessWithSmartInitialResponse(t *testing.T) {
 								Status:             "searching",
 								Message:            "Checking flight availability",
 								EstimatedRemaining: 1,
+								NeedsValidation:    false,
 							},
 						}, nil
 					}
@@ -1168,6 +1175,7 @@ func TestProcessWithSmartInitialResponse(t *testing.T) {
 						Progress: &claude.ProgressInfo{
 							NeedsContinuation: false,
 							Status:            "complete",
+							NeedsValidation:   false,
 						},
 					}, nil
 				}
@@ -1206,8 +1214,8 @@ func TestProcessWithSmartInitialResponse(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Track if validation was called
-			validationCalled := false
+			// Track if validation was called using atomic operations
+			var validationCalled atomic.Bool
 
 			llm := &mockLLM{}
 			if tt.setupLLM != nil {
@@ -1223,7 +1231,7 @@ func TestProcessWithSmartInitialResponse(t *testing.T) {
 			// Wrap validation strategy to track calls
 			wrappedStrategy := &trackingValidationStrategy{
 				base:     strategy,
-				onCalled: func() { validationCalled = true },
+				onCalled: func() { validationCalled.Store(true) },
 			}
 
 			handler, err := agent.NewHandler(llm,
@@ -1241,11 +1249,16 @@ func TestProcessWithSmartInitialResponse(t *testing.T) {
 				t.Errorf("unexpected error: %v", err)
 			}
 
+			// For async validation, give it time to run
+			if tt.expectValidation {
+				time.Sleep(100 * time.Millisecond)
+			}
+
 			// Verify validation was called as expected
-			if tt.expectValidation && !validationCalled {
+			if tt.expectValidation && !validationCalled.Load() {
 				t.Error("expected validation to be called but it wasn't")
 			}
-			if !tt.expectValidation && validationCalled {
+			if !tt.expectValidation && validationCalled.Load() {
 				t.Error("expected validation to be skipped but it was called")
 			}
 
@@ -1308,6 +1321,7 @@ func TestContinueWithProgress(t *testing.T) {
 					NeedsContinuation: true,
 					Status:            "searching",
 					Message:           "Searching for information",
+					NeedsValidation:   false,
 				},
 			},
 			continuationResponses: []*claude.LLMResponse{
@@ -1316,6 +1330,7 @@ func TestContinueWithProgress(t *testing.T) {
 					Progress: &claude.ProgressInfo{
 						NeedsContinuation: false,
 						Status:            "complete",
+						NeedsValidation:   false,
 					},
 				},
 			},
@@ -1330,6 +1345,7 @@ func TestContinueWithProgress(t *testing.T) {
 					NeedsContinuation:  true,
 					Status:             "step1",
 					EstimatedRemaining: 3,
+					NeedsValidation:    false,
 				},
 			},
 			continuationResponses: []*claude.LLMResponse{
@@ -1339,6 +1355,7 @@ func TestContinueWithProgress(t *testing.T) {
 						NeedsContinuation:  true,
 						Status:             "step2",
 						EstimatedRemaining: 2,
+						NeedsValidation:    false,
 					},
 				},
 				{
@@ -1347,6 +1364,7 @@ func TestContinueWithProgress(t *testing.T) {
 						NeedsContinuation:  true,
 						Status:             "step3",
 						EstimatedRemaining: 1,
+						NeedsValidation:    false,
 					},
 				},
 				{
@@ -1354,6 +1372,7 @@ func TestContinueWithProgress(t *testing.T) {
 					Progress: &claude.ProgressInfo{
 						NeedsContinuation: false,
 						Status:            "complete",
+						NeedsValidation:   false,
 					},
 				},
 			},
@@ -1367,6 +1386,7 @@ func TestContinueWithProgress(t *testing.T) {
 				Progress: &claude.ProgressInfo{
 					NeedsContinuation: true,
 					Status:            "processing",
+					NeedsValidation:   false,
 				},
 			},
 			continuationResponses: func() []*claude.LLMResponse {
@@ -1392,6 +1412,7 @@ func TestContinueWithProgress(t *testing.T) {
 				Progress: &claude.ProgressInfo{
 					NeedsContinuation: false,
 					Status:            "complete",
+					NeedsValidation:   false,
 				},
 			},
 			continuationResponses: []*claude.LLMResponse{},
@@ -1405,6 +1426,7 @@ func TestContinueWithProgress(t *testing.T) {
 				Progress: &claude.ProgressInfo{
 					NeedsContinuation: true,
 					Status:            "processing",
+					NeedsValidation:   false,
 				},
 			},
 			continuationResponses: []*claude.LLMResponse{
@@ -1420,6 +1442,7 @@ func TestContinueWithProgress(t *testing.T) {
 				Progress: &claude.ProgressInfo{
 					NeedsContinuation: true,
 					Status:            "processing",
+					NeedsValidation:   false,
 				},
 			},
 			continuationResponses: []*claude.LLMResponse{},

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/Veraticus/mentat/internal/claude"
 	"github.com/Veraticus/mentat/internal/conversation"
@@ -23,6 +24,13 @@ const (
 
 	// ComplexityThresholdHigh is the threshold for high complexity requests.
 	ComplexityThresholdHigh = 0.7
+
+	// Validation reason constants for logging.
+	validationReasonSimpleQuery       = "simple_query"
+	validationReasonComplexQuery      = "complex_query"
+	validationReasonNeedsValidation   = "needs_validation_flag_true"
+	validationReasonProgressNil       = "progress_nil_defaulting_to_validation"
+	validationReasonProgressNilLaunch = "progress_nil_requires_validation"
 )
 
 // handler implements the Handler interface for processing messages.
@@ -33,6 +41,7 @@ type handler struct {
 	messenger          signal.Messenger
 	sessionManager     conversation.SessionManager
 	complexityAnalyzer ComplexityAnalyzer
+	asyncValidator     *AsyncValidator
 	config             Config
 	logger             *slog.Logger
 }
@@ -74,6 +83,11 @@ func NewHandler(llm claude.LLM, opts ...HandlerOption) (Handler, error) {
 	}
 	if h.sessionManager == nil {
 		return nil, fmt.Errorf("handler creation failed: session manager is required")
+	}
+
+	// Create async validator if we have the required dependencies
+	if h.validationStrategy != nil && h.messenger != nil {
+		h.asyncValidator = NewAsyncValidator(h.messenger, h.validationStrategy, h.logger)
 	}
 
 	return h, nil
@@ -208,28 +222,59 @@ func (h *handler) Process(ctx context.Context, msg signal.IncomingMessage) error
 			}
 			finalResponse = continuationResponse
 
-		case initialResponse.Progress != nil && !initialResponse.Progress.NeedsContinuation:
+		case initialResponse.Progress != nil && !initialResponse.Progress.NeedsValidation:
 			// Simple query completed without validation
-			h.logger.InfoContext(ctx, "simple query completed without validation",
+			h.logger.InfoContext(ctx, "validation decision: skipping validation for simple query",
 				slog.String("session_id", sessionID),
+				slog.String("validation_reason", validationReasonSimpleQuery),
+				slog.Bool("progress_nil", false),
+				slog.Bool("needs_validation_flag", initialResponse.Progress.NeedsValidation),
+				slog.String("query_complexity", "simple"),
 				slog.String("status", initialResponse.Progress.Status),
 				slog.String("from", msg.From))
 			finalResponse = initialResponse
 
 		default:
-			// For complex queries or when progress info is missing, proceed with validation
-			h.logger.DebugContext(ctx, "proceeding with validation for complex query",
+			// For complex queries or when progress info is missing, we'll validate asynchronously
+			validationReason, needsValidation, progressNil := h.determineValidationDecision(initialResponse.Progress)
+			if validationReason == validationReasonSimpleQuery {
+				validationReason = validationReasonComplexQuery // Override for default case
+			}
+
+			h.logger.InfoContext(ctx, "validation decision: will validate asynchronously",
 				slog.String("session_id", sessionID),
+				slog.String("validation_reason", validationReason),
+				slog.Bool("progress_nil", progressNil),
+				slog.Bool("needs_validation_flag", needsValidation),
+				slog.String("query_complexity", "complex"),
 				slog.String("from", msg.From))
-			finalResponse = h.validateAndRetry(ctx, msg.Text, initialResponse, sessionID)
+			finalResponse = initialResponse
 		}
 
-		// Send the response back via messenger
+		// Send the response back via messenger immediately
 		if sendErr := h.messenger.Send(ctx, msg.From, finalResponse.Message); sendErr != nil {
 			h.logger.ErrorContext(ctx, "failed to send response",
 				slog.Any("error", sendErr),
 				slog.String("to", msg.From))
 			return fmt.Errorf("processing message from %s: failed to send response: %w", msg.From, sendErr)
+		}
+
+		// Launch async validation if needed
+		if finalResponse.Progress == nil || finalResponse.Progress.NeedsValidation {
+			launchReason := validationReasonNeedsValidation
+			if finalResponse.Progress == nil {
+				launchReason = validationReasonProgressNilLaunch
+			}
+			h.logger.InfoContext(ctx, "launching async validation",
+				slog.String("session_id", sessionID),
+				slog.String("launch_reason", launchReason),
+				slog.Bool("progress_nil", finalResponse.Progress == nil),
+				slog.String("from", msg.From))
+
+			// Use AsyncValidator to handle background validation
+			// Not passing request context intentionally - validation should continue independently
+			//nolint:contextcheck // Validation needs independent context to avoid cancellation
+			h.asyncValidator.StartValidation(msg.From, msg.Text, finalResponse, sessionID)
 		}
 
 		h.logger.InfoContext(ctx, "successfully processed message",
@@ -284,20 +329,35 @@ func (h *handler) Query(ctx context.Context, request string, sessionID string) (
 		}
 		finalResponse = continuationResponse
 
-	case initialResponse.Progress != nil && !initialResponse.Progress.NeedsContinuation:
+	case initialResponse.Progress != nil && !initialResponse.Progress.NeedsValidation:
 		// Simple query completed without validation
-		h.logger.InfoContext(ctx, "simple query completed without validation",
+		h.logger.InfoContext(ctx, "validation decision: skipping validation for simple query",
 			slog.String("session_id", sessionID),
+			slog.String("validation_reason", validationReasonSimpleQuery),
+			slog.Bool("progress_nil", false),
+			slog.Bool("needs_validation_flag", initialResponse.Progress.NeedsValidation),
+			slog.String("query_complexity", "simple"),
 			slog.String("status", initialResponse.Progress.Status))
 		return *initialResponse, nil
 
 	default:
-		// For complex queries or when progress info is missing, proceed with validation
-		h.logger.DebugContext(ctx, "proceeding with validation for complex query",
-			slog.String("session_id", sessionID))
+		// For complex queries or when progress info is missing, return initial response
+		// and schedule async validation if needed
+		validationReason, needsValidation, progressNil := h.determineValidationDecision(initialResponse.Progress)
+		if validationReason == validationReasonSimpleQuery {
+			validationReason = validationReasonComplexQuery // Override for default case
+		}
 
-		// Perform validation with retry logic
-		finalResponse = h.validateAndRetry(ctx, request, initialResponse, sessionID)
+		h.logger.InfoContext(ctx, "validation decision: returning response immediately",
+			slog.String("session_id", sessionID),
+			slog.String("validation_reason", validationReason),
+			slog.Bool("progress_nil", progressNil),
+			slog.Bool("needs_validation_flag", needsValidation),
+			slog.String("query_complexity", "complex"))
+
+		// Return the initial response immediately
+		// Note: Validation should be handled by the caller if needed
+		finalResponse = initialResponse
 	}
 
 	h.logger.InfoContext(ctx, "successfully processed query",
@@ -322,17 +382,23 @@ func (h *handler) getInitialResponse(
 		return nil, fmt.Errorf("LLM query failed: %w", err)
 	}
 
-	h.logger.DebugContext(ctx, "received initial LLM response",
+	// Log the full response for debugging
+	h.logger.InfoContext(ctx, "received initial LLM response",
 		slog.String("session_id", sessionID),
+		slog.String("message", response.Message),
 		slog.Int("response_length", len(response.Message)),
-		slog.Bool("has_progress", response.Progress != nil))
+		slog.Bool("has_progress", response.Progress != nil),
+		slog.String("model", response.Metadata.ModelVersion),
+		slog.Duration("latency", response.Metadata.Latency),
+		slog.Int("tokens_used", response.Metadata.TokensUsed))
 
 	// Log progress information if available
 	if response.Progress != nil {
-		h.logger.DebugContext(ctx, "progress information",
+		h.logger.InfoContext(ctx, "progress information",
+			slog.String("session_id", sessionID),
 			slog.Bool("needs_continuation", response.Progress.NeedsContinuation),
 			slog.String("status", response.Progress.Status),
-			slog.String("message", response.Progress.Message),
+			slog.String("progress_message", response.Progress.Message),
 			slog.Int("estimated_remaining", response.Progress.EstimatedRemaining))
 	}
 
@@ -399,14 +465,23 @@ func (h *handler) continueWithProgress(
 		// Update conversation history
 		conversationHistory = append(conversationHistory, fmt.Sprintf("Assistant: %s", nextResponse.Message))
 
+		// Log full continuation response
+		h.logger.InfoContext(ctx, "received continuation response",
+			slog.String("session_id", sessionID),
+			slog.Int("continuation", continuationCount),
+			slog.String("message", nextResponse.Message),
+			slog.Int("response_length", len(nextResponse.Message)),
+			slog.Bool("has_progress", nextResponse.Progress != nil))
+
 		// Log progress if available
 		if nextResponse.Progress != nil {
-			h.logger.InfoContext(ctx, "Continuation progress",
+			h.logger.InfoContext(ctx, "continuation progress",
 				slog.String("session_id", sessionID),
 				slog.Int("continuation", continuationCount),
 				slog.Bool("needs_continuation", nextResponse.Progress.NeedsContinuation),
 				slog.String("status", nextResponse.Progress.Status),
-			)
+				slog.String("progress_message", nextResponse.Progress.Message),
+				slog.Int("estimated_remaining", nextResponse.Progress.EstimatedRemaining))
 		}
 
 		currentResponse = nextResponse
@@ -478,141 +553,6 @@ func (h *handler) prepareRequest(ctx context.Context, originalText string, sessi
 		slog.Any("factors", complexityResult.Factors))
 
 	return guidedRequest
-}
-
-// validateAndRetry performs validation with retry logic.
-func (h *handler) validateAndRetry(
-	ctx context.Context,
-	originalRequest string,
-	initialResponse *claude.LLMResponse,
-	sessionID string,
-) *claude.LLMResponse {
-	finalResponse := initialResponse
-	retryCount := 0
-
-	for {
-		// Validate the response
-		validationResult := h.validationStrategy.Validate(ctx, originalRequest, finalResponse.Message, sessionID, h.llm)
-		h.logger.DebugContext(ctx, "validation result",
-			slog.String("status", string(validationResult.Status)),
-			slog.Float64("confidence", validationResult.Confidence),
-			slog.Any("issues", validationResult.Issues))
-
-		// Check if we should retry
-		if !h.validationStrategy.ShouldRetry(validationResult) || retryCount >= h.config.MaxRetries {
-			// Handle terminal states
-			if h.shouldGenerateRecovery(validationResult, retryCount) {
-				recoveryMsg := h.validationStrategy.GenerateRecovery(
-					ctx, originalRequest, finalResponse.Message, sessionID, validationResult, h.llm)
-				if recoveryMsg != "" {
-					finalResponse.Message = recoveryMsg
-				}
-			}
-			break
-		}
-
-		// Perform retry
-		retryResponse, ok := h.performRetry(
-			ctx,
-			originalRequest,
-			finalResponse.Message,
-			validationResult,
-			sessionID,
-			retryCount,
-		)
-		if !ok {
-			break
-		}
-
-		finalResponse = retryResponse
-		retryCount++
-	}
-
-	return finalResponse
-}
-
-// shouldGenerateRecovery determines if a recovery message should be generated.
-func (h *handler) shouldGenerateRecovery(result ValidationResult, retryCount int) bool {
-	return result.Status == ValidationStatusFailed ||
-		result.Status == ValidationStatusPartial ||
-		(result.Status == ValidationStatusIncompleteSearch && retryCount >= h.config.MaxRetries)
-}
-
-// performRetry attempts to retry with a guided prompt.
-func (h *handler) performRetry(
-	ctx context.Context,
-	originalRequest, currentResponse string,
-	validationResult ValidationResult,
-	sessionID string,
-	retryCount int,
-) (*claude.LLMResponse, bool) {
-	h.logger.InfoContext(ctx, "retrying with guided prompt",
-		slog.Int("retry_count", retryCount+1),
-		slog.String("reason", string(validationResult.Status)))
-
-	guidedPrompt := h.createGuidedPrompt(originalRequest, currentResponse, validationResult)
-	retryResponse, err := h.llm.Query(ctx, guidedPrompt, sessionID)
-	if err != nil {
-		h.logger.ErrorContext(ctx, "retry query failed",
-			slog.Any("error", err),
-			slog.Int("retry_count", retryCount+1))
-		return nil, false
-	}
-
-	h.logger.DebugContext(ctx, "received retry response",
-		slog.Int("response_length", len(retryResponse.Message)))
-
-	return retryResponse, true
-}
-
-// createGuidedPrompt creates a prompt that guides Claude to use the appropriate tools
-// based on the validation result.
-func (h *handler) createGuidedPrompt(originalRequest, _ string, validationResult ValidationResult) string {
-	// Extract expected tools from metadata
-	expectedTools := ""
-	if tools, ok := validationResult.Metadata["expected_tools"]; ok {
-		expectedTools = tools
-	}
-
-	// Build a guided prompt that hints at tool usage without being prescriptive
-	var promptBuilder strings.Builder
-	promptBuilder.WriteString("The user asked: ")
-	promptBuilder.WriteString(originalRequest)
-	promptBuilder.WriteString("\n\n")
-
-	if validationResult.Status == ValidationStatusIncompleteSearch && expectedTools != "" {
-		promptBuilder.WriteString("Please help the user with their request. ")
-		h.addToolHints(&promptBuilder, expectedTools)
-		promptBuilder.WriteString("\n\nBe thorough in gathering all relevant information to provide a complete answer.")
-	} else {
-		// Generic retry prompt for other validation failures
-		promptBuilder.WriteString("Your previous response may not have fully addressed the request. ")
-		if len(validationResult.Issues) > 0 {
-			promptBuilder.WriteString("Issues identified: ")
-			promptBuilder.WriteString(strings.Join(validationResult.Issues, ", "))
-			promptBuilder.WriteString(". ")
-		}
-		promptBuilder.WriteString("\n\nPlease provide a more complete response.")
-	}
-
-	return promptBuilder.String()
-}
-
-// addToolHints adds hints based on expected tools to avoid nested complexity.
-func (h *handler) addToolHints(promptBuilder *strings.Builder, expectedTools string) {
-	// Add hints based on expected tools
-	if strings.Contains(expectedTools, "memory") {
-		promptBuilder.WriteString("Consider checking if there's any relevant context from previous conversations. ")
-	}
-	if strings.Contains(expectedTools, "calendar") {
-		promptBuilder.WriteString("The user may be asking about scheduled events or appointments. ")
-	}
-	if strings.Contains(expectedTools, "email") {
-		promptBuilder.WriteString("This might involve checking for relevant correspondence. ")
-	}
-	if strings.Contains(expectedTools, "tasks") {
-		promptBuilder.WriteString("The user may be asking about pending tasks or todos. ")
-	}
 }
 
 // addComplexityGuidance adds gentle guidance based on detected complexity factors.
@@ -696,3 +636,31 @@ func (h *handler) analyzeComplexityFactors(factors []ComplexityFactor) complexit
 
 	return flags
 }
+
+// determineValidationDecision analyzes the progress info and returns validation decision details.
+func (h *handler) determineValidationDecision(
+	progress *claude.ProgressInfo,
+) (string, bool, bool) {
+	if progress == nil {
+		return validationReasonProgressNil, true, true
+	}
+
+	progressNil := false
+	needsValidation := progress.NeedsValidation
+
+	var reason string
+	if needsValidation {
+		reason = validationReasonNeedsValidation
+	} else {
+		reason = validationReasonSimpleQuery
+	}
+
+	return reason, needsValidation, progressNil
+}
+
+const (
+	// validationTimeout is the maximum time allowed for validation.
+	validationTimeout = 30 * time.Second
+	// correctionDelay is the delay before sending a correction message.
+	correctionDelay = 2 * time.Second
+)

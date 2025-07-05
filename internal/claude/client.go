@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Veraticus/mentat/internal/command"
@@ -33,8 +34,10 @@ func (r *realCommandRunner) RunCommandContext(ctx context.Context, name string, 
 
 // Client implements the LLM interface for Claude CLI.
 type Client struct {
-	config    Config
-	cmdRunner commandRunner
+	config     Config
+	cmdRunner  commandRunner
+	sessionMap map[string]string // Map from Mentat session ID to Claude session ID
+	mu         sync.RWMutex      // Protect concurrent access to sessionMap
 }
 
 // jsonResponse is the JSON structure returned by Claude CLI.
@@ -48,6 +51,7 @@ type jsonResponse struct {
 	Usage     jsonUsage            `json:"usage,omitempty"`          // Usage stats
 	TotalCost float64              `json:"total_cost_usd,omitempty"` // Cost in USD
 	Progress  *jsonProgressInfo    `json:"progress,omitempty"`       // Progress information
+	SessionID string               `json:"session_id,omitempty"`     // Claude's session ID
 }
 
 // jsonToolCall is the JSON structure for tool calls.
@@ -82,6 +86,7 @@ type jsonProgressInfo struct {
 	Status             string `json:"status"`
 	Message            string `json:"message"`
 	EstimatedRemaining int    `json:"estimated_remaining"`
+	NeedsValidation    bool   `json:"needs_validation"`
 }
 
 // NewClient creates a new Claude CLI client.
@@ -97,8 +102,9 @@ func NewClient(config Config) (*Client, error) {
 	}
 
 	return &Client{
-		config:    config,
-		cmdRunner: &realCommandRunner{},
+		config:     config,
+		cmdRunner:  &realCommandRunner{},
+		sessionMap: make(map[string]string),
 	}, nil
 }
 
@@ -114,7 +120,7 @@ func (c *Client) Query(ctx context.Context, prompt string, sessionID string) (*L
 	defer cancel()
 
 	// Build command arguments
-	args := buildCommandArgs(c.config, prompt)
+	args := c.buildCommandArgs(prompt, sessionID)
 
 	// Execute the command
 	output, err := c.cmdRunner.RunCommandContext(queryCtx, c.config.Command, args...)
@@ -123,7 +129,19 @@ func (c *Client) Query(ctx context.Context, prompt string, sessionID string) (*L
 	}
 
 	// Parse and convert response
-	return parseAndConvertResponse(output, prompt)
+	response, err := parseAndConvertResponse(output, prompt)
+	if err != nil {
+		return nil, err
+	}
+
+	// Store Claude's session ID for future calls
+	if response.SessionID != "" {
+		c.mu.Lock()
+		c.sessionMap[sessionID] = response.SessionID
+		c.mu.Unlock()
+	}
+
+	return response, nil
 }
 
 func validateQueryInputs(prompt, sessionID string) error {
@@ -144,18 +162,27 @@ func prepareQueryContext(ctx context.Context, timeout time.Duration) (context.Co
 	return ctx, func() {}
 }
 
-func buildCommandArgs(config Config, prompt string) []string {
+func (c *Client) buildCommandArgs(prompt string, mentatSessionID string) []string {
 	args := []string{
 		"--print", // Non-interactive mode
 		"--output-format", "json",
 		"--model", "sonnet",
 	}
 
-	if config.MCPConfigPath != "" {
-		args = append(args, "--mcp-config", config.MCPConfigPath)
+	// Use Claude's session ID if we have one from a previous response
+	c.mu.RLock()
+	claudeSessionID, exists := c.sessionMap[mentatSessionID]
+	c.mu.RUnlock()
+
+	if exists && claudeSessionID != "" {
+		args = append(args, "--resume", claudeSessionID)
 	}
 
-	finalPrompt := prepareFinalPrompt(config.SystemPrompt, prompt)
+	if c.config.MCPConfigPath != "" {
+		args = append(args, "--mcp-config", c.config.MCPConfigPath)
+	}
+
+	finalPrompt := prepareFinalPrompt(c.config.SystemPrompt, prompt)
 	args = append(args, finalPrompt)
 
 	return args
@@ -243,6 +270,7 @@ func parseAndConvertResponse(output, prompt string) (*LLMResponse, error) {
 }
 
 func buildLLMResponse(jsonResp *jsonResponse) *LLMResponse {
+	// Extract message (this will also parse nested JSON and update jsonResp.Progress)
 	message := extractMessage(jsonResp)
 	totalTokens := calculateTotalTokens(jsonResp)
 
@@ -253,6 +281,7 @@ func buildLLMResponse(jsonResp *jsonResponse) *LLMResponse {
 			Latency:      time.Duration(jsonResp.Metadata.LatencyMs) * time.Millisecond,
 			TokensUsed:   totalTokens,
 		},
+		SessionID: jsonResp.SessionID, // Include Claude's session ID
 	}
 
 	// Convert tool calls
@@ -265,6 +294,7 @@ func buildLLMResponse(jsonResp *jsonResponse) *LLMResponse {
 			Status:             jsonResp.Progress.Status,
 			Message:            jsonResp.Progress.Message,
 			EstimatedRemaining: jsonResp.Progress.EstimatedRemaining,
+			NeedsValidation:    jsonResp.Progress.NeedsValidation,
 		}
 	}
 
@@ -276,6 +306,30 @@ func extractMessage(jsonResp *jsonResponse) string {
 	if message == "" && jsonResp.Result != "" {
 		message = strings.TrimSpace(jsonResp.Result)
 	}
+
+	// Check if the message contains our JSON structure wrapped in markdown
+	if strings.HasPrefix(message, "```json") && strings.HasSuffix(message, "```") {
+		// Extract and parse the inner JSON
+		jsonStart := strings.Index(message, "\n") + 1
+		jsonEnd := strings.LastIndex(message, "\n```")
+		if jsonStart > 0 && jsonEnd > jsonStart {
+			innerJSON := message[jsonStart:jsonEnd]
+
+			var innerResp struct {
+				Message  string            `json:"message"`
+				Progress *jsonProgressInfo `json:"progress,omitempty"`
+			}
+
+			err := json.Unmarshal([]byte(innerJSON), &innerResp)
+			if err == nil {
+				// Update the outer response with inner data
+				jsonResp.Message = innerResp.Message
+				jsonResp.Progress = innerResp.Progress
+				return innerResp.Message
+			}
+		}
+	}
+
 	return message
 }
 

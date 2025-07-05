@@ -13,8 +13,14 @@ func parseResponse(output string) (*jsonResponse, error) {
 	output = strings.TrimSpace(output)
 
 	// First try to parse as JSON
-	if resp, err := tryParseJSON(output); err == nil {
+	resp, jsonErr := tryParseJSON(output)
+	if jsonErr == nil {
 		return resp, nil
+	}
+
+	// If it looks like JSON but failed to parse, return the error
+	if strings.HasPrefix(output, "{") {
+		return nil, fmt.Errorf("failed to parse JSON response: %w", jsonErr)
 	}
 
 	// If JSON parsing fails, try to extract error message
@@ -23,8 +29,8 @@ func parseResponse(output string) (*jsonResponse, error) {
 	}
 
 	// If we have non-empty output that's not JSON, treat it as plain text
-	if resp := tryParsePlainText(output); resp != nil {
-		return resp, nil
+	if plainResp := tryParsePlainText(output); plainResp != nil {
+		return plainResp, nil
 	}
 
 	// If we get here, we have empty or unusable output
@@ -33,15 +39,42 @@ func parseResponse(output string) (*jsonResponse, error) {
 
 // tryParseJSON attempts to parse the output as JSON.
 func tryParseJSON(output string) (*jsonResponse, error) {
+	// Check if the JSON is wrapped in markdown code blocks
+	if strings.HasPrefix(output, "```json") && strings.HasSuffix(output, "```") {
+		// Extract JSON from markdown code block
+		jsonStart := strings.Index(output, "\n") + 1
+		jsonEnd := strings.LastIndex(output, "\n```")
+		if jsonStart > 0 && jsonEnd > jsonStart {
+			output = output[jsonStart:jsonEnd]
+		}
+	} else if strings.HasPrefix(output, "```") && strings.HasSuffix(output, "```") {
+		// Handle case without json language tag
+		jsonStart := strings.Index(output, "\n") + 1
+		jsonEnd := strings.LastIndex(output, "\n```")
+		if jsonStart > 0 && jsonEnd > jsonStart {
+			output = output[jsonStart:jsonEnd]
+		}
+	}
+
 	var jsonResp jsonResponse
 	if err := json.Unmarshal([]byte(output), &jsonResp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal JSON response: %w", err)
 	}
 
-	// Check for message in either Message or Result field (Claude Code uses Result)
-	if jsonResp.Message == "" && jsonResp.Result == "" {
-		return nil, fmt.Errorf("parse failed: claude response missing message/result field")
+	// Check if the message field itself contains JSON (nested JSON from Claude)
+	if jsonResp.Message != "" && strings.HasPrefix(strings.TrimSpace(jsonResp.Message), "{") {
+		// Try to parse the message as our expected JSON format
+		var innerResp struct {
+			Message  string            `json:"message"`
+			Progress *jsonProgressInfo `json:"progress,omitempty"`
+		}
+		if err := json.Unmarshal([]byte(jsonResp.Message), &innerResp); err == nil {
+			// Successfully parsed inner JSON - use it
+			jsonResp.Message = innerResp.Message
+			jsonResp.Progress = innerResp.Progress
+		}
 	}
+
 	return &jsonResp, nil
 }
 

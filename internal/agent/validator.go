@@ -132,45 +132,22 @@ func (v *MultiAgentValidator) GenerateRecovery(
 	result ValidationResult,
 	llm claude.LLM,
 ) string {
-	// For partial success, acknowledge what worked
-	if result.Status == ValidationStatusPartial {
-		prompt := fmt.Sprintf(
-			`Generate a brief, natural message acknowledging partial completion of this request.
-Request: %s
-What was completed: %s
-Issues preventing full completion: %s
+	// If we have an LLM available, use it to generate a natural message
+	if llm != nil {
+		// Generate the appropriate prompt based on the validation result
+		prompt := GenerateCorrectionPrompt(result, request, response)
 
-Create a clear, conversational response that:
-1. Acknowledges what was successfully completed
-2. Explains what couldn't be done and why (be specific but user-friendly)
-3. Maintains a helpful tone without being apologetic
-4. Keeps the message concise (2-3 sentences max)`,
-			request,
-			response,
-			strings.Join(result.Issues, ", "),
-		)
-
-		llmResponse, err := llm.Query(ctx, prompt, sessionID)
-		if err != nil {
-			return "I was able to help with part of your request, but encountered some limitations."
+		// Only try LLM generation if we have a meaningful prompt
+		if prompt != "" {
+			llmResponse, err := llm.Query(ctx, prompt, sessionID)
+			if err == nil && llmResponse.Message != "" {
+				return llmResponse.Message
+			}
 		}
-		return llmResponse.Message
 	}
 
-	// For failures, explain the issue naturally
-	if result.Status == ValidationStatusFailed {
-		issueList := "technical difficulties"
-		if len(result.Issues) > 0 {
-			issueList = strings.Join(result.Issues, " and ")
-		}
-		return fmt.Sprintf(
-			"I encountered %s with your request. Let me know if you'd like me to try a different approach.",
-			issueList,
-		)
-	}
-
-	// Default message
-	return "I'm having trouble with that request. Could you rephrase it or break it down into smaller steps?"
+	// Fall back to the static correction message if LLM is not available or fails
+	return GenerateCorrectionMessage(result)
 }
 
 // parseValidationResponse extracts structured data from Claude's validation response.
@@ -480,18 +457,7 @@ func (v *SimpleValidator) GenerateRecovery(
 	result ValidationResult,
 	_ claude.LLM,
 ) string {
-	switch result.Status {
-	case ValidationStatusFailed:
-		return "I encountered an issue with that request. Please try again or rephrase your question."
-	case ValidationStatusPartial:
-		return "I was able to partially complete your request. Let me know if you need anything else."
-	case ValidationStatusUnclear:
-		return "I'm not certain I fully addressed your request. Could you clarify what you need?"
-	case ValidationStatusSuccess, ValidationStatusIncompleteSearch:
-		return ""
-	}
-	// This should never be reached as all cases are handled
-	return ""
+	return GenerateCorrectionMessage(result)
 }
 
 // NoopValidator is a pass-through validator that always returns success.

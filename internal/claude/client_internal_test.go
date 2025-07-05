@@ -82,6 +82,7 @@ func TestParseProgressInfo(t *testing.T) {
 				Status:             "searching",
 				Message:            "Searching email archive",
 				EstimatedRemaining: 2,
+				NeedsValidation:    false,
 			},
 			wantMessage: "I'm searching through your emails for that information...",
 		},
@@ -105,6 +106,7 @@ func TestParseProgressInfo(t *testing.T) {
 				Status:             "complete",
 				Message:            "Search completed",
 				EstimatedRemaining: 0,
+				NeedsValidation:    false,
 			},
 			wantMessage: "I found the information you requested.",
 		},
@@ -264,7 +266,7 @@ func TestProgressInfoErrorCases(t *testing.T) {
 		{
 			name:         "completely invalid JSON",
 			jsonResponse: `{invalid json`,
-			wantErr:      false, // Falls back to plain text parsing, so no error
+			wantErr:      true, // Now returns error for malformed JSON starting with {
 		},
 		{
 			name: "empty response with progress",
@@ -380,5 +382,142 @@ func TestProgressInfoIntegration(t *testing.T) {
 			t.Errorf("Step %d: EstimatedRemaining = %d, want %d",
 				i+1, response.Progress.EstimatedRemaining, expectedRemaining)
 		}
+	}
+}
+
+// TestStructuredJSONProgressResponse tests parsing of structured JSON responses with progress.
+func TestStructuredJSONProgressResponse(t *testing.T) {
+	tests := []struct {
+		name         string
+		jsonResponse string
+		wantMessage  string
+		wantProgress *ProgressInfo
+	}{
+		{
+			name: "message with native progress JSON",
+			jsonResponse: `{
+				"message": "I'm checking your calendar for tomorrow.\n\nYou have 3 meetings scheduled.",
+				"progress": {
+					"needs_continuation": false,
+					"status": "complete",
+					"message": "Calendar check completed",
+					"estimated_remaining": 0
+				},
+				"metadata": {
+					"model": "claude-3.5-sonnet",
+					"latency_ms": 1500
+				}
+			}`,
+			wantMessage: "I'm checking your calendar for tomorrow.\n\nYou have 3 meetings scheduled.",
+			wantProgress: &ProgressInfo{
+				NeedsContinuation:  false,
+				Status:             "complete",
+				Message:            "Calendar check completed",
+				EstimatedRemaining: 0,
+				NeedsValidation:    false,
+			},
+		},
+		{
+			name: "result field with progress JSON",
+			jsonResponse: `{
+				"result": "Searching through your emails...\n\nFound 15 relevant messages so far.",
+				"progress": {
+					"needs_continuation": true,
+					"status": "searching",
+					"message": "Still scanning folders",
+					"estimated_remaining": 2
+				},
+				"type": "text",
+				"is_error": false
+			}`,
+			wantMessage: "Searching through your emails...\n\nFound 15 relevant messages so far.",
+			wantProgress: &ProgressInfo{
+				NeedsContinuation:  true,
+				Status:             "searching",
+				Message:            "Still scanning folders",
+				EstimatedRemaining: 2,
+				NeedsValidation:    false,
+			},
+		},
+		{
+			name: "response with progress in metadata",
+			jsonResponse: `{
+				"message": "Processing request.",
+				"progress": {
+					"needs_continuation": true,
+					"status": "processing",
+					"message": "Working on your request",
+					"estimated_remaining": 1
+				},
+				"metadata": {
+					"model": "claude-3.5-sonnet",
+					"latency_ms": 1000
+				}
+			}`,
+			wantMessage: "Processing request.",
+			wantProgress: &ProgressInfo{
+				NeedsContinuation:  true,
+				Status:             "processing",
+				Message:            "Working on your request",
+				EstimatedRemaining: 1,
+				NeedsValidation:    false,
+			},
+		},
+		{
+			name: "message without embedded progress",
+			jsonResponse: `{
+				"message": "The weather today is sunny with a high of 75°F.",
+				"metadata": {
+					"model": "claude-3.5-sonnet",
+					"latency_ms": 800
+				}
+			}`,
+			wantMessage:  "The weather today is sunny with a high of 75°F.",
+			wantProgress: nil,
+		},
+		{
+			name: "response with null progress",
+			jsonResponse: `{
+				"message": "Simple response without progress tracking.",
+				"progress": null,
+				"metadata": {
+					"model": "claude-3.5-sonnet",
+					"latency_ms": 900
+				}
+			}`,
+			wantMessage:  "Simple response without progress tracking.",
+			wantProgress: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client, err := NewClient(Config{
+				Command:       "claude",
+				MCPConfigPath: "/test/mcp.json",
+				Timeout:       30 * time.Second,
+			})
+			if err != nil {
+				t.Fatalf("failed to create client: %v", err)
+			}
+
+			mockRunner := &mockCommandRunner{
+				response: tt.jsonResponse,
+			}
+			client.SetCommandRunner(mockRunner)
+
+			response, err := client.Query(context.Background(), "test prompt", "test-session")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			// Check cleaned message
+			if response.Message != tt.wantMessage {
+				t.Errorf("Message = %q, want %q", response.Message, tt.wantMessage)
+			}
+
+			// Check progress
+			checkProgressInfo(t, response.Progress, tt.wantProgress)
+		})
 	}
 }

@@ -10,9 +10,10 @@ A thin Go orchestration layer that transforms Claude Code into a reliable person
 - **Multi-agent reliability**: Use Claude to validate Claude, eliminating hallucinated successes
 - **Resilient under load**: Queue-based architecture with rate limiting prevents overload
 - **Conversation-first**: All user-facing messages generated naturally by Claude
-- **Trust through verification**: Every complex action verified through secondary Claude calls
+- **Trust through verification**: Complex actions verified asynchronously after user response
 - **Interface-driven**: All external dependencies behind interfaces for testability
 - **Local-first privacy**: Everything runs on your infrastructure
+- **Optimistic responses**: Send first, validate second - users get immediate feedback
 
 ## System Architecture
 
@@ -72,11 +73,11 @@ type LLM interface {
 }
 
 type LLMResponse struct {
-    Message   string
-    ToolCalls []ToolCall  // For future tool call visibility
-    Metadata  ResponseMetadata
+    Message   string            `json:"message"`
+    ToolCalls []ToolCall       `json:"tool_calls,omitempty"` // For future tool call visibility
+    Metadata  ResponseMetadata `json:"metadata"`
     // Structured response for progress tracking
-    Progress  *ProgressInfo `json:"progress,omitempty"`
+    Progress  *ProgressInfo    `json:"progress,omitempty"`
 }
 
 // ProgressInfo provides structured progress tracking
@@ -92,6 +93,14 @@ type ProgressInfo struct {
     // Does the LLM need clarification from user?
     NeedsClarification bool   `json:"needs_clarification,omitempty"`
     ClarificationPrompt string `json:"clarification_prompt,omitempty"`
+    // Does this response need validation? (tool usage, complex operations)
+    NeedsValidation bool `json:"needs_validation"`
+    // Current status in natural language
+    Status string `json:"status"`
+    // Optional message for the user
+    Message string `json:"message,omitempty"`
+    // Estimated remaining continuations (0 if done)
+    EstimatedRemaining int `json:"estimated_remaining"`
 }
 
 type ResponseMetadata struct {
@@ -114,6 +123,7 @@ func (c *ClaudeCLI) Query(ctx context.Context, prompt string, sessionID string) 
         "--mcp-config", c.mcpConfig,
         "--session", sessionID,
         "--system-prompt", c.systemPrompt,
+        "--format", "json", // Request JSON format from Claude
     )
     
     output, err := cmd.Output()
@@ -121,12 +131,21 @@ func (c *ClaudeCLI) Query(ctx context.Context, prompt string, sessionID string) 
         return nil, fmt.Errorf("claude query failed: %w", err)
     }
     
-    return &LLMResponse{
-        Message: string(output),
-        Metadata: ResponseMetadata{
-            Latency: time.Since(start),
-        },
-    }, nil
+    // Parse JSON response from Claude
+    var response LLMResponse
+    if err := json.Unmarshal(output, &response); err != nil {
+        // Fallback for plain text responses
+        return &LLMResponse{
+            Message: string(output),
+            Metadata: ResponseMetadata{
+                Latency: time.Since(start),
+            },
+        }, nil
+    }
+    
+    // Update metadata
+    response.Metadata.Latency = time.Since(start)
+    return &response, nil
 }
 ```
 
@@ -673,11 +692,14 @@ func (h *ProgressiveAgentHandler) Process(ctx context.Context, msg IncomingMessa
         return h.progress.ReportError(ctx, msg.From, err, msg.Text)
     }
     
-    // Send initial response while validation happens
+    // Send initial response immediately
     h.messenger.Send(ctx, msg.From, execution.Message)
     
-    // Async validation with corrections
-    go h.validateAndCorrect(ctx, msg, execution)
+    // Only validate if Claude indicates it's necessary
+    if execution.Progress != nil && execution.Progress.NeedsValidation {
+        // Async validation with corrections
+        go h.validateAndCorrect(ctx, msg, execution, sessionID)
+    }
     
     return nil
 }
@@ -1570,9 +1592,9 @@ func (h *AgentHandler) Process(ctx context.Context, msg IncomingMessage) error {
         - If you encounter issues, explain them naturally
         - Be transparent about partial successes
         
-        IMPORTANT: Include a JSON object at the end of your response with this structure:
-        ```json
+        IMPORTANT: Your response will be in JSON format with this structure:
         {
+            "message": "Your natural language response to the user",
             "progress": {
                 "needs_continuation": boolean,
                 "continuation_reason": "why you need to continue (if applicable)",
@@ -1582,7 +1604,6 @@ func (h *AgentHandler) Process(ctx context.Context, msg IncomingMessage) error {
                 "clarification_prompt": "what to ask the user (if clarification needed)"
             }
         }
-        ```
         
         Set needs_continuation to true ONLY if:
         - You need to call more tools to complete the request
@@ -1640,9 +1661,9 @@ func (h *AgentHandler) getInitialResponse(ctx context.Context, msg IncomingMessa
         provide the complete answer. For complex requests that need tools,
         acknowledge and indicate you'll need to look things up.
         
-        IMPORTANT: Include the progress JSON at the end of your response:
-        ```json
+        IMPORTANT: Your response will be in JSON format with this structure:
         {
+            "message": "Your natural language response to the user",
             "progress": {
                 "needs_continuation": boolean,
                 "continuation_reason": "why you need to continue (if applicable)",
@@ -1652,7 +1673,6 @@ func (h *AgentHandler) getInitialResponse(ctx context.Context, msg IncomingMessa
                 "clarification_prompt": "what to ask the user (if clarification needed)"
             }
         }
-        ```
         
         Set needs_continuation to false if:
         - This is a simple question you can answer without tools
@@ -1679,62 +1699,163 @@ func (h *AgentHandler) getInitialResponse(ctx context.Context, msg IncomingMessa
     return resp, nil
 }
 
-func (h *AgentHandler) validateInBackground(
+func (h *AgentHandler) validateAndCorrect(
     ctx context.Context, 
     msg IncomingMessage, 
     execution *LLMResponse,
     sessionID string,
 ) {
-    // Report validation stage
-    if h.progress != nil {
-        h.progress.Report(ctx, msg.From, StageValidating, "response accuracy")
-    }
+    // Give the user time to read the response before validation
+    time.Sleep(2 * time.Second)
     
-    // Run parallel validation
-    orchestrator := &ParallelValidationOrchestrator{
-        strategies: []ValidationStrategy{
-            &MultiAgentValidator{},      // Thoroughness check
-            &ToolUsageValidator{},       // Verify tools were used
-            &ResponseCompleteValidator{}, // Check completeness
-        },
-        timeout: 5 * time.Second,
-    }
+    // Create a background context that won't be cancelled by the main request
+    bgCtx := context.Background()
     
-    validation := orchestrator.ValidateParallel(ctx, msg.Text, execution.Message, h.llm)
+    // Run validation asynchronously
+    validation := h.validator.Validate(bgCtx, msg.Text, execution.Message, sessionID, h.llm)
     
-    // Handle validation results
+    // Only send follow-up if validation found issues
     switch validation.Status {
     case SUCCESS:
-        // Nothing to do - original response was good
+        // Original response was correct, no action needed
         return
         
     case INCOMPLETE_SEARCH:
-        // Send follow-up with additional information
-        if h.progress != nil {
-            h.progress.Report(ctx, msg.From, StageRetrying, "more information")
-        }
+        // Claude didn't use all relevant tools
+        followUp := fmt.Sprintf(
+            "Oops! I just realized I didn't check all available information sources. "+
+            "Let me look at %s to give you a more complete answer...",
+            validation.Metadata["missing_tools"])
         
-        thoroughRetry, err := h.llm.Query(ctx, fmt.Sprintf(`
-            The request was: "%s"
+        h.messenger.Send(bgCtx, msg.From, followUp)
+        
+        // Get additional information
+        thoroughRetry, err := h.llm.Query(bgCtx, fmt.Sprintf(`
+            The user asked: "%s"
             
-            You may have missed some information sources.
-            What additional tools could provide more complete information?
-            Please check those tools and provide a comprehensive answer.
-        `, msg.Text), sessionID)
+            You provided an initial response but missed checking: %s
+            Please use those tools now and provide the additional information found.
+            Start your response with what new information you discovered.
+        `, msg.Text, validation.Metadata["missing_tools"]), sessionID)
         
         if err == nil {
-            h.messenger.Send(ctx, msg.From, fmt.Sprintf(
-                "I found some additional information:\n\n%s", 
-                thoroughRetry.Message))
+            h.messenger.Send(bgCtx, msg.From, thoroughRetry.Message)
         }
         
-    case PARTIAL, FAILED, UNCLEAR:
-        // Send correction/clarification
-        recovery := h.validator.GenerateRecovery(ctx, msg.Text, execution.Message, validation, h.llm)
-        h.messenger.Send(ctx, msg.From, fmt.Sprintf(
-            "Let me clarify that:\n\n%s", recovery))
+    case PARTIAL, FAILED:
+        // Response had errors or was incomplete
+        h.messenger.Send(bgCtx, msg.From, 
+            "Wait, I need to correct something about my previous response...")
+        
+        // Generate natural correction
+        recovery := h.validator.GenerateRecovery(bgCtx, msg.Text, execution.Message, validation, h.llm)
+        if recovery != "" {
+            h.messenger.Send(bgCtx, msg.From, recovery)
+        }
     }
 }
+```
+
+## Async Validation Architecture
+
+### Validation Decision Flow
+
+The system uses Claude's self-awareness to determine when validation is necessary:
+
+```go
+// Claude indicates validation need in progress JSON
+{
+  "progress": {
+    "needs_continuation": false,
+    "status": "complete",
+    "needs_validation": true,  // Set when tools were used or complex operations performed
+    "message": "Created calendar event and sent invitation"
+  }
+}
+```
+
+### When Validation is Needed
+
+Claude sets `needs_validation: true` for:
+- **Tool usage**: Any MCP tool invocation (calendar, email, memory, etc.)
+- **Multi-step operations**: Complex requests requiring multiple actions
+- **Scheduling operations**: Creating/modifying calendar events
+- **Data modifications**: Adding memories, creating tasks, sending emails
+- **Uncertain completions**: When Claude isn't confident about success
+
+Claude sets `needs_validation: false` for:
+- **Simple greetings**: "Hi, what's your name?"
+- **Information queries**: "What can you help me with?"
+- **Chat conversations**: General discussion without tool usage
+- **Status checks**: "How are you doing?"
+- **Clarification requests**: Asking for more information
+
+### Async Validation Workflow
+
+```go
+func (h *AgentHandler) Process(ctx context.Context, msg IncomingMessage) error {
+    // 1. Execute request and get initial response
+    response, err := h.llm.Query(ctx, msg.Text, sessionID)
+    if err != nil {
+        return h.handleError(ctx, msg, err)
+    }
+    
+    // 2. Send response immediately to user
+    h.messenger.Send(ctx, msg.From, response.Message)
+    
+    // 4. Check if validation is needed
+    if response.Progress != nil && response.Progress.NeedsValidation {
+        // Launch async validation - doesn't block user response
+        go h.validateAndCorrect(ctx, msg, response, sessionID)
+    }
+    
+    return nil
+}
+```
+
+### JSON Response Format
+
+Claude returns a properly structured JSON response:
+
+```go
+// Example Claude response:
+{
+    "message": "I found your calendar and you have 3 meetings today. Let me get the details...",
+    "progress": {
+        "needs_continuation": true,
+        "continuation_reason": "Need to fetch meeting details",
+        "next_action": "Query calendar for specific event information",
+        "intent_satisfied": false,
+        "needs_clarification": false
+    },
+    "tool_calls": [
+        {
+            "tool": "google-calendar",
+            "action": "list_events",
+            "timestamp": "2024-01-15T10:30:00Z"
+        }
+    ]
+}
+```
+
+This approach eliminates the need for parsing embedded JSON from the message text.
+
+### Validation Correction Messages
+
+When validation detects issues, natural follow-up messages are sent:
+
+```yaml
+incomplete_search:
+  template: "Oops! I just realized I didn't check {missing_tool}. Let me look at that for you..."
+  action: query_with_specific_tool
+  
+partial_success:
+  template: "Wait, I need to correct something about my previous response..."
+  action: send_correction
+  
+tool_failure:
+  template: "I noticed {tool} didn't respond properly. Here's what I found instead..."
+  action: alternative_approach
 ```
 
 ## Testing Architecture
@@ -1776,30 +1897,13 @@ func (s *ScriptedLLM) Query(ctx context.Context, prompt string, sessionID string
         }
     }
     
-    // Parse progress info from response if present
-    if resp.Response != nil && strings.Contains(resp.Response.Message, `"progress":`) {
-        // Extract and parse the JSON progress block
-        resp.Response.Progress = s.extractProgress(resp.Response.Message)
-    }
+    // Progress info is already parsed from JSON response
+    // No need to extract from message text
     
     return resp.Response, resp.Error
 }
 
-func (s *ScriptedLLM) extractProgress(message string) *ProgressInfo {
-    // Simple extraction for testing - real implementation would be more robust
-    start := strings.Index(message, `"progress":`) 
-    if start == -1 {
-        return nil
-    }
-    
-    // Find the matching closing brace
-    // ... parsing logic ...
-    
-    return &ProgressInfo{
-        NeedsContinuation: false,
-        IntentSatisfied: true,
-    }
-}
+// extractProgress is no longer needed as progress info comes in structured JSON
 ```
 
 ### 2. Conversation Test Harness
@@ -2609,6 +2713,12 @@ scripts/
 22. **Intent-aware completion**: System understands when user intent is satisfied, tool access has failed, or clarification is needed, terminating processing appropriately
 
 23. **Smart initial response**: First LLM call determines if continuation is needed, enabling 2-3 second completion for simple queries while maintaining full capability for complex requests
+
+24. **Self-aware validation needs**: Claude indicates in progress JSON whether validation is required, eliminating unnecessary validation for simple queries like greetings
+
+25. **Async validation corrections**: Validation runs after user receives response, with natural follow-up messages ("Oops! I just realized...") only when issues are detected
+
+26. **Structured JSON responses**: Claude returns properly formatted JSON responses with separate message and progress fields, eliminating the need for parsing embedded JSON
 
 ## Future Enhancements
 

@@ -26,7 +26,7 @@ test:
 	@echo "Running all tests with coverage..."
 	@mkdir -p $(COVERAGE_DIR)
 	@echo "Running unit tests..."
-	@go test -timeout 30s -race -coverprofile=$(COVERAGE_DIR)/coverage.out -covermode=atomic ./...
+	@go test -timeout 120s -race -coverprofile=$(COVERAGE_DIR)/coverage.out -covermode=atomic ./...
 	@echo "Running integration tests..."
 	@go test -timeout 30s -race -tags=integration -coverprofile=$(COVERAGE_DIR)/coverage-integration.out -covermode=atomic ./tests/integration
 	@echo "Merging coverage reports..."

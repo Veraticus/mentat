@@ -348,7 +348,7 @@ func TestMultiAgentValidator_GenerateRecovery(t *testing.T) {
 				Issues: []string{"some issue"},
 			},
 			llmError:         fmt.Errorf("LLM failed"),
-			expectedContains: "part of your request",
+			expectedContains: "Oops! I was only able to partially complete that",
 		},
 		{
 			name:     "failed validation recovery",
@@ -368,7 +368,7 @@ func TestMultiAgentValidator_GenerateRecovery(t *testing.T) {
 				Status: agent.ValidationStatusFailed,
 				Issues: []string{},
 			},
-			expectedContains: "technical difficulties",
+			expectedContains: "Oops! Something went wrong",
 		},
 		{
 			name:     "unclear validation recovery",
@@ -377,7 +377,7 @@ func TestMultiAgentValidator_GenerateRecovery(t *testing.T) {
 			result: agent.ValidationResult{
 				Status: agent.ValidationStatusUnclear,
 			},
-			expectedContains: "having trouble",
+			expectedContains: "Hmm, I'm not quite sure I understood",
 		},
 	}
 
@@ -517,17 +517,17 @@ func TestSimpleValidator_GenerateRecovery(t *testing.T) {
 		{
 			name:            "failed recovery",
 			result:          agent.ValidationResult{Status: agent.ValidationStatusFailed},
-			expectedMessage: "I encountered an issue with that request. Please try again or rephrase your question.",
+			expectedMessage: "Oops! Something went wrong, but I'm not sure exactly what. Could you try rephrasing your request?",
 		},
 		{
 			name:            "partial recovery",
 			result:          agent.ValidationResult{Status: agent.ValidationStatusPartial},
-			expectedMessage: "I was able to partially complete your request. Let me know if you need anything else.",
+			expectedMessage: "Oops! I was only able to partially complete that. Some parts of your request couldn't be completed.",
 		},
 		{
 			name:            "unclear recovery",
 			result:          agent.ValidationResult{Status: agent.ValidationStatusUnclear},
-			expectedMessage: "I'm not certain I fully addressed your request. Could you clarify what you need?",
+			expectedMessage: "Hmm, I'm not quite sure I understood what you need. Could you tell me more about what you're looking for?",
 		},
 		{
 			name:            "success no recovery",
@@ -636,8 +636,8 @@ func TestMultiAgentValidator_GenerateRecovery_PartialSuccess(t *testing.T) {
 			},
 			llmError: fmt.Errorf("LLM timeout"),
 			expectedContains: []string{
-				"part of your request",
-				"limitations",
+				"Oops! I was only able to partially complete that",
+				"weather API timeout",
 			},
 		},
 		{

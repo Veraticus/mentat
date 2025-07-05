@@ -17,14 +17,16 @@ type LLMResponse struct {
 	Message   string           // Text response from Claude
 	Metadata  ResponseMetadata // Response metadata
 	Progress  *ProgressInfo    // Progress information for multi-step operations
+	SessionID string           // Claude's session ID for conversation continuity
 }
 
 // ProgressInfo contains information about the progress of a multi-step operation.
 type ProgressInfo struct {
-	NeedsContinuation  bool   // Whether Claude needs to continue processing
-	Status             string // Current processing status (e.g., "searching", "analyzing", "complete")
-	Message            string // Optional progress message for the user
-	EstimatedRemaining int    // Estimated number of continuations needed (0 if done)
+	NeedsContinuation  bool   `json:"needs_continuation"`  // Whether Claude needs to continue processing
+	Status             string `json:"status"`              // Current processing status (e.g., "searching", "analyzing", "complete")
+	Message            string `json:"message,omitempty"`   // Optional progress message for the user
+	EstimatedRemaining int    `json:"estimated_remaining"` // Estimated number of continuations needed (0 if done)
+	NeedsValidation    bool   `json:"needs_validation"`    // Whether the response should be validated
 }
 
 // ToolCall represents a tool invocation by Claude.

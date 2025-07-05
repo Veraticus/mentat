@@ -257,8 +257,8 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
 
 - [X] Add advanced Process method features - Phase 36
   - Test: Happy path processes successfully
-  - Features: Session management, error handling
-  - Acceptance: Returns clear errors
+  - Features: Session management, error handling, async validation support
+  - Acceptance: Returns clear errors, validates asynchronously when needed
   - Go idiom: Handle errors explicitly
 
 ### Multi-Agent Validation Framework
@@ -361,8 +361,8 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
 ### Full Agent Flow
 - [X] Wire agent components together - Phase 51
   - Test: Full flow from request to response
-  - Features: Enhancement → Execution → Validation
-  - Acceptance: Each step adds value
+  - Features: Enhancement → Execution → Optional Async Validation
+  - Acceptance: Each step adds value, validation doesn't block response
   - Go idiom: Compose behaviors
 
 - [X] Add comprehensive error handling - Phase 52
@@ -407,79 +407,168 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Acceptance: Complex tasks complete without timeout
   - Go idiom: Bounded iteration with context
 
-- [X] Update system prompt for progress JSON - Phase 58
-  - Test: LLM reliably includes progress info
+- [ ] Update system prompt for JSON response format - Phase 58
+  - Test: Claude returns structured JSON responses
   - Location: `internal/config/system-prompt.md`
-  - Features: Clear examples of when to continue/stop
-  - Acceptance: 95%+ responses include valid progress
+  - Features: Instruct Claude to use JSON response format with message and progress fields
+  - Acceptance: 100% of responses are valid JSON with separate message/progress
   - Go idiom: Documentation as code
 
-### Parallel Validation Implementation  
-- [ ] Define parallel validation orchestrator - Phase 59
-  - Test: Returns most conservative result
-  - Location: `internal/agent/validator_parallel.go`
-  - Features: Concurrent strategy execution, timeout handling
-  - Acceptance: Validation completes in <5 seconds
-  - Go idiom: Use channels for result collection
+### JSON Response Implementation
+- [ ] Remove JSON extraction logic - Phase 59
+  - Test: No embedded JSON parsing needed
+  - Location: `internal/claude/parser.go`
+  - Features: Remove extractProgressJSON function and related code
+  - Acceptance: Parser only handles direct JSON response from Claude
+  - Go idiom: Simplify by removing unnecessary code
 
-- [ ] Implement validation strategies - Phase 60
-  - Test: Each strategy has distinct behavior
-  - Location: `internal/agent/strategies.go`
-  - Strategies: ToolUsageValidator, ResponseCompleteValidator
-  - Acceptance: Strategies are independent and focused
-  - Go idiom: Strategy pattern implementation
+- [ ] Update parser for structured JSON - Phase 60
+  - Test: Parser correctly handles new JSON response format
+  - Location: `internal/claude/parser.go`
+  - Features: Parse JSON with message and progress as separate fields
+  - Acceptance: Progress info directly accessible from response
+  - Go idiom: Use standard library JSON unmarshaling
 
-- [ ] Add conditional validation flow - Phase 61
-  - Test: Only complex operations get validated
+- [X] Add JSON response format tests - Phase 61
+  - Test: Various JSON response formats handled correctly
+  - Location: `internal/claude/parser_test.go`
+  - Scenarios: Valid JSON, missing fields, extra fields, malformed JSON
+  - Acceptance: Robust JSON parsing with clear error messages
+  - Go idiom: Table-driven tests
+
+### Async Validation Implementation
+- [X] Update validation to use progress fields - Phase 62
+  - Test: Validation checks progress.needs_validation field
   - Location: `internal/agent/handler.go`
-  - Features: Skip validation for simple queries
-  - Acceptance: Validation only when needed
-  - Go idiom: Avoid unnecessary work
+  - Features: Use structured progress data instead of parsing
+  - Acceptance: Clean validation decision based on JSON field
+  - Go idiom: Use structured data over string parsing
+
+- [X] Implement async validation launcher - Phase 63
+  - Test: Validation runs without blocking response
+  - Location: `internal/agent/handler.go`
+  - Features: Check needs_validation, launch goroutine
+  - Acceptance: User gets response before validation
+  - Go idiom: Goroutines for async work
+
+- [X] Create background validation context - Phase 64
+  - Test: Validation continues after main request
+  - Location: `internal/agent/validator_async.go`
+  - Features: Independent context, proper cleanup
+  - Acceptance: No goroutine leaks
+  - Go idiom: Context for lifecycle management
+
+- [X] Implement natural correction messages - Phase 65
+  - Test: Follow-ups feel conversational
+  - Location: `internal/agent/corrections.go`
+  - Features: Templates for different validation results
+  - Acceptance: Messages start with "Oops!" or similar
+  - Go idiom: Keep messages in constants
+
+### Selective Validation Logic
+- [X] Skip validation for simple queries - Phase 66
+  - Test: Greetings bypass validation entirely
+  - Location: `internal/agent/handler.go`
+  - Features: Check needs_validation before validating
+  - Acceptance: "Hi" completes in <3 seconds
+  - Go idiom: Early returns for fast paths
+
+- [X] Add validation decision logging - Phase 67
+  - Test: Can trace why validation ran/skipped
+  - Location: `internal/agent/handler.go`
+  - Features: Log validation decisions with reasons
+  - Acceptance: Clear audit trail
+  - Go idiom: Structured logging
+
+### Follow-up Message Handling
+- [ ] Implement validation result handler - Phase 68
+  - Test: Appropriate follow-ups for each result
+  - Location: `internal/agent/followup.go`
+  - Features: Send corrections based on validation status
+  - Acceptance: Natural conversation flow
+  - Go idiom: Switch for exhaustive handling
+
+- [ ] Add delay before validation messages - Phase 69
+  - Test: User has time to read initial response
+  - Location: `internal/agent/validator_async.go`
+  - Features: 2-second delay before corrections
+  - Acceptance: Messages don't feel rushed
+  - Go idiom: time.Sleep in goroutines only
+
+- [ ] Handle validation timeouts gracefully - Phase 70
+  - Test: System continues if validation hangs
+  - Location: `internal/agent/validator_async.go`
+  - Features: Context timeout, skip corrections
+  - Acceptance: No user-visible delays
+  - Go idiom: Always use timeouts
+
+### Integration Testing for JSON Response
+- [ ] Test JSON response parsing - Phase 71
+  - Test: All JSON response formats handled correctly
+  - Location: `tests/integration/json_response_test.go`
+  - Scenarios: Valid responses, missing fields, extra fields, errors
+  - Acceptance: Robust handling of all Claude response variations
+  - Go idiom: Test the unhappy paths
+
+- [ ] Test async validation flow - Phase 72
+  - Test: Validation doesn't block responses
+  - Location: `tests/integration/async_validation_test.go`
+  - Scenarios: Simple queries, tool usage, failures
+  - Acceptance: Response times meet targets
+  - Go idiom: Use channels to verify async behavior
+
+- [ ] Test follow-up message timing - Phase 73
+  - Test: Corrections arrive after appropriate delay
+  - Location: `tests/integration/followup_timing_test.go`
+  - Scenarios: Quick corrections, slow validation
+  - Acceptance: Natural conversation pacing
+  - Go idiom: time.After for timing assertions
+
+### Parallel Validation Implementation
+- [ ] Move validation strategies to async - Phase 74
+  - Test: Strategies work with new async flow
+  - Location: `internal/agent/validator_parallel.go`
+  - Features: Adapt existing strategies
+  - Acceptance: Same validation quality
+  - Go idiom: Preserve interfaces
+
+- [ ] Optimize validation performance - Phase 75
+  - Test: Validation completes quickly
+  - Location: `internal/agent/validator.go`
+  - Features: Cache validation results
+  - Acceptance: <3s validation time
+  - Go idiom: Measure before optimizing
 
 ### Error Recovery Enhancement
-- [ ] Implement immediate error reporting - Phase 62
+- [ ] Implement immediate error reporting - Phase 76
   - Test: MCP errors trigger natural explanations
   - Location: `internal/agent/error_handler.go`
   - Features: Error classification, Claude-generated messages
   - Acceptance: No raw errors shown to users
   - Go idiom: Wrap errors with context
 
-- [ ] Add progressive error recovery - Phase 63
+- [ ] Add progressive error recovery - Phase 77
   - Test: Errors reported as they occur
   - Features: Connection/permission/timeout detection
   - Acceptance: User understands what went wrong
   - Go idiom: Error type assertions
 
-### Integration Testing
-- [ ] Test progressive response flow - Phase 64
-  - Test: All stages report progress correctly
-  - Location: `tests/integration/progressive_test.go`
-  - Scenarios: Fast success, slow MCP, failures
-  - Acceptance: Progress visible at each stage
-  - Go idiom: Time-based assertions
-
-- [ ] Test parallel validation scenarios - Phase 65
-  - Test: Strategies run concurrently
-  - Location: `tests/integration/parallel_validation_test.go`
-  - Scenarios: Mixed results, timeouts, all-fail
-  - Acceptance: Correct result aggregation
-  - Go idiom: Race condition testing
-
-- [ ] Build end-to-end latency tests - Phase 66
+### End-to-End Testing
+- [ ] Build end-to-end latency tests - Phase 78
   - Test: Initial ack in 3s, response in 8s
   - Location: `tests/integration/latency_test.go`
   - Metrics: Time to ack, time to response, time to validation
   - Acceptance: P95 latency meets targets
   - Go idiom: Benchmark tests
 
-- [ ] Test continuation flow - Phase 67
+- [ ] Test continuation flow - Phase 79
   - Test: Multi-step requests complete correctly
   - Location: `tests/integration/continuation_test.go`
   - Scenarios: 0, 1, 5 continuations needed
   - Acceptance: All steps execute with progress updates
   - Go idiom: State machine testing
 
-- [ ] Test smart initial response - Phase 68
+- [ ] Test smart initial response - Phase 80
   - Test: Simple queries complete without continuation
   - Location: `tests/integration/quick_response_test.go`
   - Scenarios: Chat queries, simple questions, clarifications
@@ -487,14 +576,14 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Go idiom: Timeout-based assertions
 
 ### Agent Testing Scenarios
-- [ ] Build complex test scenarios - Phase 69
+- [ ] Build complex test scenarios - Phase 81
   - Test: Multi-turn conversations work
   - Location: `tests/scenarios/complex_requests.go`
   - Scenarios: Scheduling, partial failures
   - Acceptance: Scenarios are reusable
   - Go idiom: Data-driven test cases
 
-- [ ] Add failure mode testing - Phase 70
+- [ ] Add failure mode testing - Phase 82
   - Test: System handles all failure types
   - Location: `tests/scenarios/failure_modes.go`
   - Modes: Timeout, invalid response, tool errors
@@ -502,42 +591,42 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Go idiom: Test the unhappy path
 
 ### MCP Configuration Integration
-- [ ] Create MCP config generator - Phase 71
+- [ ] Create MCP config generator - Phase 83
   - Test: Config matches Claude's format
   - Location: `internal/config/generator.go`
   - Features: All 5 MCP servers configured
   - Acceptance: Claude accepts config
   - Go idiom: Generate, don't template
 
-- [ ] Add config validation - Phase 72
+- [ ] Add config validation - Phase 84
   - Test: Invalid configs fail fast
   - Features: URL validation, server checks
   - Acceptance: Clear error messages
   - Go idiom: Validate at boundaries
 
 ### MCP Health Checking
-- [ ] Implement MCP server health checks - Phase 73
+- [ ] Implement MCP server health checks - Phase 85
   - Test: Detects when servers are down
   - Location: `internal/mcp/health.go`
   - Features: HTTP health endpoints
   - Acceptance: Quick detection (<5s)
   - Go idiom: Use context with timeout
 
-- [ ] Add startup verification - Phase 74
+- [ ] Add startup verification - Phase 86
   - Test: Won't start without MCP servers
   - Features: Retry logic, clear errors
   - Acceptance: Helpful error messages
   - Go idiom: Fail fast and loud
 
 ### Intelligence Layer Integration Testing
-- [ ] Create end-to-end test scenarios - Phase 75
+- [ ] Create end-to-end test scenarios - Phase 87
   - Test: Real Claude integration works
   - Location: `tests/integration/e2e_test.go`
   - Tag: `// +build integration`
   - Acceptance: Tests can run locally
   - Go idiom: Skip if Claude unavailable
 
-- [ ] Add load testing - Phase 76
+- [ ] Add load testing - Phase 88
   - Test: System handles 50 concurrent users
   - Location: `tests/integration/load_test.go`
   - Features: Queue overflow, rate limiting
@@ -547,28 +636,28 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
 ## Production Layer
 
 ### Scheduler Framework
-- [ ] Implement cron scheduler - Phase 77
+- [ ] Implement cron scheduler - Phase 89
   - Test: Jobs run at specified times
   - Location: `internal/scheduler/scheduler.go`
   - Features: Cron syntax, timezone support
   - Acceptance: Accurate to the minute
   - Go idiom: Use well-tested libraries
 
-- [ ] Add job registration system - Phase 78
+- [ ] Add job registration system - Phase 90
   - Test: Jobs can be added/removed
   - Features: Dynamic scheduling
   - Acceptance: No duplicate runs
   - Go idiom: Make scheduling declarative
 
 ### Proactive Jobs
-- [ ] Implement morning briefing job - Phase 79
+- [ ] Implement morning briefing job - Phase 91
   - Test: Generates useful briefing
   - Location: `internal/scheduler/jobs/briefing.go`
   - Features: Calendar, weather, tasks
   - Acceptance: Runs at 7am daily
   - Go idiom: Keep jobs independent
 
-- [ ] Add reminder job framework - Phase 80
+- [ ] Add reminder job framework - Phase 92
   - Test: Reminders are contextual
   - Location: `internal/scheduler/jobs/reminders.go`
   - Features: Smart timing, relevance
@@ -576,42 +665,42 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Go idiom: User control over frequency
 
 ### Main Application
-- [ ] Wire full production main.go - Phase 81
+- [ ] Wire full production main.go - Phase 93
   - Test: Application starts cleanly
   - Location: `cmd/mentat/main.go`
   - Features: Flag parsing, config loading
   - Acceptance: --help is helpful
   - Go idiom: Keep main small
 
-- [ ] Add graceful shutdown - Phase 82
+- [ ] Add graceful shutdown - Phase 94
   - Test: Ctrl+C stops cleanly
   - Features: Drain queues, close connections
   - Acceptance: No message loss
   - Go idiom: Use signal handling
 
 ### Configuration Management
-- [ ] Implement config loading - Phase 83
+- [ ] Implement config loading - Phase 95
   - Test: Validates all required fields
   - Location: `internal/config/config.go`
   - Features: YAML parsing, env override
   - Acceptance: Clear errors for bad config
   - Go idiom: Explicit over implicit
 
-- [ ] Add configuration hot reload - Phase 84
+- [ ] Add configuration hot reload - Phase 96
   - Test: Changes apply without restart
   - Features: File watching, validation
   - Acceptance: Bad changes are rejected
   - Go idiom: Make it optional
 
 ### Observability
-- [ ] Add structured logging - Phase 85
+- [ ] Add structured logging - Phase 97
   - Test: Logs are parseable
   - Location: `internal/logging/logger.go`
   - Features: Context fields, levels
   - Acceptance: Can trace requests
   - Go idiom: Log actionable information
 
-- [ ] Implement metrics collection - Phase 86
+- [ ] Implement metrics collection - Phase 98
   - Test: Metrics are accurate
   - Location: `internal/metrics/collector.go`
   - Metrics: Queue depth, latency, success rate
@@ -619,14 +708,14 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Go idiom: Use standard metrics
 
 ### Monitoring Endpoints
-- [ ] Add health check endpoint - Phase 87
+- [ ] Add health check endpoint - Phase 99
   - Test: Returns 200 when healthy
   - Location: `internal/api/health.go`
   - Features: Dependency checks
   - Acceptance: Useful for monitoring
   - Go idiom: Be specific about health
 
-- [ ] Add metrics endpoint - Phase 88
+- [ ] Add metrics endpoint - Phase 100
   - Test: Exposes Prometheus metrics
   - Location: `internal/api/metrics.go`
   - Features: All key metrics exposed
@@ -634,14 +723,14 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Go idiom: Follow Prometheus conventions
 
 ### Deployment Preparation
-- [ ] Create systemd service file - Phase 89
+- [ ] Create systemd service file - Phase 101
   - Test: Service starts on boot
   - Location: `scripts/mentat.service`
   - Features: Restart policy, logging
   - Acceptance: Survives reboot
   - Go idiom: Log to stdout/stderr
 
-- [ ] Add Docker/Podman support - Phase 90
+- [ ] Add Docker/Podman support - Phase 102
   - Test: Container runs correctly
   - Location: `Dockerfile`
   - Features: Multi-stage build
@@ -649,28 +738,28 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Go idiom: FROM scratch when possible
 
 ### Security Hardening
-- [ ] Add authentication for Signal numbers - Phase 91
+- [ ] Add authentication for Signal numbers - Phase 103
   - Test: Only allowed numbers work
   - Location: `internal/auth/validator.go`
   - Features: Whitelist checking
   - Acceptance: Clear rejection messages
   - Go idiom: Fail secure
 
-- [ ] Implement secrets management - Phase 92
+- [ ] Implement secrets management - Phase 104
   - Test: No secrets in logs/config
   - Features: File-based secrets
   - Acceptance: Secrets are protected
   - Go idiom: Never log secrets
 
 ### NixOS Module
-- [ ] Create NixOS module - Phase 93
+- [ ] Create NixOS module - Phase 105
   - Test: Module evaluates correctly
   - Location: `nix/module.nix`
   - Features: Service configuration
   - Acceptance: nixos-rebuild works
   - Go idiom: Declarative configuration
 
-- [ ] Add flake with all dependencies - Phase 94
+- [ ] Add flake with all dependencies - Phase 106
   - Test: nix build succeeds
   - Location: `flake.nix`
   - Features: Reproducible builds
@@ -678,27 +767,27 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Go idiom: Pin all dependencies
 
 ### MCP Container Setup
-- [ ] Configure MCP containers in Nix - Phase 95
+- [ ] Configure MCP containers in Nix - Phase 107
   - Test: All containers start
   - Features: Health checks, restart policies
   - Acceptance: Survives host reboot
   - Go idiom: One container per service
 
-- [ ] Add secrets mounting - Phase 96
+- [ ] Add secrets mounting - Phase 108
   - Test: Containers can read secrets
   - Features: Read-only mounts
   - Acceptance: Secure permissions
   - Go idiom: Principle of least privilege
 
 ### Documentation
-- [ ] Write operations guide - Phase 97
+- [ ] Write operations guide - Phase 109
   - Test: Can follow to deploy
   - Location: `docs/operations.md`
   - Sections: Install, configure, monitor
   - Acceptance: New user can deploy
   - Go idiom: Show, don't just tell
 
-- [ ] Create troubleshooting guide - Phase 98
+- [ ] Create troubleshooting guide - Phase 110
   - Test: Covers common issues
   - Location: `docs/troubleshooting.md`
   - Issues: Queue full, MCP down, auth fails
@@ -706,40 +795,40 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Go idiom: Real examples
 
 ### Performance Testing
-- [ ] Run load tests - Phase 99
+- [ ] Run load tests - Phase 111
   - Test: Handle 100 msgs/minute
   - Features: Queue behavior under load
   - Acceptance: <10s p99 latency
   - Go idiom: Measure real workloads
 
-- [ ] Profile and optimize hot paths - Phase 100
+- [ ] Profile and optimize hot paths - Phase 112
   - Test: No obvious bottlenecks
   - Tools: pprof, trace
   - Acceptance: CPU <10% idle
   - Go idiom: Optimize the measured
 
 ### Final Integration
-- [ ] Full system test - Phase 101
+- [ ] Full system test - Phase 113
   - Test: All features work together
   - Scenarios: Morning briefing, scheduling, memory
   - Acceptance: No regressions
   - Go idiom: Test the whole system
 
-- [ ] Deploy to production - Phase 102
+- [ ] Deploy to production - Phase 114
   - Test: Real Signal messages work
   - Features: All MCP servers connected
   - Acceptance: Responds within 10s
   - Go idiom: Start with monitoring
 
 ### Handoff
-- [ ] Create runbook - Phase 103
+- [ ] Create runbook - Phase 115
   - Test: Can handle incidents
   - Location: `docs/runbook.md`
   - Scenarios: Outages, performance issues
   - Acceptance: Ops team approved
   - Go idiom: Automate solutions
 
-- [ ] Final cleanup - Phase 104
+- [ ] Final cleanup - Phase 116
   - Test: No TODOs in code
   - Tasks: Remove debug code, update README
   - Acceptance: Code is production ready
@@ -748,34 +837,34 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
 ## Success Criteria
 
 ### Foundation Layer Success Metrics
-- [ ] All interfaces defined and mockable - Phase 105
-- [ ] Queue processes messages with proper state transitions - Phase 106
-- [ ] Signal messages flow through system - Phase 107
-- [ ] Basic Claude integration works - Phase 108
-- [ ] Integration tests pass - Phase 109
+- [ ] All interfaces defined and mockable - Phase 117
+- [ ] Queue processes messages with proper state transitions - Phase 118
+- [ ] Signal messages flow through system - Phase 119
+- [ ] Basic Claude integration works - Phase 120
+- [ ] Integration tests pass - Phase 121
 
 ### Intelligence Layer Success Metrics
-- [ ] Multi-agent validation catches failures - Phase 110
-- [ ] Complex requests handled gracefully - Phase 111
-- [ ] Session continuity maintains context - Phase 112
-- [ ] All MCP servers integrated - Phase 113
-- [ ] Load tests pass - Phase 114
+- [ ] Multi-agent validation catches failures - Phase 122
+- [ ] Complex requests handled gracefully - Phase 123
+- [ ] Session continuity maintains context - Phase 124
+- [ ] All MCP servers integrated - Phase 125
+- [ ] Load tests pass - Phase 126
 
 ### Production Layer Success Metrics
-- [ ] Deploys cleanly with Nix - Phase 115
-- [ ] Handles 100 concurrent conversations - Phase 116
-- [ ] P99 latency under 10 seconds - Phase 117
-- [ ] Zero message loss under load - Phase 118
-- [ ] Production monitoring active - Phase 119
+- [ ] Deploys cleanly with Nix - Phase 127
+- [ ] Handles 100 concurrent conversations - Phase 128
+- [ ] P99 latency under 10 seconds - Phase 129
+- [ ] Zero message loss under load - Phase 130
+- [ ] Production monitoring active - Phase 131
 
 ## Testing Checklist
 
 For each component:
-- [ ] Unit tests with >80% coverage - Phase 120
-- [ ] Integration tests for happy path - Phase 121
-- [ ] Failure mode tests - Phase 122
-- [ ] Concurrent access tests - Phase 123
-- [ ] Benchmark for hot paths - Phase 124
+- [ ] Unit tests with >80% coverage - Phase 132
+- [ ] Integration tests for happy path - Phase 133
+- [ ] Failure mode tests - Phase 134
+- [ ] Concurrent access tests - Phase 135
+- [ ] Benchmark for hot paths - Phase 136
 
 ## Go Idioms Reminder
 
