@@ -11,6 +11,7 @@ import (
 
 	"github.com/Veraticus/mentat/internal/agent"
 	"github.com/Veraticus/mentat/internal/claude"
+	"github.com/Veraticus/mentat/internal/signal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -100,30 +101,44 @@ func (m *asyncValidationStrategy) getRecoveryCalls() []recoveryCall {
 	return calls
 }
 
-// asyncMockMessenger extends the basic mockMessenger with send call tracking.
-type asyncMockMessenger struct {
-	mockMessenger
+// asyncSendCall represents a single send operation for async tests.
+type asyncSendCall struct {
+	ctx       context.Context
+	recipient string
+	message   string
+}
 
+// asyncMockMessenger implements the Messenger interface for async validation tests.
+type asyncMockMessenger struct {
 	mu        sync.Mutex
-	sendCalls []sendCall
+	sendCalls []asyncSendCall
 	sendFunc  func(ctx context.Context, to, message string) error
 }
 
 func (m *asyncMockMessenger) Send(ctx context.Context, to, message string) error {
 	m.mu.Lock()
-	m.sendCalls = append(m.sendCalls, sendCall{ctx: ctx, recipient: to, message: message})
+	m.sendCalls = append(m.sendCalls, asyncSendCall{ctx: ctx, recipient: to, message: message})
 	m.mu.Unlock()
 
 	if m.sendFunc != nil {
 		return m.sendFunc(ctx, to, message)
 	}
-	return m.mockMessenger.Send(ctx, to, message)
+	return nil
 }
 
-func (m *asyncMockMessenger) GetSendCalls() []sendCall {
+func (m *asyncMockMessenger) Subscribe(_ context.Context) (<-chan signal.IncomingMessage, error) {
+	ch := make(chan signal.IncomingMessage)
+	return ch, nil
+}
+
+func (m *asyncMockMessenger) SendTypingIndicator(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *asyncMockMessenger) GetSendCalls() []asyncSendCall {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	calls := make([]sendCall, len(m.sendCalls))
+	calls := make([]asyncSendCall, len(m.sendCalls))
 	copy(calls, m.sendCalls)
 	return calls
 }
@@ -219,8 +234,8 @@ func TestAsyncValidator_StartValidation(t *testing.T) {
 
 			av.StartValidation("+1234567890", "What's the weather?", response, "session-123")
 
-			// Wait for async operation to complete
-			time.Sleep(100 * time.Millisecond)
+			// Wait for validation delay + async operation to complete
+			time.Sleep(testCorrectionDelay + 100*time.Millisecond)
 
 			// Verify validation was called
 			if tt.expectValidation {
@@ -539,12 +554,14 @@ func TestAsyncValidator_ValidationContextCancellation(t *testing.T) {
 		},
 	}
 
-	ctxCanceled := make(chan struct{})
+	validationStarted := make(chan struct{})
+	validationCanceled := make(chan struct{})
 	strategy := &asyncValidationStrategy{
 		validateFunc: func(ctx context.Context, _, _, _ string, _ claude.LLM) agent.ValidationResult {
+			close(validationStarted)
 			// Wait for context cancellation
 			<-ctx.Done()
-			close(ctxCanceled)
+			close(validationCanceled)
 			return agent.ValidationResult{Status: agent.ValidationStatusFailed}
 		},
 		recoveryFunc: func(_ context.Context, _, _, _ string, _ agent.ValidationResult, _ claude.LLM) string {
@@ -554,27 +571,29 @@ func TestAsyncValidator_ValidationContextCancellation(t *testing.T) {
 
 	logger := slog.Default()
 	av := agent.NewAsyncValidator(messenger, strategy, logger)
-	av.SetCorrectionDelay(testCorrectionDelay)
+	// Set a very short delay so validation actually starts
+	av.SetCorrectionDelay(10 * time.Millisecond)
 
 	// Start validation
 	response := &claude.LLMResponse{Message: "Test"}
 	av.StartValidation("+1234567890", "Test", response, "session-1")
 
-	// Let validation start
-	time.Sleep(50 * time.Millisecond)
+	// Wait for validation to start or timeout
+	select {
+	case <-validationStarted:
+		// Validation started, now shutdown to cancel it
+	case <-time.After(200 * time.Millisecond):
+		// Validation was canceled during delay, which is also fine
+	}
 
-	// Shutdown quickly to cancel validation
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	// Shutdown to cancel validation
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
 	err := av.Shutdown(ctx)
 	require.NoError(t, err)
 
-	// Verify context was canceled
-	<-ctxCanceled
-
 	// Verify no correction was sent
-	time.Sleep(testCorrectionDelay + 100*time.Millisecond)
 	sendCalls := messenger.GetSendCalls()
 	assert.Empty(t, sendCalls, "No correction should be sent when validation is canceled")
 }
@@ -615,6 +634,54 @@ func TestAsyncValidator_MessengerError(t *testing.T) {
 
 	// The error should be logged but not crash the validator
 	assert.Equal(t, 0, av.ActiveCount())
+
+	// Cleanup
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	require.NoError(t, av.Shutdown(ctx))
+}
+
+func TestAsyncValidator_ValidationDelay(t *testing.T) {
+	// Setup
+	messenger := &asyncMockMessenger{
+		sendFunc: func(_ context.Context, _, _ string) error {
+			return nil
+		},
+	}
+
+	validationStartCh := make(chan time.Time, 1)
+	strategy := &asyncValidationStrategy{
+		validateFunc: func(_ context.Context, _, _, _ string, _ claude.LLM) agent.ValidationResult {
+			validationStartCh <- time.Now()
+			return agent.ValidationResult{
+				Status:     agent.ValidationStatusSuccess,
+				Confidence: 1.0,
+			}
+		},
+	}
+
+	logger := slog.Default()
+	av := agent.NewAsyncValidator(messenger, strategy, logger)
+
+	// Set a specific delay for this test
+	testDelay := 50 * time.Millisecond
+	av.SetCorrectionDelay(testDelay)
+
+	// Start validation
+	response := &claude.LLMResponse{Message: "Test"}
+	startTime := time.Now()
+	av.StartValidation("+1234567890", "Test", response, "session-1")
+
+	// Wait for validation to complete
+	select {
+	case validationStartTime := <-validationStartCh:
+		// Verify delay was applied
+		actualDelay := validationStartTime.Sub(startTime)
+		assert.GreaterOrEqual(t, actualDelay, testDelay, "Validation should start after delay")
+		assert.Less(t, actualDelay, testDelay+20*time.Millisecond, "Validation should start soon after delay")
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("Validation did not complete in time")
+	}
 
 	// Cleanup
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)

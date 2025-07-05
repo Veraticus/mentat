@@ -481,14 +481,14 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Go idiom: Structured logging
 
 ### Follow-up Message Handling
-- [ ] Implement validation result handler - Phase 68
+- [X] Implement validation result handler - Phase 68
   - Test: Appropriate follow-ups for each result
   - Location: `internal/agent/followup.go`
   - Features: Send corrections based on validation status
   - Acceptance: Natural conversation flow
   - Go idiom: Switch for exhaustive handling
 
-- [ ] Add delay before validation messages - Phase 69
+- [X] Add delay before validation messages - Phase 69
   - Test: User has time to read initial response
   - Location: `internal/agent/validator_async.go`
   - Features: 2-second delay before corrections

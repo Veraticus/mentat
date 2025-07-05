@@ -16,6 +16,7 @@ import (
 type AsyncValidator struct {
 	messenger          signal.Messenger
 	validationStrategy ValidationStrategy
+	resultHandler      ValidationResultHandler
 	logger             *slog.Logger
 
 	// Track active validations for cleanup
@@ -45,9 +46,13 @@ func NewAsyncValidator(
 	strategy ValidationStrategy,
 	logger *slog.Logger,
 ) *AsyncValidator {
+	// Create default result handler if not provided
+	resultHandler := NewDefaultResultHandler(messenger, strategy, logger)
+
 	return &AsyncValidator{
 		messenger:          messenger,
 		validationStrategy: strategy,
+		resultHandler:      resultHandler,
 		logger:             logger,
 		active:             make(map[string]*ValidationTask),
 		shutdownCh:         make(chan struct{}),
@@ -118,6 +123,34 @@ func (av *AsyncValidator) runValidation(ctx context.Context, task *ValidationTas
 		// Continue with validation
 	}
 
+	// Apply delay before validation to give user time to read initial response
+	if av.correctionDelay > 0 {
+		av.logger.DebugContext(ctx, "waiting before starting validation",
+			slog.String("task_id", task.ID),
+			slog.Duration("delay", av.correctionDelay))
+
+		timer := time.NewTimer(av.correctionDelay)
+		defer timer.Stop()
+
+		select {
+		case <-timer.C:
+			// Timer expired, proceed with validation
+			av.logger.DebugContext(ctx, "delay complete, starting validation",
+				slog.String("task_id", task.ID))
+		case <-ctx.Done():
+			// Context canceled during delay
+			av.logger.InfoContext(ctx, "validation canceled during delay",
+				slog.String("task_id", task.ID),
+				slog.Any("error", ctx.Err()))
+			return
+		case <-av.shutdownCh:
+			// Shutdown requested during delay
+			av.logger.InfoContext(ctx, "validation canceled due to shutdown during delay",
+				slog.String("task_id", task.ID))
+			return
+		}
+	}
+
 	// Perform validation
 	validationResult := av.validationStrategy.Validate(
 		ctx,
@@ -134,81 +167,28 @@ func (av *AsyncValidator) runValidation(ctx context.Context, task *ValidationTas
 		slog.Float64("confidence", validationResult.Confidence),
 		slog.Any("issues", validationResult.Issues))
 
-	// Check if we need to send a correction
-	if av.shouldSendCorrection(validationResult) {
-		av.sendCorrection(ctx, task, validationResult)
+	// Handle validation result through the result handler
+	if av.resultHandler.ShouldHandle(validationResult) {
+		if err := av.resultHandler.HandleResult(ctx, validationResult, task); err != nil {
+			av.logger.ErrorContext(ctx, "failed to handle validation result",
+				slog.String("task_id", task.ID),
+				slog.Any("error", err))
+		}
 	}
 
 	av.logger.InfoContext(ctx, "async validation task complete",
 		slog.String("task_id", task.ID),
 		slog.String("session_id", task.SessionID),
 		slog.Duration("duration", time.Since(task.StartTime)),
-		slog.Bool("correction_sent", av.shouldSendCorrection(validationResult)))
+		slog.Bool("correction_sent", av.resultHandler.ShouldHandle(validationResult)))
 }
 
-// sendCorrection generates and sends a correction message if needed.
-func (av *AsyncValidator) sendCorrection(
-	ctx context.Context,
-	task *ValidationTask,
-	validationResult ValidationResult,
-) {
-	// Generate correction message
-	correctionMsg := av.validationStrategy.GenerateRecovery(
-		ctx,
-		task.OriginalRequest,
-		task.Response.Message,
-		task.SessionID,
-		validationResult,
-		nil, // LLM will be injected by the strategy if needed
-	)
-
-	if correctionMsg == "" {
-		av.logger.DebugContext(ctx, "no correction message generated",
-			slog.String("task_id", task.ID))
-		return
-	}
-
-	// Small delay before sending correction to ensure user has read initial response
-	timer := time.NewTimer(av.correctionDelay)
-	defer timer.Stop()
-
-	select {
-	case <-timer.C:
-		// Timer expired, proceed with sending
-	case <-ctx.Done():
-		// Context canceled, exit early
-		av.logger.WarnContext(ctx, "validation canceled before sending correction",
-			slog.String("task_id", task.ID))
-		return
-	case <-av.shutdownCh:
-		// Shutdown requested, exit early
-		av.logger.WarnContext(ctx, "shutdown requested before sending correction",
-			slog.String("task_id", task.ID))
-		return
-	}
-
-	// Send the correction
-	if err := av.messenger.Send(ctx, task.To, correctionMsg); err != nil {
-		av.logger.ErrorContext(ctx, "failed to send correction message",
-			slog.Any("error", err),
-			slog.String("task_id", task.ID),
-			slog.String("to", task.To),
-			slog.String("session_id", task.SessionID))
-	} else {
-		av.logger.InfoContext(ctx, "sent correction message",
-			slog.String("task_id", task.ID),
-			slog.String("to", task.To),
-			slog.String("session_id", task.SessionID),
-			slog.String("validation_status", string(validationResult.Status)))
-	}
-}
-
-// shouldSendCorrection determines if a correction message should be sent.
-func (av *AsyncValidator) shouldSendCorrection(result ValidationResult) bool {
-	// Send corrections for failures, partial successes, or incomplete searches
-	return result.Status == ValidationStatusFailed ||
-		result.Status == ValidationStatusPartial ||
-		result.Status == ValidationStatusIncompleteSearch
+// SetResultHandler allows overriding the default result handler.
+// This is useful for custom handling logic or testing.
+func (av *AsyncValidator) SetResultHandler(handler ValidationResultHandler) {
+	av.mu.Lock()
+	defer av.mu.Unlock()
+	av.resultHandler = handler
 }
 
 // Shutdown gracefully stops all active validations and waits for them to complete.
@@ -280,4 +260,9 @@ func (av *AsyncValidator) SetCorrectionDelay(delay time.Duration) {
 	av.mu.Lock()
 	defer av.mu.Unlock()
 	av.correctionDelay = delay
+
+	// Also update the result handler if it's a DefaultResultHandler
+	if handler, ok := av.resultHandler.(*DefaultResultHandler); ok {
+		handler.SetCorrectionDelay(delay)
+	}
 }
