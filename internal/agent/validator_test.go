@@ -462,7 +462,7 @@ func TestSimpleValidator_Validate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			validator := agent.NewSimpleValidator()
-			result := validator.Validate(context.Background(), tt.request, tt.response, nil)
+			result := validator.Validate(context.Background(), tt.request, tt.response, "test-session", nil)
 
 			if result.Status != tt.expectedStatus {
 				t.Errorf("expected status %v, got %v", tt.expectedStatus, result.Status)
@@ -538,7 +538,7 @@ func TestSimpleValidator_GenerateRecovery(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			recovery := validator.GenerateRecovery(ctx, "", "", tt.result, nil)
+			recovery := validator.GenerateRecovery(ctx, "", "", "test-session", tt.result, nil)
 			if recovery != tt.expectedMessage {
 				t.Errorf("expected '%s', got '%s'", tt.expectedMessage, recovery)
 			}
@@ -551,7 +551,7 @@ func TestNoopValidator(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("always returns success", func(t *testing.T) {
-		result := validator.Validate(ctx, "any request", "any response", nil)
+		result := validator.Validate(ctx, "any request", "any response", "test-session", nil)
 
 		if result.Status != agent.ValidationStatusSuccess {
 			t.Errorf("expected SUCCESS, got %v", result.Status)
@@ -584,7 +584,7 @@ func TestNoopValidator(t *testing.T) {
 
 	t.Run("always returns empty recovery", func(t *testing.T) {
 		result := agent.ValidationResult{Status: agent.ValidationStatusFailed}
-		recovery := validator.GenerateRecovery(ctx, "request", "response", result, nil)
+		recovery := validator.GenerateRecovery(ctx, "request", "response", "test-session", result, nil)
 		if recovery != "" {
 			t.Errorf("expected empty recovery, got '%s'", recovery)
 		}

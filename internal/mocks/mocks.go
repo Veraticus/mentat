@@ -22,12 +22,19 @@ const (
 	defaultMockLatencyMS = 10
 	// incomingChannelSize is the buffer size for incoming message channels.
 	incomingChannelSize = 100
+	// mockProcessPID is the default PID for mock processes.
+	mockProcessPID = 12345
+	// secondaryDeviceID is the ID for the secondary test device.
+	secondaryDeviceID = 2
 )
 
 // Compile-time checks to ensure mocks implement their interfaces.
 var (
 	_ claude.LLM                  = (*MockLLM)(nil)
 	_ signal.Messenger            = (*MockMessenger)(nil)
+	_ signal.Manager              = (*MockSignalManager)(nil)
+	_ signal.ProcessManager       = (*MockProcessManager)(nil)
+	_ signal.DeviceManager        = (*MockDeviceManager)(nil)
 	_ conversation.SessionManager = (*MockSessionManager)(nil)
 	_ queue.RateLimiter           = (*MockRateLimiter)(nil)
 	_ agent.ValidationStrategy    = (*MockValidationStrategy)(nil)
@@ -1014,4 +1021,471 @@ func (m *MockJobHandler) GetCalls() []time.Time {
 	calls := make([]time.Time, len(m.calls))
 	copy(calls, m.calls)
 	return calls
+}
+
+// MockSignalManager is a test implementation of the signal.Manager interface.
+type MockSignalManager struct {
+	started       bool
+	stopped       bool
+	registered    bool
+	phoneNumber   string
+	healthErr     error
+	registerErr   error
+	verifyErr     error
+	messenger     *MockMessenger
+	deviceManager *MockDeviceManager
+	mu            sync.Mutex
+}
+
+// NewMockSignalManager creates a new mock Signal manager.
+func NewMockSignalManager() *MockSignalManager {
+	return &MockSignalManager{
+		phoneNumber:   "+1234567890",
+		messenger:     NewMockMessenger(),
+		deviceManager: NewMockDeviceManager(),
+	}
+}
+
+// Start implements the Manager interface.
+func (m *MockSignalManager) Start(_ context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.started = true
+	return nil
+}
+
+// Stop implements the Manager interface.
+func (m *MockSignalManager) Stop(_ context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.stopped = true
+	return nil
+}
+
+// HealthCheck implements the Manager interface.
+func (m *MockSignalManager) HealthCheck(_ context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.healthErr
+}
+
+// GetMessenger implements the Manager interface.
+func (m *MockSignalManager) GetMessenger() signal.Messenger {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.messenger
+}
+
+// GetDeviceManager implements the Manager interface.
+//
+//nolint:ireturn // Must return interface to satisfy signal.Manager interface
+func (m *MockSignalManager) GetDeviceManager() signal.DeviceManager {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.deviceManager
+}
+
+// GetPhoneNumber implements the Manager interface.
+func (m *MockSignalManager) GetPhoneNumber() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.phoneNumber
+}
+
+// IsRegistered implements the Manager interface.
+func (m *MockSignalManager) IsRegistered(_ context.Context) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.registered, nil
+}
+
+// Register implements the Manager interface.
+func (m *MockSignalManager) Register(_ context.Context, phoneNumber string, _ string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.registerErr != nil {
+		return m.registerErr
+	}
+
+	m.phoneNumber = phoneNumber
+	m.registered = true
+	return nil
+}
+
+// VerifyCode implements the Manager interface.
+func (m *MockSignalManager) VerifyCode(_ context.Context, _ string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.verifyErr != nil {
+		return m.verifyErr
+	}
+
+	m.registered = true
+	return nil
+}
+
+// SetHealthError sets the error to return from HealthCheck.
+func (m *MockSignalManager) SetHealthError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.healthErr = err
+}
+
+// SetRegistered sets the registration status.
+func (m *MockSignalManager) SetRegistered(registered bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.registered = registered
+}
+
+// SetRegisterError sets the error to return from Register.
+func (m *MockSignalManager) SetRegisterError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.registerErr = err
+}
+
+// SetVerifyError sets the error to return from VerifyCode.
+func (m *MockSignalManager) SetVerifyError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.verifyErr = err
+}
+
+// IsStarted returns whether Start was called.
+func (m *MockSignalManager) IsStarted() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.started
+}
+
+// IsStopped returns whether Stop was called.
+func (m *MockSignalManager) IsStopped() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.stopped
+}
+
+// MockProcessManager is a test implementation of the signal.ProcessManager interface.
+type MockProcessManager struct {
+	running      bool
+	pid          int
+	startErr     error
+	stopErr      error
+	restartErr   error
+	readyErr     error
+	startCalls   int
+	stopCalls    int
+	restartCalls int
+	mu           sync.Mutex
+}
+
+// NewMockProcessManager creates a new mock process manager.
+func NewMockProcessManager() *MockProcessManager {
+	return &MockProcessManager{
+		pid: mockProcessPID,
+	}
+}
+
+// Start implements the ProcessManager interface.
+func (m *MockProcessManager) Start(_ context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.startCalls++
+	if m.startErr != nil {
+		return m.startErr
+	}
+
+	m.running = true
+	return nil
+}
+
+// Stop implements the ProcessManager interface.
+func (m *MockProcessManager) Stop(_ context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.stopCalls++
+	if m.stopErr != nil {
+		return m.stopErr
+	}
+
+	m.running = false
+	m.pid = 0
+	return nil
+}
+
+// Restart implements the ProcessManager interface.
+func (m *MockProcessManager) Restart(_ context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.restartCalls++
+	if m.restartErr != nil {
+		return m.restartErr
+	}
+
+	// Simulate restart by toggling running state
+	m.running = false
+	m.running = true
+	return nil
+}
+
+// IsRunning implements the ProcessManager interface.
+func (m *MockProcessManager) IsRunning() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.running
+}
+
+// GetPID implements the ProcessManager interface.
+func (m *MockProcessManager) GetPID() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.running {
+		return m.pid
+	}
+	return 0
+}
+
+// WaitForReady implements the ProcessManager interface.
+func (m *MockProcessManager) WaitForReady(_ context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.readyErr != nil {
+		return m.readyErr
+	}
+
+	if !m.running {
+		return fmt.Errorf("process not running")
+	}
+
+	return nil
+}
+
+// SetRunning sets the running state.
+func (m *MockProcessManager) SetRunning(running bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.running = running
+}
+
+// SetStartError sets the error to return from Start.
+func (m *MockProcessManager) SetStartError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.startErr = err
+}
+
+// SetStopError sets the error to return from Stop.
+func (m *MockProcessManager) SetStopError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.stopErr = err
+}
+
+// SetReadyError sets the error to return from WaitForReady.
+func (m *MockProcessManager) SetReadyError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.readyErr = err
+}
+
+// GetStartCalls returns the number of times Start was called.
+func (m *MockProcessManager) GetStartCalls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.startCalls
+}
+
+// GetStopCalls returns the number of times Stop was called.
+func (m *MockProcessManager) GetStopCalls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.stopCalls
+}
+
+// MockDeviceManager is a test implementation of the signal.DeviceManager interface.
+type MockDeviceManager struct {
+	devices          []signal.Device
+	primaryDevice    *signal.Device
+	listErr          error
+	removeErr        error
+	linkErr          error
+	waitErr          error
+	linkedDevice     *signal.Device
+	linkingURI       string
+	removedDeviceIDs []int
+	mu               sync.Mutex
+}
+
+// NewMockDeviceManager creates a new mock device manager.
+func NewMockDeviceManager() *MockDeviceManager {
+	primary := &signal.Device{
+		ID:       1,
+		Name:     "Primary Device",
+		Primary:  true,
+		Created:  time.Now().Add(-24 * time.Hour),
+		LastSeen: time.Now(),
+	}
+
+	return &MockDeviceManager{
+		devices: []signal.Device{
+			*primary,
+			{
+				ID:       secondaryDeviceID,
+				Name:     "Desktop",
+				Primary:  false,
+				Created:  time.Now().Add(-12 * time.Hour),
+				LastSeen: time.Now().Add(-1 * time.Hour),
+			},
+		},
+		primaryDevice:    primary,
+		removedDeviceIDs: make([]int, 0),
+	}
+}
+
+// ListDevices implements the DeviceManager interface.
+func (m *MockDeviceManager) ListDevices(_ context.Context) ([]signal.Device, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+
+	devices := make([]signal.Device, len(m.devices))
+	copy(devices, m.devices)
+	return devices, nil
+}
+
+// RemoveDevice implements the DeviceManager interface.
+func (m *MockDeviceManager) RemoveDevice(_ context.Context, deviceID int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.removeErr != nil {
+		return m.removeErr
+	}
+
+	// Track removed device IDs
+	m.removedDeviceIDs = append(m.removedDeviceIDs, deviceID)
+
+	// Remove from devices list
+	filtered := make([]signal.Device, 0, len(m.devices))
+	for _, d := range m.devices {
+		if d.ID != deviceID {
+			filtered = append(filtered, d)
+		}
+	}
+	m.devices = filtered
+
+	return nil
+}
+
+// GenerateLinkingURI implements the DeviceManager interface.
+func (m *MockDeviceManager) GenerateLinkingURI(_ context.Context, deviceName string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.linkErr != nil {
+		return "", m.linkErr
+	}
+
+	m.linkingURI = fmt.Sprintf("signal://link?device=%s&token=mock", deviceName)
+	return m.linkingURI, nil
+}
+
+// GetPrimaryDevice implements the DeviceManager interface.
+func (m *MockDeviceManager) GetPrimaryDevice(_ context.Context) (*signal.Device, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.primaryDevice == nil {
+		return nil, fmt.Errorf("no primary device")
+	}
+
+	return m.primaryDevice, nil
+}
+
+// WaitForDeviceLink implements the DeviceManager interface.
+func (m *MockDeviceManager) WaitForDeviceLink(_ context.Context, _ time.Duration) (*signal.Device, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.waitErr != nil {
+		return nil, m.waitErr
+	}
+
+	if m.linkedDevice != nil {
+		return m.linkedDevice, nil
+	}
+
+	// Simulate successful linking
+	newDevice := &signal.Device{
+		ID:       len(m.devices) + 1,
+		Name:     "New Device",
+		Primary:  false,
+		Created:  time.Now(),
+		LastSeen: time.Now(),
+	}
+
+	m.devices = append(m.devices, *newDevice)
+	return newDevice, nil
+}
+
+// SetDevices sets the mock device list.
+func (m *MockDeviceManager) SetDevices(devices []signal.Device) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.devices = devices
+}
+
+// SetListError sets the error to return from ListDevices.
+func (m *MockDeviceManager) SetListError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.listErr = err
+}
+
+// SetRemoveError sets the error to return from RemoveDevice.
+func (m *MockDeviceManager) SetRemoveError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.removeErr = err
+}
+
+// SetLinkError sets the error to return from GenerateLinkingURI.
+func (m *MockDeviceManager) SetLinkError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.linkErr = err
+}
+
+// SetWaitError sets the error to return from WaitForDeviceLink.
+func (m *MockDeviceManager) SetWaitError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.waitErr = err
+}
+
+// SetLinkedDevice sets the device to return from WaitForDeviceLink.
+func (m *MockDeviceManager) SetLinkedDevice(device *signal.Device) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.linkedDevice = device
+}
+
+// GetRemovedDeviceIDs returns the IDs of removed devices.
+func (m *MockDeviceManager) GetRemovedDeviceIDs() []int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ids := make([]int, len(m.removedDeviceIDs))
+	copy(ids, m.removedDeviceIDs)
+	return ids
 }

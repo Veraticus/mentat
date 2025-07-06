@@ -38,3 +38,12 @@ type IncomingMessage struct {
 	FromNumber string    // 16 bytes - Phone number
 	Text       string    // 16 bytes
 }
+
+// Device represents a linked Signal device.
+type Device struct {
+	ID       int       `json:"id"`
+	Name     string    `json:"name"`
+	Created  time.Time `json:"created"`
+	LastSeen time.Time `json:"last_seen"`
+	Primary  bool      `json:"primary"`
+}

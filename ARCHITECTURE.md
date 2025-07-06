@@ -6,7 +6,7 @@ A thin Go orchestration layer that transforms Claude Code into a reliable person
 
 ## Core Architecture Philosophy
 
-- **Thin orchestration**: Go handles only Signal I/O, queuing, scheduling, and validation flow
+- **Self-contained platform**: Mentat manages its own dependencies (Signal, MCP servers, Claude CLI)
 - **Multi-agent reliability**: Use Claude to validate Claude, eliminating hallucinated successes
 - **Resilient under load**: Queue-based architecture with rate limiting prevents overload
 - **Conversation-first**: All user-facing messages generated naturally by Claude
@@ -19,11 +19,18 @@ A thin Go orchestration layer that transforms Claude Code into a reliable person
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                   Mentat Orchestrator                    │
+│                   Mentat Platform                        │
+│                                                          │
+│  ┌─────────────────────────────────────────────────┐    │
+│  │            Component Manager                     │    │
+│  │  - Lifecycle management for all dependencies     │    │
+│  │  - Health monitoring and recovery                │    │
+│  │  - Automatic Claude CLI installation             │    │
+│  └─────────────────────────────────────────────────┘    │
 │                                                          │
 │  ┌─────────────────┐         ┌─────────────────────┐    │
 │  │   Signal I/O    │         │  Proactive Jobs     │    │
-│  │  (JSON-RPC)     │         │   (Cron Tasks)      │    │
+│  │  (Embedded)     │         │   (Cron Tasks)      │    │
 │  └────────┬────────┘         └──────────┬──────────┘    │
 │           │                              │               │
 │           └──────────────┬───────────────┘               │
@@ -44,22 +51,23 @@ A thin Go orchestration layer that transforms Claude Code into a reliable person
 │           │  └────┬───┘ └─────┬──────┘ │               │
 │           └───────┼───────────┼────────┘               │
 │                   └─────┬─────┘                         │
-│           ┌─────────────┴───────────────┐               │
-│           │       Claude Code           │               │
-│           │      (via CLI/SDK)          │               │
-│           └─────────────┬───────────────┘               │
-│                         │                               │
-│        ┌────────────────┴────────────────┐              │
-│        │        MCP Servers              │              │
-│        │  ┌───────────┐ ┌────────────┐  │              │
-│        │  │ Calendar  │ │   Memory   │  │              │
-│        │  └───────────┘ └────────────┘  │              │
-│        │  │   Gmail   │ │  Contacts  │  │              │
-│        │  └───────────┘ └────────────┘  │              │
-│        │  │  Todoist  │ │  Expensify │  │              │
-│        │  └───────────┘ └────────────┘  │              │
-│        └─────────────────────────────────┘              │
-└─────────────────────────────────────────────────────────┘
+└─────────────────────────┼───────────────────────────────┘
+                          │
+              ┌───────────┴───────────┐
+              │   Claude Code CLI     │ ← Managed by Mentat
+              │   (Auto-downloaded)   │
+              └───────────┬───────────┘
+                          │
+         ┌────────────────┴────────────────┐
+         │     MCP Servers (Docker)        │ ← Managed by Mentat
+         │  ┌───────────┐ ┌────────────┐  │
+         │  │ Calendar  │ │   Memory   │  │
+         │  └───────────┘ └────────────┘  │
+         │  │   Gmail   │ │  Contacts  │  │
+         │  └───────────┘ └────────────┘  │
+         │  │  Todoist  │ │  Expensify │  │
+         │  └───────────┘ └────────────┘  │
+         └─────────────────────────────────┘
 ```
 
 ## Core Interfaces
@@ -410,7 +418,73 @@ func (h *AgentHandler) continueWithProgress(
 
 ### 7. MCP Server Integration
 
-MCP servers run as HTTP services via podman containers, eliminating subprocess startup overhead:
+MCP servers are managed by Mentat as Docker containers, providing Claude with access to external tools. See [MCP Integration Design](docs/mcp-integration-design.md) for implementation details.
+
+### 8. Component Management Architecture
+
+Mentat has evolved into a self-contained platform that manages all its dependencies:
+
+#### Managed Components
+
+1. **Signal CLI**: Embedded as a subprocess with dedicated phone number
+   - Automatic registration flow with guided setup
+   - Device management capabilities
+   - Health monitoring and automatic recovery
+   - See [Signal Setup Design](docs/signal-setup-design.md) for details
+
+2. **MCP Servers**: Docker containers for external tool access
+   - Automatic container lifecycle management
+   - Health monitoring with restart policies
+   - Credential mounting from local filesystem
+   - Dynamic configuration generation
+
+3. **Claude CLI**: Auto-downloaded and version managed
+   - Platform-specific binary management
+   - Automatic updates when available
+   - Fallback to system-installed version
+
+#### Lifecycle Management Flow
+
+```go
+// Startup sequence
+1. Check/install Claude CLI
+2. Start MCP server containers
+3. Wait for MCP health checks
+4. Generate MCP configuration
+5. Start embedded Signal daemon
+6. Begin processing messages
+
+// Shutdown sequence (reverse order)
+1. Stop message processing
+2. Graceful Signal shutdown
+3. Stop MCP containers
+4. Cleanup temporary files
+```
+
+#### Setup Experience
+
+```bash
+$ mentat setup
+🚀 Mentat Setup Wizard
+======================
+
+📱 Signal Setup
+- Guide through phone number registration
+- Handle SMS verification
+- Configure device name
+
+🔧 MCP Services
+- Validate Docker/Podman availability
+- Configure service credentials
+- Test health endpoints
+
+✅ Verification
+- Send test message
+- Verify bidirectional communication
+- Check all services healthy
+```
+
+This approach ensures users have a working personal assistant with minimal configuration effort.
 
 ```go
 // MCPConfig represents the Claude Code MCP configuration
@@ -2719,6 +2793,14 @@ scripts/
 25. **Async validation corrections**: Validation runs after user receives response, with natural follow-up messages ("Oops! I just realized...") only when issues are detected
 
 26. **Structured JSON responses**: Claude returns properly formatted JSON responses with separate message and progress fields, eliminating the need for parsing embedded JSON
+
+27. **Component lifecycle management**: Mentat manages all dependencies (Signal CLI, MCP servers, Claude CLI) as a self-contained platform, ensuring everything works together seamlessly
+
+28. **Own phone number architecture**: Mentat uses its own Signal phone number rather than linking to user accounts, enabling multi-user support and clean separation of concerns
+
+29. **Docker-based MCP deployment**: MCP servers run as Docker containers rather than npm processes, providing better isolation, resource control, and operational simplicity
+
+30. **Guided setup experience**: Interactive setup wizard handles Signal registration, SMS verification, and credential configuration, making deployment accessible to non-technical users
 
 ## Future Enhancements
 

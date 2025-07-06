@@ -495,7 +495,7 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Acceptance: Messages don't feel rushed
   - Go idiom: time.Sleep in goroutines only
 
-- [ ] Handle validation timeouts gracefully - Phase 70
+- [X] Handle validation timeouts gracefully - Phase 70
   - Test: System continues if validation hangs
   - Location: `internal/agent/validator_async.go`
   - Features: Context timeout, skip corrections
@@ -503,21 +503,21 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Go idiom: Always use timeouts
 
 ### Integration Testing for JSON Response
-- [ ] Test JSON response parsing - Phase 71
+- [X] Test JSON response parsing - Phase 71
   - Test: All JSON response formats handled correctly
   - Location: `tests/integration/json_response_test.go`
   - Scenarios: Valid responses, missing fields, extra fields, errors
   - Acceptance: Robust handling of all Claude response variations
   - Go idiom: Test the unhappy paths
 
-- [ ] Test async validation flow - Phase 72
+- [X] Test async validation flow - Phase 72
   - Test: Validation doesn't block responses
   - Location: `tests/integration/async_validation_test.go`
   - Scenarios: Simple queries, tool usage, failures
   - Acceptance: Response times meet targets
   - Go idiom: Use channels to verify async behavior
 
-- [ ] Test follow-up message timing - Phase 73
+- [X] Test follow-up message timing - Phase 73
   - Test: Corrections arrive after appropriate delay
   - Location: `tests/integration/followup_timing_test.go`
   - Scenarios: Quick corrections, slow validation
@@ -525,139 +525,485 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Go idiom: time.After for timing assertions
 
 ### Parallel Validation Implementation
-- [ ] Move validation strategies to async - Phase 74
+- [X] Move validation strategies to async - Phase 74
   - Test: Strategies work with new async flow
   - Location: `internal/agent/validator_parallel.go`
   - Features: Adapt existing strategies
   - Acceptance: Same validation quality
   - Go idiom: Preserve interfaces
 
-- [ ] Optimize validation performance - Phase 75
+- [X] Optimize validation performance - Phase 75
   - Test: Validation completes quickly
   - Location: `internal/agent/validator.go`
   - Features: Cache validation results
   - Acceptance: <3s validation time
   - Go idiom: Measure before optimizing
 
-### Error Recovery Enhancement
-- [ ] Implement immediate error reporting - Phase 76
+### Signal Interface Design
+- [X] Define Signal manager interfaces - Phase 76
+  - Test: Interfaces compile and are mockable
+  - Location: `internal/signal/interfaces.go`
+  - Types: SignalManager, ProcessManager, DeviceManager
+  - Acceptance: Can create mock implementations
+  - Go idiom: Interface segregation
+
+- [X] Create mock Signal implementations - Phase 77
+  - Test: Mocks implement interfaces correctly
+  - Location: `internal/testing/mocks/signal_mocks.go`
+  - Features: Message flow simulation, device mocking
+  - Acceptance: Can test Signal logic without signal-cli
+  - Go idiom: Configurable behavior
+
+- [X] Define registration interfaces - Phase 78
+  - Test: Registration flow can be mocked
+  - Location: `internal/signal/registration.go`
+  - Types: RegistrationManager, VerificationHandler
+  - Acceptance: Can test setup flow with mocks
+  - Go idiom: State machine pattern
+
+### Signal Implementation
+- [ ] Create process manager interface - Phase 79
+  - Test: Abstracts process lifecycle
+  - Location: `internal/signal/process.go`
+  - Features: Start, stop, health check
+  - Acceptance: Can mock subprocess management
+  - Go idiom: Use context for lifecycle
+
+- [ ] Implement Signal daemon wrapper - Phase 80
+  - Test: Starts real signal-cli daemon
+  - Location: `internal/signal/daemon.go`
+  - Features: Process management, log capture
+  - Acceptance: Daemon stays running
+  - Go idiom: Goroutines for log handling
+
+- [ ] Build Signal manager with DI - Phase 81
+  - Test: Manager uses injected dependencies
+  - Location: `internal/signal/manager.go`
+  - Features: Mode detection, graceful fallback
+  - Acceptance: Works with mock process manager
+  - Go idiom: Constructor injection
+
+- [ ] Add phone number validator - Phase 82
+  - Test: Validates E.164 format correctly
+  - Location: `internal/signal/validation.go`
+  - Features: Country code detection
+  - Acceptance: Clear errors for bad formats
+  - Go idiom: Pure function validation
+
+- [ ] Implement data path manager - Phase 83
+  - Test: Creates/validates directories
+  - Location: `internal/signal/storage.go`
+  - Features: Permission checking
+  - Acceptance: Handles existing configs
+  - Go idiom: Fail fast on permissions
+
+### Signal Setup and Registration
+- [ ] Implement registration flow with DI - Phase 84
+  - Test: Registration uses injected dependencies
+  - Location: `internal/setup/registration.go`
+  - Features: State machine, process injection
+  - Acceptance: Works with mock signal-cli
+  - Go idiom: Make invalid states impossible
+
+- [ ] Add SMS verification handler - Phase 85
+  - Test: Accepts 6-digit codes
+  - Location: `internal/setup/verification.go`
+  - Features: Retry support, timeout handling
+  - Acceptance: 3 retry attempts allowed
+  - Go idiom: User-friendly error messages
+
+- [ ] Create captcha flow handler - Phase 86
+  - Test: Detects captcha requirement
+  - Location: `internal/setup/captcha.go`
+  - Features: URL generation, token validation
+  - Acceptance: Clear instructions provided
+  - Go idiom: Separate concerns cleanly
+
+- [ ] Implement Signal health monitor - Phase 87
+  - Test: Health checks work with mocks
+  - Location: `internal/signal/health.go`
+  - Features: RPC ping, message flow check
+  - Acceptance: Detects failures correctly
+  - Go idiom: Background goroutine
+
+### Signal Device Management
+- [ ] Create device manager interface - Phase 88
+  - Test: Device operations can be mocked
+  - Location: `internal/signal/device_manager.go`
+  - Features: List, add, remove operations
+  - Acceptance: Interface covers all operations
+  - Go idiom: Return structured device types
+
+- [ ] Implement device listing - Phase 89
+  - Test: Parses device list correctly
+  - Location: `internal/signal/devices.go`
+  - Features: Parse signal-cli output
+  - Acceptance: Shows all linked devices
+  - Go idiom: Error on parse failures
+
+- [ ] Add device removal capability - Phase 90
+  - Test: Removes devices cleanly
+  - Location: `internal/signal/devices.go`
+  - Features: Uses device manager interface
+  - Acceptance: Device disappears from list
+  - Go idiom: Idempotent operations
+
+- [ ] Implement device linking flow - Phase 91
+  - Test: Generates valid linking URIs
+  - Location: `internal/signal/linking.go`
+  - Features: QR code generation
+  - Acceptance: Can link new devices
+  - Go idiom: Clear timeout handling
+
+- [ ] Add device management CLI - Phase 92
+  - Test: Commands use injected manager
+  - Location: `cmd/mentat/devices.go`
+  - Commands: list, remove, link
+  - Acceptance: Works with mock manager
+  - Go idiom: Cobra with DI
+
+### MCP Interface Design
+- [ ] Define core MCP interfaces - Phase 93
+  - Test: Interfaces compile and are mockable
+  - Location: `internal/mcp/interfaces.go`
+  - Types: MCPServer, MCPManager, ContainerRuntime, HealthChecker
+  - Acceptance: Can create mock implementations for all
+  - Go idiom: Small, focused interfaces
+
+- [ ] Create mock MCP implementations - Phase 94
+  - Test: Mocks implement interfaces correctly
+  - Location: `internal/testing/mocks/mcp_mocks.go`
+  - Features: Configurable responses, error injection
+  - Acceptance: Can test MCP logic without Docker
+  - Go idiom: Embed mutex for thread safety
+
+- [ ] Define credential interfaces - Phase 95
+  - Test: Interface supports multiple credential types
+  - Location: `internal/mcp/credentials.go`
+  - Types: CredentialProvider, CredentialValidator
+  - Acceptance: Can mock credential loading
+  - Go idiom: Return errors for missing creds
+
+### MCP Docker Implementation
+- [ ] Create container runtime interface - Phase 96
+  - Test: Interface abstracts docker/podman
+  - Location: `internal/mcp/runtime.go`
+  - Features: Start, stop, inspect, logs
+  - Acceptance: Can swap implementations
+  - Go idiom: Use context for all operations
+
+- [ ] Implement Docker runtime - Phase 97
+  - Test: Works with real Docker daemon
+  - Location: `internal/mcp/docker_runtime.go`
+  - Features: Container lifecycle via CLI
+  - Acceptance: Containers start/stop correctly
+  - Go idiom: Use exec.CommandContext
+
+- [ ] Create MCP server factory - Phase 98
+  - Test: Factory creates configured servers
+  - Location: `internal/mcp/factory.go`
+  - Features: Server configuration injection
+  - Acceptance: Each server properly configured
+  - Go idiom: Functional options pattern
+
+- [ ] Implement container health checker - Phase 99
+  - Test: Health checks work with mocks
+  - Location: `internal/mcp/health_checker.go`
+  - Features: HTTP endpoint checking
+  - Acceptance: Detects health state correctly
+  - Go idiom: Interface for HTTP client
+
+- [ ] Build MCP manager with DI - Phase 100
+  - Test: Manager uses injected dependencies
+  - Location: `internal/mcp/manager.go`
+  - Features: Parallel startup, health monitoring
+  - Acceptance: Works with mock runtime
+  - Go idiom: Constructor injection
+
+- [ ] Add credential file provider - Phase 101
+  - Test: Loads real credential files
+  - Location: `internal/mcp/file_credentials.go`
+  - Features: JSON and plaintext support
+  - Acceptance: Clear errors for missing files
+  - Go idiom: Implement CredentialProvider interface
+
+### MCP Configuration and Integration
+- [ ] Generate MCP config for Claude - Phase 102
+  - Test: Config matches Claude's JSON format
+  - Location: `internal/config/mcp.go` (enhance existing)
+  - Features: Dynamic port assignment
+  - Acceptance: Claude accepts generated config
+  - Go idiom: Use struct tags for JSON
+
+- [ ] Add config persistence and hot reload - Phase 103
+  - Test: Config survives restarts
+  - Location: `internal/mcp/config_manager.go`
+  - Features: Write to disk, watch for changes
+  - Acceptance: Changes applied without restart
+  - Go idiom: Atomic file operations
+
+- [ ] Implement container restart logic - Phase 104
+  - Test: Unhealthy containers restart
+  - Location: `internal/mcp/recovery.go`
+  - Features: Exponential backoff, max attempts
+  - Acceptance: Recovers from transient failures
+  - Go idiom: Circuit breaker pattern
+
+- [ ] Add MCP metrics collection - Phase 105
+  - Test: Tracks container health/restarts
+  - Location: `internal/mcp/metrics.go`
+  - Metrics: Uptime, restart count, response time
+  - Acceptance: Prometheus-compatible metrics
+  - Go idiom: Use atomic counters
+
+### Component Lifecycle Management
+- [ ] Define lifecycle interfaces - Phase 106
+  - Test: Interfaces are mockable
+  - Location: `internal/lifecycle/interfaces.go`
+  - Types: Component, LifecycleManager, HealthReporter
+  - Acceptance: Can mock all lifecycle operations
+  - Go idiom: Interface segregation
+
+- [ ] Create mock lifecycle components - Phase 107
+  - Test: Mocks implement interfaces
+  - Location: `internal/testing/mocks/lifecycle_mocks.go`
+  - Features: Startup/shutdown simulation
+  - Acceptance: Can test lifecycle without real components
+  - Go idiom: Configurable mock behavior
+
+- [ ] Implement component registry - Phase 108
+  - Test: Registry tracks all components
+  - Location: `internal/lifecycle/registry.go`
+  - Features: Registration, dependency tracking
+  - Acceptance: Knows component relationships
+  - Go idiom: Thread-safe operations
+
+- [ ] Build startup orchestrator - Phase 109
+  - Test: Starts components in dependency order
+  - Location: `internal/lifecycle/startup.go`
+  - Features: Parallel where possible
+  - Acceptance: Respects dependencies
+  - Go idiom: Use errgroup
+
+- [ ] Add shutdown coordinator - Phase 110
+  - Test: Shuts down in reverse order
+  - Location: `internal/lifecycle/shutdown.go`
+  - Features: Graceful termination
+  - Acceptance: No data loss
+  - Go idiom: Context cancellation
+
+- [ ] Create health aggregator - Phase 111
+  - Test: Aggregates component health
+  - Location: `internal/lifecycle/health.go`
+  - Features: Component health rollup
+  - Acceptance: Single health view
+  - Go idiom: Composite pattern
+
+### Claude CLI Management
+- [ ] Define Claude installer interface - Phase 112
+  - Test: Installation can be mocked
+  - Location: `internal/claude/interfaces.go`
+  - Types: Installer, VersionManager
+  - Acceptance: Can test without downloads
+  - Go idiom: Small interfaces
+
+- [ ] Implement Claude installer - Phase 113
+  - Test: Downloads correct platform binary
+  - Location: `internal/claude/installer.go`
+  - Features: Platform detection, checksums
+  - Acceptance: Works on Linux/Mac
+  - Go idiom: Verify integrity
+
+- [ ] Add version management - Phase 114
+  - Test: Compares versions correctly
+  - Location: `internal/claude/version.go`
+  - Features: Semantic versioning
+  - Acceptance: Updates when newer
+  - Go idiom: Use semver library
+
+- [ ] Create installation cache - Phase 115
+  - Test: Caches downloaded binaries
+  - Location: `internal/claude/cache.go`
+  - Features: Avoids re-downloads
+  - Acceptance: Fast repeated installs
+  - Go idiom: Atomic operations
+
+- [ ] Wire Claude into lifecycle - Phase 116
+  - Test: Claude starts with system
+  - Location: `internal/lifecycle/claude_component.go`
+  - Features: Implements Component interface
+  - Acceptance: Never missing Claude
+  - Go idiom: Fail fast
+
+### Setup Wizard Implementation
+- [ ] Design wizard interfaces - Phase 117
+  - Test: Wizard steps are mockable
+  - Location: `internal/setup/interfaces.go`
+  - Types: SetupWizard, WizardStep, Prompter
+  - Acceptance: Can test wizard flow
+  - Go idiom: Strategy pattern
+
+- [ ] Create wizard framework - Phase 118
+  - Test: Manages step progression
+  - Location: `internal/setup/wizard.go`
+  - Features: Step tracking, resume
+  - Acceptance: Can restart mid-setup
+  - Go idiom: State machine
+
+- [ ] Implement interactive prompts - Phase 119
+  - Test: Prompts validate input
+  - Location: `internal/setup/prompts.go`
+  - Features: Input validation, defaults
+  - Acceptance: Clear error messages
+  - Go idiom: Pure validation functions
+
+- [ ] Add credential collection - Phase 120
+  - Test: Collects all credentials
+  - Location: `internal/setup/credentials.go`
+  - Features: Secure input, validation
+  - Acceptance: All services configured
+  - Go idiom: No credentials in memory
+
+- [ ] Create setup verification - Phase 121
+  - Test: Verifies complete setup
+  - Location: `internal/setup/verify.go`
+  - Features: Component health checks
+  - Acceptance: Everything works
+  - Go idiom: Comprehensive checks
+
+### Integration Testing
+- [ ] Test MCP Docker integration - Phase 122
+  - Test: All MCP servers work together
+  - Location: `tests/integration/mcp_docker_test.go`
+  - Scenarios: Startup, failure, recovery
+  - Acceptance: Reliable container management
+  - Go idiom: Test with real containers
+
+- [ ] Test Signal embedding - Phase 123
+  - Test: Embedded Signal works correctly
+  - Location: `tests/integration/signal_embed_test.go`
+  - Scenarios: Registration, messaging, devices
+  - Acceptance: Full Signal functionality
+  - Go idiom: Mock where appropriate
+
+- [ ] Test component lifecycle - Phase 124
+  - Test: All components coordinate
+  - Location: `tests/integration/lifecycle_test.go`
+  - Scenarios: Startup, shutdown, failures
+  - Acceptance: Graceful handling
+  - Go idiom: Test error paths
+
+- [ ] Test setup wizard flow - Phase 125
+  - Test: Complete setup works
+  - Location: `tests/integration/setup_test.go`
+  - Scenarios: Fresh setup, resume, errors
+  - Acceptance: User-friendly experience
+  - Go idiom: Simulate user input
+
+### MCP Error Recovery and Testing
+- [ ] Implement MCP error reporting - Phase 126
   - Test: MCP errors trigger natural explanations
   - Location: `internal/agent/error_handler.go`
   - Features: Error classification, Claude-generated messages
   - Acceptance: No raw errors shown to users
   - Go idiom: Wrap errors with context
 
-- [ ] Add progressive error recovery - Phase 77
-  - Test: Errors reported as they occur
-  - Features: Connection/permission/timeout detection
+- [ ] Add MCP failure recovery - Phase 127
+  - Test: System recovers from MCP failures
+  - Features: Container restart, fallback messages
   - Acceptance: User understands what went wrong
-  - Go idiom: Error type assertions
+  - Go idiom: Circuit breaker pattern
 
-### End-to-End Testing
-- [ ] Build end-to-end latency tests - Phase 78
-  - Test: Initial ack in 3s, response in 8s
-  - Location: `tests/integration/latency_test.go`
-  - Metrics: Time to ack, time to response, time to validation
-  - Acceptance: P95 latency meets targets
-  - Go idiom: Benchmark tests
+- [ ] Test MCP tool usage end-to-end - Phase 128
+  - Test: All MCP tools work with Claude
+  - Location: `tests/integration/mcp_tools_test.go`
+  - Scenarios: Calendar, email, memory operations
+  - Acceptance: Real tool operations succeed
+  - Go idiom: Test with real services
 
-- [ ] Test continuation flow - Phase 79
-  - Test: Multi-step requests complete correctly
-  - Location: `tests/integration/continuation_test.go`
-  - Scenarios: 0, 1, 5 continuations needed
-  - Acceptance: All steps execute with progress updates
-  - Go idiom: State machine testing
-
-- [ ] Test smart initial response - Phase 80
-  - Test: Simple queries complete without continuation
-  - Location: `tests/integration/quick_response_test.go`
-  - Scenarios: Chat queries, simple questions, clarifications
-  - Acceptance: Response in 3s with needs_continuation=false
-  - Go idiom: Timeout-based assertions
-
-### Agent Testing Scenarios
-- [ ] Build complex test scenarios - Phase 81
-  - Test: Multi-turn conversations work
-  - Location: `tests/scenarios/complex_requests.go`
-  - Scenarios: Scheduling, partial failures
-  - Acceptance: Scenarios are reusable
-  - Go idiom: Data-driven test cases
-
-- [ ] Add failure mode testing - Phase 82
-  - Test: System handles all failure types
-  - Location: `tests/scenarios/failure_modes.go`
-  - Modes: Timeout, invalid response, tool errors
+- [ ] Test MCP error scenarios - Phase 129
+  - Test: System handles all MCP failure modes
+  - Location: `tests/integration/mcp_failures_test.go`
+  - Modes: Container down, network issues, auth failures
   - Acceptance: Graceful degradation
   - Go idiom: Test the unhappy path
 
-### MCP Configuration Integration
-- [ ] Create MCP config generator - Phase 83
-  - Test: Config matches Claude's format
-  - Location: `internal/config/generator.go`
-  - Features: All 5 MCP servers configured
-  - Acceptance: Claude accepts config
-  - Go idiom: Generate, don't template
+### End-to-End System Testing
+- [ ] Build end-to-end latency tests - Phase 130
+  - Test: Initial ack in 3s, response in 8s
+  - Location: `tests/integration/latency_test.go`
+  - Metrics: Time to ack, time to response, with MCP
+  - Acceptance: P95 latency meets targets
+  - Go idiom: Benchmark tests
 
-- [ ] Add config validation - Phase 84
-  - Test: Invalid configs fail fast
-  - Features: URL validation, server checks
-  - Acceptance: Clear error messages
-  - Go idiom: Validate at boundaries
+- [ ] Test continuation flow with MCP - Phase 131
+  - Test: Multi-step MCP requests complete
+  - Location: `tests/integration/continuation_test.go`
+  - Scenarios: Complex calendar operations
+  - Acceptance: All steps execute correctly
+  - Go idiom: State machine testing
 
-### MCP Health Checking
-- [ ] Implement MCP server health checks - Phase 85
-  - Test: Detects when servers are down
-  - Location: `internal/mcp/health.go`
-  - Features: HTTP health endpoints
-  - Acceptance: Quick detection (<5s)
-  - Go idiom: Use context with timeout
+- [ ] Test system with all components - Phase 132
+  - Test: Full system works end-to-end
+  - Location: `tests/integration/full_system_test.go`
+  - Features: Signal + MCP + Claude + Setup
+  - Acceptance: Production-ready system
+  - Go idiom: Test like production
 
-- [ ] Add startup verification - Phase 86
-  - Test: Won't start without MCP servers
-  - Features: Retry logic, clear errors
-  - Acceptance: Helpful error messages
-  - Go idiom: Fail fast and loud
+### Production Readiness
+- [ ] Add component monitoring dashboard - Phase 133
+  - Test: Shows all component status
+  - Location: `internal/api/components.go`
+  - Features: REST endpoint for status
+  - Acceptance: Real-time visibility
+  - Go idiom: JSON API design
 
-### Intelligence Layer Integration Testing
-- [ ] Create end-to-end test scenarios - Phase 87
-  - Test: Real Claude integration works
-  - Location: `tests/integration/e2e_test.go`
-  - Tag: `// +build integration`
-  - Acceptance: Tests can run locally
-  - Go idiom: Skip if Claude unavailable
+- [ ] Create operational CLI commands - Phase 134
+  - Test: All ops commands work
+  - Location: `cmd/mentat/ops.go`
+  - Commands: status, restart, logs
+  - Acceptance: Easy troubleshooting
+  - Go idiom: Helpful command output
 
-- [ ] Add load testing - Phase 88
-  - Test: System handles 50 concurrent users
-  - Location: `tests/integration/load_test.go`
-  - Features: Queue overflow, rate limiting
-  - Acceptance: Degrades gracefully
-  - Go idiom: Measure, don't guess
+- [ ] Document component architecture - Phase 135
+  - Test: Docs match implementation
+  - Location: `docs/components.md`
+  - Sections: Architecture, operations, troubleshooting
+  - Acceptance: Ops team can run it
+  - Go idiom: Executable documentation
+
+- [ ] Final production validation - Phase 136
+  - Test: Everything production ready
+  - Location: `tests/integration/production_test.go`
+  - Features: Load testing, failure recovery
+  - Acceptance: Meets all SLAs
+  - Go idiom: Test at scale
 
 ## Production Layer
 
 ### Scheduler Framework
-- [ ] Implement cron scheduler - Phase 89
+- [ ] Implement cron scheduler - Phase 137
   - Test: Jobs run at specified times
   - Location: `internal/scheduler/scheduler.go`
   - Features: Cron syntax, timezone support
   - Acceptance: Accurate to the minute
   - Go idiom: Use well-tested libraries
 
-- [ ] Add job registration system - Phase 90
+- [ ] Add job registration system - Phase 138
   - Test: Jobs can be added/removed
   - Features: Dynamic scheduling
   - Acceptance: No duplicate runs
   - Go idiom: Make scheduling declarative
 
 ### Proactive Jobs
-- [ ] Implement morning briefing job - Phase 91
+- [ ] Implement morning briefing job - Phase 139
   - Test: Generates useful briefing
   - Location: `internal/scheduler/jobs/briefing.go`
   - Features: Calendar, weather, tasks
   - Acceptance: Runs at 7am daily
   - Go idiom: Keep jobs independent
 
-- [ ] Add reminder job framework - Phase 92
+- [ ] Add reminder job framework - Phase 128
   - Test: Reminders are contextual
   - Location: `internal/scheduler/jobs/reminders.go`
   - Features: Smart timing, relevance
@@ -665,57 +1011,57 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Go idiom: User control over frequency
 
 ### Main Application
-- [ ] Wire full production main.go - Phase 93
+- [ ] Wire full production main.go - Phase 129
   - Test: Application starts cleanly
   - Location: `cmd/mentat/main.go`
-  - Features: Flag parsing, config loading
-  - Acceptance: --help is helpful
+  - Features: Component lifecycle, config
+  - Acceptance: Single binary does everything
   - Go idiom: Keep main small
 
-- [ ] Add graceful shutdown - Phase 94
+- [ ] Add graceful shutdown - Phase 130
   - Test: Ctrl+C stops cleanly
-  - Features: Drain queues, close connections
+  - Features: Component shutdown, queue drain
   - Acceptance: No message loss
   - Go idiom: Use signal handling
 
 ### Configuration Management
-- [ ] Implement config loading - Phase 95
+- [ ] Implement config loading - Phase 131
   - Test: Validates all required fields
   - Location: `internal/config/config.go`
   - Features: YAML parsing, env override
   - Acceptance: Clear errors for bad config
   - Go idiom: Explicit over implicit
 
-- [ ] Add configuration hot reload - Phase 96
+- [ ] Add configuration hot reload - Phase 132
   - Test: Changes apply without restart
   - Features: File watching, validation
   - Acceptance: Bad changes are rejected
   - Go idiom: Make it optional
 
 ### Observability
-- [ ] Add structured logging - Phase 97
+- [ ] Add structured logging - Phase 133
   - Test: Logs are parseable
   - Location: `internal/logging/logger.go`
   - Features: Context fields, levels
   - Acceptance: Can trace requests
   - Go idiom: Log actionable information
 
-- [ ] Implement metrics collection - Phase 98
+- [ ] Implement metrics collection - Phase 134
   - Test: Metrics are accurate
   - Location: `internal/metrics/collector.go`
-  - Metrics: Queue depth, latency, success rate
+  - Metrics: Component health, queue depth, latency
   - Acceptance: Prometheus compatible
   - Go idiom: Use standard metrics
 
 ### Monitoring Endpoints
-- [ ] Add health check endpoint - Phase 99
+- [ ] Add health check endpoint - Phase 135
   - Test: Returns 200 when healthy
   - Location: `internal/api/health.go`
-  - Features: Dependency checks
+  - Features: Component health aggregation
   - Acceptance: Useful for monitoring
   - Go idiom: Be specific about health
 
-- [ ] Add metrics endpoint - Phase 100
+- [ ] Add metrics endpoint - Phase 136
   - Test: Exposes Prometheus metrics
   - Location: `internal/api/metrics.go`
   - Features: All key metrics exposed
@@ -723,112 +1069,99 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Go idiom: Follow Prometheus conventions
 
 ### Deployment Preparation
-- [ ] Create systemd service file - Phase 101
+- [ ] Create systemd service file - Phase 137
   - Test: Service starts on boot
   - Location: `scripts/mentat.service`
   - Features: Restart policy, logging
   - Acceptance: Survives reboot
   - Go idiom: Log to stdout/stderr
 
-- [ ] Add Docker/Podman support - Phase 102
-  - Test: Container runs correctly
+- [ ] Add production Dockerfile - Phase 138
+  - Test: Container includes all components
   - Location: `Dockerfile`
-  - Features: Multi-stage build
-  - Acceptance: Image under 50MB
-  - Go idiom: FROM scratch when possible
+  - Features: Multi-stage build, minimal image
+  - Acceptance: Image under 100MB
+  - Go idiom: Include only runtime needs
 
 ### Security Hardening
-- [ ] Add authentication for Signal numbers - Phase 103
+- [ ] Add authentication for Signal numbers - Phase 139
   - Test: Only allowed numbers work
   - Location: `internal/auth/validator.go`
   - Features: Whitelist checking
   - Acceptance: Clear rejection messages
   - Go idiom: Fail secure
 
-- [ ] Implement secrets management - Phase 104
+- [ ] Implement secrets management - Phase 140
   - Test: No secrets in logs/config
   - Features: File-based secrets
   - Acceptance: Secrets are protected
   - Go idiom: Never log secrets
 
 ### NixOS Module
-- [ ] Create NixOS module - Phase 105
+- [ ] Create NixOS module - Phase 141
   - Test: Module evaluates correctly
   - Location: `nix/module.nix`
   - Features: Service configuration
   - Acceptance: nixos-rebuild works
   - Go idiom: Declarative configuration
 
-- [ ] Add flake with all dependencies - Phase 106
+- [ ] Add flake with all dependencies - Phase 142
   - Test: nix build succeeds
   - Location: `flake.nix`
   - Features: Reproducible builds
   - Acceptance: Works on fresh system
   - Go idiom: Pin all dependencies
 
-### MCP Container Setup
-- [ ] Configure MCP containers in Nix - Phase 107
-  - Test: All containers start
-  - Features: Health checks, restart policies
-  - Acceptance: Survives host reboot
-  - Go idiom: One container per service
-
-- [ ] Add secrets mounting - Phase 108
-  - Test: Containers can read secrets
-  - Features: Read-only mounts
-  - Acceptance: Secure permissions
-  - Go idiom: Principle of least privilege
-
 ### Documentation
-- [ ] Write operations guide - Phase 109
+- [ ] Write operations guide - Phase 143
   - Test: Can follow to deploy
   - Location: `docs/operations.md`
-  - Sections: Install, configure, monitor
+  - Sections: Setup, monitoring, troubleshooting
   - Acceptance: New user can deploy
   - Go idiom: Show, don't just tell
 
-- [ ] Create troubleshooting guide - Phase 110
-  - Test: Covers common issues
-  - Location: `docs/troubleshooting.md`
-  - Issues: Queue full, MCP down, auth fails
-  - Acceptance: Solutions work
+- [ ] Create user guide - Phase 144
+  - Test: End users understand features
+  - Location: `docs/user-guide.md`
+  - Sections: Setup wizard, device management, MCP services
+  - Acceptance: Non-technical users succeed
   - Go idiom: Real examples
 
 ### Performance Testing
-- [ ] Run load tests - Phase 111
+- [ ] Run load tests - Phase 145
   - Test: Handle 100 msgs/minute
   - Features: Queue behavior under load
   - Acceptance: <10s p99 latency
   - Go idiom: Measure real workloads
 
-- [ ] Profile and optimize hot paths - Phase 112
+- [ ] Profile and optimize hot paths - Phase 146
   - Test: No obvious bottlenecks
   - Tools: pprof, trace
   - Acceptance: CPU <10% idle
   - Go idiom: Optimize the measured
 
 ### Final Integration
-- [ ] Full system test - Phase 113
+- [ ] Full system test - Phase 147
   - Test: All features work together
-  - Scenarios: Morning briefing, scheduling, memory
+  - Scenarios: Setup, briefing, scheduling, memory
   - Acceptance: No regressions
   - Go idiom: Test the whole system
 
-- [ ] Deploy to production - Phase 114
+- [ ] Deploy to production - Phase 148
   - Test: Real Signal messages work
-  - Features: All MCP servers connected
+  - Features: All components managed
   - Acceptance: Responds within 10s
   - Go idiom: Start with monitoring
 
 ### Handoff
-- [ ] Create runbook - Phase 115
+- [ ] Create runbook - Phase 149
   - Test: Can handle incidents
   - Location: `docs/runbook.md`
-  - Scenarios: Outages, performance issues
+  - Scenarios: Component failures, recovery
   - Acceptance: Ops team approved
   - Go idiom: Automate solutions
 
-- [ ] Final cleanup - Phase 116
+- [ ] Final cleanup - Phase 150
   - Test: No TODOs in code
   - Tasks: Remove debug code, update README
   - Acceptance: Code is production ready
@@ -837,34 +1170,45 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
 ## Success Criteria
 
 ### Foundation Layer Success Metrics
-- [ ] All interfaces defined and mockable - Phase 117
-- [ ] Queue processes messages with proper state transitions - Phase 118
-- [ ] Signal messages flow through system - Phase 119
-- [ ] Basic Claude integration works - Phase 120
-- [ ] Integration tests pass - Phase 121
+- [ ] All interfaces defined and mockable
+- [ ] Queue processes messages with proper state transitions
+- [ ] Signal messages flow through system
+- [ ] Basic Claude integration works
+- [ ] Integration tests pass
+
+### Component Management Success Metrics
+- [ ] MCP servers managed via Docker containers
+- [ ] Signal CLI embedded and managed
+- [ ] Claude CLI auto-installed and updated
+- [ ] Setup wizard guides complete configuration
+- [ ] All components health-monitored
 
 ### Intelligence Layer Success Metrics
-- [ ] Multi-agent validation catches failures - Phase 122
-- [ ] Complex requests handled gracefully - Phase 123
-- [ ] Session continuity maintains context - Phase 124
-- [ ] All MCP servers integrated - Phase 125
-- [ ] Load tests pass - Phase 126
+- [ ] Multi-agent validation catches failures
+- [ ] Complex requests handled gracefully
+- [ ] Session continuity maintains context
+- [ ] All MCP servers integrated and working
+- [ ] Load tests pass with 50 concurrent users
 
 ### Production Layer Success Metrics
-- [ ] Deploys cleanly with Nix - Phase 127
-- [ ] Handles 100 concurrent conversations - Phase 128
-- [ ] P99 latency under 10 seconds - Phase 129
-- [ ] Zero message loss under load - Phase 130
-- [ ] Production monitoring active - Phase 131
+- [ ] Deploys cleanly with single binary
+- [ ] Handles 100 concurrent conversations
+- [ ] P99 latency under 10 seconds
+- [ ] Zero message loss under load
+- [ ] Production monitoring active
+- [ ] Setup completes in under 10 minutes
 
 ## Testing Checklist
 
 For each component:
-- [ ] Unit tests with >80% coverage - Phase 132
-- [ ] Integration tests for happy path - Phase 133
-- [ ] Failure mode tests - Phase 134
-- [ ] Concurrent access tests - Phase 135
-- [ ] Benchmark for hot paths - Phase 136
+- [ ] Unit tests with >80% coverage
+- [ ] Integration tests for happy path
+- [ ] Failure mode tests
+- [ ] Concurrent access tests
+- [ ] Benchmark for hot paths
+- [ ] Component lifecycle tests
+- [ ] Docker container tests
+- [ ] Setup wizard tests
 
 ## Go Idioms Reminder
 

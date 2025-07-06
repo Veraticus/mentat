@@ -397,7 +397,7 @@ func (v *SimpleValidator) analyzeKeywords(
 // Validate performs basic validation without LLM calls.
 func (v *SimpleValidator) Validate(
 	_ context.Context,
-	request, response string,
+	request, response, _ string,
 	_ claude.LLM,
 ) ValidationResult {
 	result := ValidationResult{
@@ -453,7 +453,7 @@ func (v *SimpleValidator) ShouldRetry(_ ValidationResult) bool {
 // GenerateRecovery provides simple recovery messages without LLM calls.
 func (v *SimpleValidator) GenerateRecovery(
 	_ context.Context,
-	_, _ string,
+	_, _, _ string,
 	result ValidationResult,
 	_ claude.LLM,
 ) string {
@@ -470,7 +470,7 @@ func NewNoopValidator() *NoopValidator {
 }
 
 // Validate always returns success with high confidence.
-func (v *NoopValidator) Validate(_ context.Context, _, _ string, _ claude.LLM) ValidationResult {
+func (v *NoopValidator) Validate(_ context.Context, _, _, _ string, _ claude.LLM) ValidationResult {
 	return ValidationResult{
 		Status:      ValidationStatusSuccess,
 		Confidence:  1.0,
@@ -488,7 +488,7 @@ func (v *NoopValidator) ShouldRetry(_ ValidationResult) bool {
 // GenerateRecovery always returns empty string.
 func (v *NoopValidator) GenerateRecovery(
 	_ context.Context,
-	_, _ string,
+	_, _, _ string,
 	_ ValidationResult,
 	_ claude.LLM,
 ) string {
