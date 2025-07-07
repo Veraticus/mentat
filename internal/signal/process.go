@@ -40,6 +40,9 @@ type ProcessConfig struct {
 	// PhoneNumber is the registered phone number.
 	PhoneNumber string
 
+	// SocketPath is the path to the Unix domain socket.
+	SocketPath string
+
 	// StartupTimeout is how long to wait for the process to become ready.
 	StartupTimeout time.Duration
 
@@ -369,8 +372,15 @@ func (pm *ProcessManagerImpl) BuildArgs() []string {
 	// Add any additional configured arguments
 	args = append(args, pm.config.Args...)
 
-	// Always run in daemon mode with JSON-RPC
-	args = append(args, "daemon", "--json-rpc")
+	// Always run in daemon mode
+	args = append(args, "daemon")
+
+	// Add socket path if specified, otherwise use JSON-RPC for backward compatibility
+	if pm.config.SocketPath != "" {
+		args = append(args, "--socket", pm.config.SocketPath)
+	} else {
+		args = append(args, "--json-rpc")
+	}
 
 	return args
 }

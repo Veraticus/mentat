@@ -562,35 +562,35 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Go idiom: State machine pattern
 
 ### Signal Implementation
-- [ ] Create process manager interface - Phase 79
+- [X] Create process manager interface - Phase 79
   - Test: Abstracts process lifecycle
   - Location: `internal/signal/process.go`
   - Features: Start, stop, health check
   - Acceptance: Can mock subprocess management
   - Go idiom: Use context for lifecycle
 
-- [ ] Implement Signal daemon wrapper - Phase 80
+- [X] Implement Signal daemon wrapper - Phase 80
   - Test: Starts real signal-cli daemon
   - Location: `internal/signal/daemon.go`
   - Features: Process management, log capture
   - Acceptance: Daemon stays running
   - Go idiom: Goroutines for log handling
 
-- [ ] Build Signal manager with DI - Phase 81
+- [X] Build Signal manager with DI - Phase 81
   - Test: Manager uses injected dependencies
   - Location: `internal/signal/manager.go`
   - Features: Mode detection, graceful fallback
   - Acceptance: Works with mock process manager
   - Go idiom: Constructor injection
 
-- [ ] Add phone number validator - Phase 82
+- [X] Add phone number validator - Phase 82
   - Test: Validates E.164 format correctly
   - Location: `internal/signal/validation.go`
   - Features: Country code detection
   - Acceptance: Clear errors for bad formats
   - Go idiom: Pure function validation
 
-- [ ] Implement data path manager - Phase 83
+- [X] Implement data path manager - Phase 83
   - Test: Creates/validates directories
   - Location: `internal/signal/storage.go`
   - Features: Permission checking
@@ -598,14 +598,14 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Go idiom: Fail fast on permissions
 
 ### Signal Setup and Registration
-- [ ] Implement registration flow with DI - Phase 84
+- [X] Implement registration flow with DI - Phase 84
   - Test: Registration uses injected dependencies
   - Location: `internal/setup/registration.go`
   - Features: State machine, process injection
   - Acceptance: Works with mock signal-cli
   - Go idiom: Make invalid states impossible
 
-- [ ] Add SMS verification handler - Phase 85
+- [X] Add SMS verification handler - Phase 85
   - Test: Accepts 6-digit codes
   - Location: `internal/setup/verification.go`
   - Features: Retry support, timeout handling
