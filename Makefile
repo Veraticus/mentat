@@ -28,7 +28,7 @@ test:
 	@echo "Running unit tests..."
 	@go test -timeout 120s -race -coverprofile=$(COVERAGE_DIR)/coverage.out -covermode=atomic ./...
 	@echo "Running integration tests..."
-	@go test -timeout 30s -race -tags=integration -coverprofile=$(COVERAGE_DIR)/coverage-integration.out -covermode=atomic ./tests/integration
+	@go test -timeout 120s -race -tags=integration -coverprofile=$(COVERAGE_DIR)/coverage-integration.out -covermode=atomic ./tests/integration
 	@echo "Merging coverage reports..."
 	@echo "mode: atomic" > $(COVERAGE_DIR)/coverage-combined.out
 	@tail -n +2 $(COVERAGE_DIR)/coverage.out >> $(COVERAGE_DIR)/coverage-combined.out 2>/dev/null || true

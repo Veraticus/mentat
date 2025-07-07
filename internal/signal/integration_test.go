@@ -75,9 +75,11 @@ func TestIntegration_SubscriptionFlow(t *testing.T) {
 		t.Fatalf("Subscribe failed: %v", err)
 	}
 
-	// Simulate incoming message
+	// Simulate incoming message with delay
 	go func() {
-		time.Sleep(100 * time.Millisecond)
+		// Use timer for delay
+		timer := time.NewTimer(100 * time.Millisecond)
+		<-timer.C
 		transport.SimulateNotification(&signal.Notification{
 			JSONRPC: "2.0",
 			Method:  "receive",
@@ -116,16 +118,16 @@ func TestIntegration_SubscriptionFlow(t *testing.T) {
 		if envelope.Source != "+9876543210" {
 			t.Errorf("Expected source '+9876543210', got %s", envelope.Source)
 		}
-		if envelope.signal.DataMessage == nil {
-			t.Fatal("Expected signal.DataMessage to be non-nil")
+		if envelope.DataMessage == nil {
+			t.Fatal("Expected DataMessage to be non-nil")
 		}
-		if envelope.signal.DataMessage.Message != "Hello from integration test" {
-			t.Errorf("Expected message 'Hello from integration test', got %s", envelope.signal.DataMessage.Message)
+		if envelope.DataMessage.Message != "Hello from integration test" {
+			t.Errorf("Expected message 'Hello from integration test', got %s", envelope.DataMessage.Message)
 		}
-		if len(envelope.signal.DataMessage.Attachments) != 1 {
-			t.Errorf("Expected 1 attachment, got %d", len(envelope.signal.DataMessage.Attachments))
+		if len(envelope.DataMessage.Attachments) != 1 {
+			t.Errorf("Expected 1 attachment, got %d", len(envelope.DataMessage.Attachments))
 		} else {
-			att := envelope.signal.DataMessage.Attachments[0]
+			att := envelope.DataMessage.Attachments[0]
 			if att.ContentType != "image/jpeg" {
 				t.Errorf("Expected content type 'image/jpeg', got %s", att.ContentType)
 			}
@@ -246,8 +248,8 @@ func TestIntegration_TypingIndicatorFlow(t *testing.T) {
 		t.Fatalf("SendTypingIndicator (start) failed: %v", err)
 	}
 
-	// Wait a bit
-	time.Sleep(50 * time.Millisecond)
+	// Wait a bit using timer
+	<-time.After(50 * time.Millisecond)
 
 	// Send typing stop
 	err = client.SendTypingIndicator(ctx, "+1234567890", true)

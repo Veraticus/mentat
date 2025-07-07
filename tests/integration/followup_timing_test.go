@@ -32,22 +32,22 @@ func TestFollowUpTiming_QuickCorrections(t *testing.T) {
 		{
 			name:               "instant_validation",
 			validationDuration: 0,
-			expectedMinDelay:   4 * time.Second, // 2s initial + 0s validation + 2s correction
-			expectedMaxDelay:   5 * time.Second, // Allow some overhead
-			description:        "Instant validation should result in ~4s total delay",
+			expectedMinDelay:   100 * time.Millisecond, // 50ms initial + 0s validation + 50ms correction
+			expectedMaxDelay:   200 * time.Millisecond, // Allow some overhead
+			description:        "Instant validation should result in ~100ms total delay",
 		},
 		{
 			name:               "quick_validation",
 			validationDuration: 500 * time.Millisecond,
-			expectedMinDelay:   4500 * time.Millisecond, // 2s + 0.5s + 2s
-			expectedMaxDelay:   5500 * time.Millisecond,
+			expectedMinDelay:   600 * time.Millisecond, // 50ms + 500ms + 50ms
+			expectedMaxDelay:   800 * time.Millisecond,
 			description:        "Quick validation should add to total delay",
 		},
 		{
 			name:               "normal_validation",
 			validationDuration: 1 * time.Second,
-			expectedMinDelay:   5 * time.Second, // 2s + 1s + 2s
-			expectedMaxDelay:   6 * time.Second,
+			expectedMinDelay:   1100 * time.Millisecond, // 50ms + 1s + 50ms
+			expectedMaxDelay:   1300 * time.Millisecond,
 			description:        "Normal validation timing should be predictable",
 		},
 	}
@@ -85,6 +85,8 @@ func TestFollowUpTiming_QuickCorrections(t *testing.T) {
 				agent.WithIntentEnhancer(mocks.NewMockIntentEnhancer()),
 				agent.WithSessionManager(sessionManager),
 				agent.WithMessenger(h.mockMessenger),
+				agent.WithAsyncValidatorDelay(50*time.Millisecond), // Set the initial delay
+				agent.WithCorrectionDelay(50*time.Millisecond),     // Set the correction delay
 			)
 			require.NoError(t, err)
 
@@ -123,7 +125,7 @@ func TestFollowUpTiming_QuickCorrections(t *testing.T) {
 				"%s: Correction should not be delayed too long", tc.name)
 
 			// Wait for async operations to complete
-			time.Sleep(500 * time.Millisecond)
+			time.Sleep(50 * time.Millisecond)
 		})
 	}
 }
@@ -133,7 +135,7 @@ func TestFollowUpTiming_SlowValidation(t *testing.T) {
 	h := newAsyncValidationTestHarness()
 	defer h.cleanup()
 
-	// Configure slow validation (3 seconds)
+	// Configure validation with delay
 	validationStrategy := &trackingValidationStrategy{
 		harness: h,
 		result: &agent.ValidationResult{
@@ -141,7 +143,7 @@ func TestFollowUpTiming_SlowValidation(t *testing.T) {
 			Confidence: 0.6,
 			Issues:     []string{"Only partially completed the request"},
 		},
-		delay: 3 * time.Second,
+		delay: 300 * time.Millisecond,
 	}
 
 	// Configure LLM
@@ -161,6 +163,8 @@ func TestFollowUpTiming_SlowValidation(t *testing.T) {
 		agent.WithIntentEnhancer(mocks.NewMockIntentEnhancer()),
 		agent.WithSessionManager(sessionManager),
 		agent.WithMessenger(h.mockMessenger),
+		agent.WithAsyncValidatorDelay(50*time.Millisecond), // Set the initial delay
+		agent.WithCorrectionDelay(50*time.Millisecond),     // Set the correction delay
 	)
 	require.NoError(t, err)
 
@@ -182,16 +186,16 @@ func TestFollowUpTiming_SlowValidation(t *testing.T) {
 	require.NoError(t, err)
 	initialTime := initialMsg.Timestamp
 
-	// Wait for correction (should take 2s initial + 3s validation + 2s correction = ~7s)
-	correction, err := h.waitForMessage(8 * time.Second)
+	// Wait for correction (should take 50ms initial + 300ms validation + 50ms correction = ~400ms)
+	correction, err := h.waitForMessage(1 * time.Second)
 	require.NoError(t, err)
 	assert.Contains(t, correction.Message, "Oops!")
 
 	// Verify timing
 	delta := correction.Timestamp.Sub(initialTime)
 	t.Logf("Slow validation timing: %v", delta)
-	assert.GreaterOrEqual(t, delta, 7*time.Second, "Should include all delays")
-	assert.LessOrEqual(t, delta, 8*time.Second, "Should not exceed reasonable overhead")
+	assert.GreaterOrEqual(t, delta, 400*time.Millisecond, "Should include all delays")
+	assert.LessOrEqual(t, delta, 600*time.Millisecond, "Should not exceed reasonable overhead")
 }
 
 // TestFollowUpTiming_UnclearStatus tests the faster clarification timing
@@ -227,6 +231,8 @@ func TestFollowUpTiming_UnclearStatus(t *testing.T) {
 		agent.WithIntentEnhancer(mocks.NewMockIntentEnhancer()),
 		agent.WithSessionManager(sessionManager),
 		agent.WithMessenger(h.mockMessenger),
+		agent.WithAsyncValidatorDelay(50*time.Millisecond), // Set the initial delay
+		agent.WithCorrectionDelay(50*time.Millisecond),     // Set the correction delay
 	)
 	require.NoError(t, err)
 
@@ -247,16 +253,16 @@ func TestFollowUpTiming_UnclearStatus(t *testing.T) {
 	require.NoError(t, err)
 	initialTime := initialMsg.Timestamp
 
-	// Clarification should arrive faster (2s initial + 0.5s validation + 1s clarify = ~3.5s)
-	clarification, err := h.waitForMessage(5 * time.Second)
+	// Clarification should arrive faster (50ms initial + 500ms validation + 50ms clarify = ~600ms)
+	clarification, err := h.waitForMessage(1000 * time.Millisecond)
 	require.NoError(t, err)
 
 	// Verify timing
 	delta := clarification.Timestamp.Sub(initialTime)
 	t.Logf("UNCLEAR status timing: %v", delta)
-	assert.GreaterOrEqual(t, delta, 3500*time.Millisecond,
-		"UNCLEAR should use 1s clarify delay instead of 2s correction delay")
-	assert.LessOrEqual(t, delta, 4500*time.Millisecond,
+	assert.GreaterOrEqual(t, delta, 600*time.Millisecond,
+		"UNCLEAR should use 50ms clarify delay instead of 50ms correction delay")
+	assert.LessOrEqual(t, delta, 1000*time.Millisecond,
 		"Clarification should arrive promptly")
 
 	// Verify it's a clarification message
@@ -280,25 +286,25 @@ func TestFollowUpTiming_AllStatuses(t *testing.T) {
 			status:             agent.ValidationStatusPartial,
 			expectFollowUp:     true,
 			expectedDelayType:  "correction",
-			expectedTotalDelay: 4 * time.Second, // 2s + 0s + 2s
+			expectedTotalDelay: 100 * time.Millisecond, // 50ms + 0s + 50ms
 		},
 		{
 			status:             agent.ValidationStatusFailed,
 			expectFollowUp:     true,
 			expectedDelayType:  "correction",
-			expectedTotalDelay: 4 * time.Second,
+			expectedTotalDelay: 100 * time.Millisecond,
 		},
 		{
 			status:             agent.ValidationStatusIncompleteSearch,
 			expectFollowUp:     true,
 			expectedDelayType:  "correction",
-			expectedTotalDelay: 4 * time.Second,
+			expectedTotalDelay: 100 * time.Millisecond,
 		},
 		{
 			status:             agent.ValidationStatusUnclear,
 			expectFollowUp:     true,
 			expectedDelayType:  "clarify",
-			expectedTotalDelay: 3 * time.Second, // 2s + 0s + 1s
+			expectedTotalDelay: 100 * time.Millisecond, // 50ms + 0s + 50ms
 		},
 	}
 
@@ -335,6 +341,8 @@ func TestFollowUpTiming_AllStatuses(t *testing.T) {
 				agent.WithIntentEnhancer(mocks.NewMockIntentEnhancer()),
 				agent.WithSessionManager(sessionManager),
 				agent.WithMessenger(h.mockMessenger),
+				agent.WithAsyncValidatorDelay(50*time.Millisecond), // Set the initial delay
+				agent.WithCorrectionDelay(50*time.Millisecond),     // Set the correction delay
 			)
 			require.NoError(t, err)
 
@@ -357,7 +365,7 @@ func TestFollowUpTiming_AllStatuses(t *testing.T) {
 
 			if tc.expectFollowUp {
 				// Wait for follow-up
-				followUp, err := h.waitForMessage(6 * time.Second)
+				followUp, err := h.waitForMessage(500 * time.Millisecond)
 				require.NoError(t, err, "Should receive follow-up for %s", tc.status)
 
 				// Verify follow-up message was sent
@@ -375,7 +383,7 @@ func TestFollowUpTiming_AllStatuses(t *testing.T) {
 			} else {
 				// Ensure no follow-up for SUCCESS
 				// Wait a bit to ensure no follow-up is sent
-				time.Sleep(3 * time.Second)
+				time.Sleep(200 * time.Millisecond)
 
 				messages := h.mockMessenger.GetSentMessages()
 				assert.Equal(t, 1, len(messages),
@@ -443,6 +451,8 @@ func TestFollowUpTiming_ConcurrentValidations(t *testing.T) {
 				agent.WithIntentEnhancer(mocks.NewMockIntentEnhancer()),
 				agent.WithSessionManager(sessionManager),
 				agent.WithMessenger(mockMessenger),
+				agent.WithAsyncValidatorDelay(50*time.Millisecond), // Set the initial delay
+				agent.WithCorrectionDelay(50*time.Millisecond),     // Set the correction delay
 			)
 			require.NoError(t, err)
 
@@ -464,14 +474,14 @@ func TestFollowUpTiming_ConcurrentValidations(t *testing.T) {
 			result.phoneNumber = phoneNumber
 
 			// Get messages
-			time.Sleep(100 * time.Millisecond) // Allow initial message to be sent
+			time.Sleep(10 * time.Millisecond) // Allow initial message to be sent
 			messages := mockMessenger.GetSentMessages()
 			if len(messages) > 0 {
 				result.initialTime = messages[0].Timestamp
 			}
 
 			// Wait for follow-up
-			time.Sleep(6 * time.Second)
+			time.Sleep(600 * time.Millisecond)
 			messages = mockMessenger.GetSentMessages()
 			if len(messages) > 1 {
 				result.followUpTime = messages[1].Timestamp
@@ -494,10 +504,10 @@ func TestFollowUpTiming_ConcurrentValidations(t *testing.T) {
 		t.Logf("Concurrent validation %s: %v", res.phoneNumber, delta)
 
 		// Each should maintain proper timing despite concurrency
-		expectedMin := 4*time.Second + time.Duration(i*100)*time.Millisecond
+		expectedMin := 100*time.Millisecond + time.Duration(i*100)*time.Millisecond
 		assert.GreaterOrEqual(t, delta, expectedMin,
 			"Concurrent validations should maintain minimum delay")
-		assert.LessOrEqual(t, delta, expectedMin+2*time.Second,
+		assert.LessOrEqual(t, delta, expectedMin+200*time.Millisecond,
 			"Concurrent validations should not have excessive delay")
 	}
 }
@@ -514,7 +524,7 @@ func TestFollowUpTiming_ContextCancellation(t *testing.T) {
 			Status: agent.ValidationStatusFailed,
 			Issues: []string{"Should be canceled"},
 		},
-		delay: 10 * time.Second, // Long enough to cancel
+		delay: 1 * time.Second, // Long delay to simulate cancellation scenario
 	}
 
 	// Configure LLM
@@ -536,6 +546,8 @@ func TestFollowUpTiming_ContextCancellation(t *testing.T) {
 		agent.WithIntentEnhancer(mocks.NewMockIntentEnhancer()),
 		agent.WithSessionManager(sessionManager),
 		agent.WithMessenger(h.mockMessenger),
+		agent.WithAsyncValidatorDelay(50*time.Millisecond), // Set the initial delay
+		agent.WithCorrectionDelay(50*time.Millisecond),     // Set the correction delay
 	)
 	require.NoError(t, err)
 
@@ -559,7 +571,7 @@ func TestFollowUpTiming_ContextCancellation(t *testing.T) {
 	assert.Equal(t, 1, beforeMessages, "Should have initial response")
 
 	// Wait for validation to launch
-	err = h.waitForValidationLaunch(sessionID, 3*time.Second)
+	err = h.waitForValidationLaunch(sessionID, 300*time.Millisecond)
 	require.NoError(t, err)
 
 	// Note: We can't directly shutdown the validator from outside the handler
@@ -567,15 +579,15 @@ func TestFollowUpTiming_ContextCancellation(t *testing.T) {
 	t.Log("Validation will complete or timeout naturally")
 
 	// Wait to ensure no follow-up is sent
-	time.Sleep(3 * time.Second)
+	time.Sleep(300 * time.Millisecond)
 
 	// Verify only initial message was sent
 	afterMessages := len(h.mockMessenger.GetSentMessages())
 	assert.Equal(t, 1, afterMessages, "Canceled validation should not send follow-up")
 
 	// Since we can't directly cancel the validation, it will complete eventually
-	// but the 10s delay means it won't send a follow-up within our test window
-	t.Log("Validation will complete after 10s delay, outside our test window")
+	// but the 1s delay means it won't send a follow-up within our test window
+	t.Log("Validation will complete after 1s delay, outside our test window")
 }
 
 // TestFollowUpTiming_NaturalConversationPacing tests overall conversation flow timing
@@ -591,7 +603,7 @@ func TestFollowUpTiming_NaturalConversationPacing(t *testing.T) {
 			Confidence: 0.6,
 			Issues:     []string{"I completed part of your request"},
 		},
-		delay: 1 * time.Second,
+		delay: 100 * time.Millisecond,
 	}
 
 	// Configure LLM
@@ -611,6 +623,8 @@ func TestFollowUpTiming_NaturalConversationPacing(t *testing.T) {
 		agent.WithIntentEnhancer(mocks.NewMockIntentEnhancer()),
 		agent.WithSessionManager(sessionManager),
 		agent.WithMessenger(h.mockMessenger),
+		agent.WithAsyncValidatorDelay(50*time.Millisecond), // Set the initial delay
+		agent.WithCorrectionDelay(50*time.Millisecond),     // Set the correction delay
 	)
 	require.NoError(t, err)
 
@@ -633,28 +647,28 @@ func TestFollowUpTiming_NaturalConversationPacing(t *testing.T) {
 	initialMsg, err := h.waitForMessage(1 * time.Second)
 	require.NoError(t, err)
 
-	followUpMsg, err := h.waitForMessage(7 * time.Second)
+	followUpMsg, err := h.waitForMessage(600 * time.Millisecond)
 	require.NoError(t, err)
 
 	// Analyze conversation pacing
 	// Time from user message to initial response
 	initialResponseTime := initialMsg.Timestamp.Sub(conversationStart)
 	t.Logf("User → Initial response: %v", initialResponseTime)
-	assert.Less(t, initialResponseTime, 3*time.Second,
+	assert.Less(t, initialResponseTime, 200*time.Millisecond,
 		"Initial response should be quick for good UX")
 
 	// Time between messages
 	messageDelta := followUpMsg.Timestamp.Sub(initialMsg.Timestamp)
 	t.Logf("Initial → Follow-up: %v", messageDelta)
-	assert.GreaterOrEqual(t, messageDelta, 4*time.Second,
+	assert.GreaterOrEqual(t, messageDelta, 150*time.Millisecond,
 		"Follow-up should give user time to read initial response")
-	assert.LessOrEqual(t, messageDelta, 6*time.Second,
+	assert.LessOrEqual(t, messageDelta, 300*time.Millisecond,
 		"Follow-up should not leave user waiting too long")
 
 	// Total conversation time
 	totalTime := followUpMsg.Timestamp.Sub(conversationStart)
 	t.Logf("Total conversation time: %v", totalTime)
-	assert.LessOrEqual(t, totalTime, 8*time.Second,
+	assert.LessOrEqual(t, totalTime, 400*time.Millisecond,
 		"Complete interaction should be reasonably quick")
 
 	// The pacing should feel natural:

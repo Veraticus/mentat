@@ -257,7 +257,9 @@ func TestHandlerRetryLogic(t *testing.T) {
 				responses: []claude.LLMResponse{tt.initialResponse},
 				errors:    []error{nil},
 			}
-			mockMessenger := &testMockMessenger{}
+			mockMessenger := &testMockMessenger{
+				messageSent: make(chan struct{}, 10), // Buffered to avoid blocking
+			}
 			mockSessionManager := &testMockSessionManager{
 				sessionID: "test-session",
 			}
@@ -318,10 +320,27 @@ func TestHandlerRetryLogic(t *testing.T) {
 				t.Fatalf("Process failed: %v", err)
 			}
 
-			// For async validation, wait a bit for validation to potentially send correction
+			// For async validation, wait for the correction message using a channel
 			if tt.expectAsyncValidation && tt.expectedCorrectionMsg != "" {
-				// Give async validation time to run (it has a 2-second delay before corrections)
-				time.Sleep(3 * time.Second)
+				// Wait for async validation to send correction message
+				// Async validation has a 2-second delay, so we wait up to 4 seconds total
+				timeout := time.NewTimer(4 * time.Second)
+				defer timeout.Stop()
+
+				// We expect 2 messages: initial response + correction
+				expectedMessages := 2
+				received := 1 // We already have the initial message
+
+			WaitLoop:
+				for received < expectedMessages {
+					select {
+					case <-mockMessenger.messageSent:
+						received++
+					case <-timeout.C:
+						// Timeout reached, break out of loop
+						break WaitLoop
+					}
+				}
 			}
 
 			// Verify the initial message sent immediately
@@ -438,15 +457,25 @@ type testMockMessenger struct {
 		to   string
 		text string
 	}
+	// Channel to notify when a message is sent
+	messageSent chan struct{}
 }
 
 func (m *testMockMessenger) Send(_ context.Context, to, text string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.sentMessages = append(m.sentMessages, struct {
 		to   string
 		text string
 	}{to: to, text: text})
+	m.mu.Unlock()
+
+	// Notify that a message was sent (non-blocking)
+	if m.messageSent != nil {
+		select {
+		case m.messageSent <- struct{}{}:
+		default:
+		}
+	}
 	return nil
 }
 

@@ -74,7 +74,7 @@ func TestQueueBehavioralGuarantees(t *testing.T) {
 							if err := h.SendMessage(phoneNumber, msg); err != nil {
 								t.Errorf("Failed to send message from %s: %v", phoneNumber, err)
 							}
-							time.Sleep(50 * time.Millisecond)
+							time.Sleep(10 * time.Millisecond)
 						}
 					}(user)
 				}
@@ -89,7 +89,7 @@ func TestQueueBehavioralGuarantees(t *testing.T) {
 					if state.CompletedMessages >= expectedMessages {
 						break
 					}
-					time.Sleep(100 * time.Millisecond)
+					time.Sleep(20 * time.Millisecond)
 				}
 			},
 			verify: func(t *testing.T, h *TestHarness) {
@@ -127,7 +127,7 @@ func TestQueueBehavioralGuarantees(t *testing.T) {
 				}
 
 				// Give time for processing
-				time.Sleep(2 * time.Second)
+				time.Sleep(100 * time.Millisecond)
 			},
 			verify: func(t *testing.T, h *TestHarness) {
 				state := h.VerifyQueueState()
@@ -167,7 +167,7 @@ func TestQueueBehavioralGuarantees(t *testing.T) {
 				}
 
 				// Wait a moment for queue to stabilize
-				time.Sleep(500 * time.Millisecond)
+				time.Sleep(50 * time.Millisecond)
 			},
 			verify: func(t *testing.T, h *TestHarness) {
 				state := h.VerifyQueueState()
@@ -203,7 +203,7 @@ func TestQueueBehavioralGuarantees(t *testing.T) {
 				}
 
 				// Wait for processing attempt with reasonable timeout
-				time.Sleep(500 * time.Millisecond)
+				time.Sleep(50 * time.Millisecond)
 			},
 			verify: func(t *testing.T, h *TestHarness) {
 				state := h.VerifyQueueState()
@@ -243,7 +243,7 @@ func TestQueueBehavioralGuarantees(t *testing.T) {
 				}
 
 				// Give time for processing to start
-				time.Sleep(200 * time.Millisecond)
+				time.Sleep(20 * time.Millisecond)
 
 				// Teardown will test graceful shutdown
 			},

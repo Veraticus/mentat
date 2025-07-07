@@ -19,6 +19,12 @@ const (
 	// DefaultValidationThreshold is the default confidence threshold for validation success.
 	DefaultValidationThreshold = 0.8
 
+	// DefaultCorrectionDelay is the default delay before sending a correction message.
+	DefaultCorrectionDelay = 2 * time.Second
+
+	// DefaultValidationTimeout is the default maximum time allowed for validation.
+	DefaultValidationTimeout = 30 * time.Second
+
 	// ComplexityThresholdMedium is the threshold for medium complexity requests.
 	ComplexityThresholdMedium = 0.5
 
@@ -64,6 +70,8 @@ func NewHandler(llm claude.LLM, opts ...HandlerOption) (Handler, error) {
 			MaxRetries:              DefaultMaxRetries,
 			EnableIntentEnhancement: true,
 			ValidationThreshold:     DefaultValidationThreshold,
+			CorrectionDelay:         DefaultCorrectionDelay,
+			ValidationTimeout:       DefaultValidationTimeout,
 		},
 	}
 
@@ -88,9 +96,50 @@ func NewHandler(llm claude.LLM, opts ...HandlerOption) (Handler, error) {
 	// Create async validator if we have the required dependencies
 	if h.validationStrategy != nil && h.messenger != nil {
 		h.asyncValidator = NewAsyncValidator(h.messenger, h.validationStrategy, h.logger)
+		// Apply configured delays - prefer AsyncValidatorDelay if set (for tests)
+		if h.config.AsyncValidatorDelay >= 0 {
+			// AsyncValidatorDelay explicitly set (including 0 for tests)
+			h.asyncValidator.SetCorrectionDelay(h.config.AsyncValidatorDelay)
+		} else {
+			// Use CorrectionDelay from config
+			h.asyncValidator.SetCorrectionDelay(h.config.CorrectionDelay)
+		}
+		// Apply validation timeout
+		h.asyncValidator.SetValidationTimeout(h.config.ValidationTimeout)
 	}
 
 	return h, nil
+}
+
+// WithAsyncValidatorDelay sets the correction delay for async validation.
+// This is primarily useful for testing to avoid timing issues.
+func WithAsyncValidatorDelay(delay time.Duration) HandlerOption {
+	return func(h *handler) error {
+		// Set delay after validator is created
+		if h.asyncValidator != nil {
+			h.asyncValidator.SetCorrectionDelay(delay)
+		} else {
+			// Store the delay to be applied later
+			h.config.AsyncValidatorDelay = delay
+		}
+		return nil
+	}
+}
+
+// WithCorrectionDelay sets the correction delay before sending a correction message.
+func WithCorrectionDelay(delay time.Duration) HandlerOption {
+	return func(h *handler) error {
+		h.config.CorrectionDelay = delay
+		return nil
+	}
+}
+
+// WithValidationTimeout sets the maximum time allowed for validation.
+func WithValidationTimeout(timeout time.Duration) HandlerOption {
+	return func(h *handler) error {
+		h.config.ValidationTimeout = timeout
+		return nil
+	}
 }
 
 // WithValidationStrategy sets the validation strategy.
@@ -341,23 +390,32 @@ func (h *handler) Query(ctx context.Context, request string, sessionID string) (
 		return *initialResponse, nil
 
 	default:
-		// For complex queries or when progress info is missing, return initial response
-		// and schedule async validation if needed
+		// For complex queries or when progress info is missing, we need to validate
 		validationReason, needsValidation, progressNil := h.determineValidationDecision(initialResponse.Progress)
 		if validationReason == validationReasonSimpleQuery {
 			validationReason = validationReasonComplexQuery // Override for default case
 		}
 
-		h.logger.InfoContext(ctx, "validation decision: returning response immediately",
-			slog.String("session_id", sessionID),
-			slog.String("validation_reason", validationReason),
-			slog.Bool("progress_nil", progressNil),
-			slog.Bool("needs_validation_flag", needsValidation),
-			slog.String("query_complexity", "complex"))
+		// When progress is nil or validation is needed, perform synchronous validation
+		if progressNil || needsValidation {
+			h.logger.InfoContext(ctx, "validation decision: launching async validation",
+				slog.String("session_id", sessionID),
+				slog.String("validation_reason", validationReason),
+				slog.Bool("progress_nil", progressNil),
+				slog.Bool("needs_validation_flag", needsValidation),
+				slog.String("query_complexity", "complex"))
 
-		// Return the initial response immediately
-		// Note: Validation should be handled by the caller if needed
-		finalResponse = initialResponse
+			// Perform synchronous validation for Query method
+			finalResponse = h.validateAndRecover(ctx, request, initialResponse, sessionID)
+		} else {
+			h.logger.InfoContext(ctx, "validation decision: returning response immediately",
+				slog.String("session_id", sessionID),
+				slog.String("validation_reason", validationReason),
+				slog.Bool("progress_nil", progressNil),
+				slog.Bool("needs_validation_flag", needsValidation),
+				slog.String("query_complexity", "complex"))
+			finalResponse = initialResponse
+		}
 	}
 
 	h.logger.InfoContext(ctx, "successfully processed query",
@@ -658,9 +716,54 @@ func (h *handler) determineValidationDecision(
 	return reason, needsValidation, progressNil
 }
 
-const (
-	// validationTimeout is the maximum time allowed for validation.
-	validationTimeout = 30 * time.Second
-	// correctionDelay is the delay before sending a correction message.
-	correctionDelay = 2 * time.Second
-)
+// validateAndRecover performs synchronous validation and returns the appropriate response.
+func (h *handler) validateAndRecover(
+	ctx context.Context,
+	request string,
+	initialResponse *claude.LLMResponse,
+	sessionID string,
+) *claude.LLMResponse {
+	// Perform validation
+	validationResult := h.validationStrategy.Validate(
+		ctx,
+		request,
+		initialResponse.Message,
+		sessionID,
+		h.llm,
+	)
+
+	// Log validation result
+	h.logger.InfoContext(ctx, "validation completed",
+		slog.String("session_id", sessionID),
+		slog.String("status", string(validationResult.Status)),
+		slog.Float64("confidence", validationResult.Confidence))
+
+	// If validation failed and we should retry, generate recovery
+	if h.validationStrategy.ShouldRetry(validationResult) {
+		recoveryMessage := h.validationStrategy.GenerateRecovery(
+			ctx,
+			request,
+			initialResponse.Message,
+			sessionID,
+			validationResult,
+			h.llm,
+		)
+		return &claude.LLMResponse{
+			Message: recoveryMessage,
+			Progress: &claude.ProgressInfo{
+				NeedsContinuation: false,
+				Status:            "validated",
+				NeedsValidation:   false,
+			},
+		}
+	}
+
+	// Return original response if validation passed
+	return initialResponse
+}
+
+// GetAsyncValidator returns the async validator for testing purposes.
+// This is exposed primarily for tests to configure the validator behavior.
+func (h *handler) GetAsyncValidator() *AsyncValidator {
+	return h.asyncValidator
+}

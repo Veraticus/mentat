@@ -169,6 +169,118 @@ mentat/
 
 For detailed architecture information, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
+## Signal Integration
+
+### Overview
+
+Mentat uses its own Signal phone number rather than linking to your personal account. This design provides clean separation, multi-user support, and a professional identity for your AI assistant.
+
+### Registration Flow
+
+The Signal integration supports a complete registration flow for new phone numbers:
+
+1. **Phone Number Setup**: Mentat guides you through obtaining a dedicated phone number (Google Voice recommended)
+2. **Signal Registration**: Automated registration with captcha and SMS verification support
+3. **Device Management**: Full control over linked devices via CLI commands
+
+### Device Management
+
+Mentat includes comprehensive device management capabilities:
+
+```bash
+# List all linked devices
+./mentat devices list
+
+# Remove a linked device (by ID)
+./mentat devices remove 2
+
+# Link a new device (generates QR code)
+./mentat devices link "Mom's iPad"
+```
+
+**Device Listing Output:**
+```
+ID  NAME           PRIMARY  CREATED     LAST SEEN
+--  ----           -------  -------     ---------
+1   Primary Phone  Yes      2024-01-01  2024-01-02 15:04
+2   Desktop                 2024-01-01  2024-01-02 10:00
+3   Mom's iPad              2024-01-02  2024-01-02 14:30
+```
+
+### Setup Process for New Users
+
+1. **Obtain a Phone Number**
+   - Google Voice (recommended): Free US number with SMS support
+   - Twilio: Programmable numbers with global availability
+   - Other VOIP providers that support SMS
+
+2. **Initial Registration**
+   ```bash
+   # The setup wizard guides you through:
+   - Phone number entry
+   - Captcha verification (if required)
+   - SMS code verification
+   - Bidirectional message testing
+   ```
+
+3. **Link Your Devices**
+   ```bash
+   # Generate a linking URI/QR code
+   ./mentat devices link "Your Device Name"
+   
+   # This displays a QR code to scan in Signal app
+   # The device appears in your device list once linked
+   ```
+
+### Architecture Details
+
+The Signal integration consists of several key components:
+
+- **Transport Layer**: JSON-RPC communication with signal-cli daemon
+- **Manager**: Orchestrates registration, health checks, and subprocess lifecycle
+- **Device Manager**: Handles device operations (list, remove, link)
+- **Messenger**: Sends messages and typing indicators
+- **Process Manager**: Manages the signal-cli daemon process
+
+### Registration States
+
+The registration flow uses a state machine with these states:
+- `Unregistered`: No registration attempted
+- `RegistrationStarted`: Request sent to Signal
+- `CaptchaRequired`: Human verification needed
+- `AwaitingSMSCode`: Waiting for SMS verification
+- `Registered`: Successfully registered
+
+### Technical Implementation
+
+**Key Files:**
+- `internal/signal/manager.go`: Main Signal manager orchestration
+- `internal/signal/devices.go`: Device management implementation  
+- `internal/signal/registration.go`: Registration state machine
+- `internal/setup/registration.go`: Registration coordinator
+- `cmd/mentat/devices.go`: CLI interface for device management
+
+**Security Considerations:**
+- Phone numbers are stored in `/etc/signal-bot/phone-number` (production) or environment variables
+- Signal data stored in `/var/lib/mentat/signal/data/{phone-number}/`
+- All Signal communication happens via local Unix socket
+- No Signal credentials are stored - uses signal-cli's secure storage
+
+### Troubleshooting
+
+**Registration Issues:**
+- Ensure signal-cli is installed and in PATH
+- Check that the phone number can receive SMS
+- Some VOIP numbers may be rejected by Signal - try a different provider
+- Captcha may be required for new numbers - follow the provided URL
+
+**Device Management:**
+- Cannot remove the primary device (your phone)
+- Linked devices appear after scanning the complete QR code
+- Device linking has a 2-minute timeout - scan promptly
+
+For detailed architecture information, see [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.

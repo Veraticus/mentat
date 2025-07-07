@@ -24,7 +24,7 @@ func TestMessageLifecycleTracking(t *testing.T) {
 		}
 
 		// Wait for message to be sent (completed)
-		if _, err := h.WaitForMessage(5 * time.Second); err != nil {
+		if _, err := h.WaitForMessage(500 * time.Millisecond); err != nil {
 			t.Fatalf("Message not sent: %v", err)
 		}
 
@@ -75,11 +75,11 @@ func TestHighLoadPerformance(t *testing.T) {
 			if err := h.SendMessage(user, fmt.Sprintf("Message %d", i)); err != nil {
 				t.Error(err)
 			}
-			time.Sleep(10 * time.Millisecond) // Slight delay to spread load
+			time.Sleep(5 * time.Millisecond) // Slight delay to spread load
 		}
 
 		// Wait for all to complete
-		if err := h.WaitForAllMessagesCompletion(messageCount, 10*time.Second); err != nil {
+		if err := h.WaitForAllMessagesCompletion(messageCount, 1*time.Second); err != nil {
 			t.Logf("Warning: Not all messages completed: %v", err)
 		}
 
@@ -126,11 +126,11 @@ func TestResourceLeakDetection(t *testing.T) {
 		}
 
 		// Wait for completion
-		time.Sleep(2 * time.Second)
+		time.Sleep(10 * time.Millisecond)
 
 		// Force garbage collection
 		runtime.GC()
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 
 		// Check final state
 		final := h.resourceMonitor.Sample()
@@ -173,7 +173,7 @@ func TestQueueOverflow(t *testing.T) {
 		}
 
 		// Give a moment for queue state to stabilize
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 
 		// Should have gotten overflow errors after filling the queue
 		if len(sendErrors) == 0 {
@@ -210,7 +210,7 @@ func TestMessageOrdering(t *testing.T) {
 		// Collect responses
 		responses := make([]string, 0, messageCount)
 		for i := 0; i < messageCount; i++ {
-			resp, err := h.WaitForMessage(2 * time.Second)
+			resp, err := h.WaitForMessage(200 * time.Millisecond)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -240,7 +240,7 @@ func TestWorkerFailureRecovery(t *testing.T) {
 		if err := h.SendMessage(userPhone, "Message 1"); err != nil {
 			t.Fatal(err)
 		}
-		response1, err := h.WaitForMessage(2 * time.Second)
+		response1, err := h.WaitForMessage(200 * time.Millisecond)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -266,7 +266,7 @@ func TestWorkerFailureRecovery(t *testing.T) {
 		}
 
 		// Wait sufficient time for retry (messages retry after ~2 seconds)
-		time.Sleep(3 * time.Second)
+		time.Sleep(200 * time.Millisecond)
 
 		// Send third message to verify pool is still working
 		if err := h.SendMessage(userPhone, "Message 3"); err != nil {
@@ -279,7 +279,7 @@ func TestWorkerFailureRecovery(t *testing.T) {
 		maxTimeouts := 3 // Allow some timeouts while waiting for retries
 
 		for recoveredCount < 2 && timeoutCount < maxTimeouts {
-			response, err := h.WaitForMessage(2 * time.Second)
+			response, err := h.WaitForMessage(200 * time.Millisecond)
 			if err != nil {
 				timeoutCount++
 				continue

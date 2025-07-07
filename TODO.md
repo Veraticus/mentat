@@ -612,14 +612,14 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Acceptance: 3 retry attempts allowed
   - Go idiom: User-friendly error messages
 
-- [ ] Create captcha flow handler - Phase 86
+- [X] Create captcha flow handler - Phase 86
   - Test: Detects captcha requirement
   - Location: `internal/setup/captcha.go`
   - Features: URL generation, token validation
   - Acceptance: Clear instructions provided
   - Go idiom: Separate concerns cleanly
 
-- [ ] Implement Signal health monitor - Phase 87
+- [x] Implement Signal health monitor - Phase 87
   - Test: Health checks work with mocks
   - Location: `internal/signal/health.go`
   - Features: RPC ping, message flow check
@@ -627,35 +627,35 @@ This TODO breaks down the Mentat implementation into bite-sized, testable chunks
   - Go idiom: Background goroutine
 
 ### Signal Device Management
-- [ ] Create device manager interface - Phase 88
+- [X] Create device manager interface - Phase 88
   - Test: Device operations can be mocked
   - Location: `internal/signal/device_manager.go`
   - Features: List, add, remove operations
   - Acceptance: Interface covers all operations
   - Go idiom: Return structured device types
 
-- [ ] Implement device listing - Phase 89
+- [X] Implement device listing - Phase 89
   - Test: Parses device list correctly
   - Location: `internal/signal/devices.go`
   - Features: Parse signal-cli output
   - Acceptance: Shows all linked devices
   - Go idiom: Error on parse failures
 
-- [ ] Add device removal capability - Phase 90
+- [X] Add device removal capability - Phase 90
   - Test: Removes devices cleanly
   - Location: `internal/signal/devices.go`
   - Features: Uses device manager interface
   - Acceptance: Device disappears from list
   - Go idiom: Idempotent operations
 
-- [ ] Implement device linking flow - Phase 91
+- [X] Implement device linking flow - Phase 91
   - Test: Generates valid linking URIs
   - Location: `internal/signal/linking.go`
   - Features: QR code generation
   - Acceptance: Can link new devices
   - Go idiom: Clear timeout handling
 
-- [ ] Add device management CLI - Phase 92
+- [X] Add device management CLI - Phase 92
   - Test: Commands use injected manager
   - Location: `cmd/mentat/devices.go`
   - Commands: list, remove, link

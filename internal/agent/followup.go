@@ -50,8 +50,8 @@ func NewDefaultResultHandler(
 		messenger:          messenger,
 		validationStrategy: strategy,
 		logger:             logger,
-		correctionDelay:    correctionDelay, // From constants
-		clarifyDelay:       time.Second,     // Faster for clarifications
+		correctionDelay:    DefaultCorrectionDelay, // Use default constant
+		clarifyDelay:       time.Second,            // Faster for clarifications
 		statusHandlers:     make(map[ValidationStatus]HandlerFunc),
 	}
 }

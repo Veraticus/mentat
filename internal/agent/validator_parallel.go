@@ -31,7 +31,7 @@ type ParallelValidationWrapper struct {
 // NewParallelValidationWrapper creates a new wrapper with the specified timeout.
 func NewParallelValidationWrapper(validator ValidationStrategy, timeout time.Duration) *ParallelValidationWrapper {
 	if timeout <= 0 {
-		timeout = validationTimeout // Use default from constants
+		timeout = DefaultValidationTimeout // Use default constant
 	}
 	return &ParallelValidationWrapper{
 		baseValidator: validator,
@@ -147,7 +147,7 @@ type ParallelMultiAgentValidator struct {
 func NewParallelMultiAgentValidator() *ParallelMultiAgentValidator {
 	multiAgent := NewMultiAgentValidator()
 	return &ParallelMultiAgentValidator{
-		ParallelValidationWrapper: NewParallelValidationWrapper(multiAgent, validationTimeout),
+		ParallelValidationWrapper: NewParallelValidationWrapper(multiAgent, DefaultValidationTimeout),
 		multiAgent:                multiAgent,
 	}
 }
@@ -174,7 +174,7 @@ type ParallelSimpleValidator struct {
 func NewParallelSimpleValidator() *ParallelSimpleValidator {
 	simple := NewSimpleValidator()
 	return &ParallelSimpleValidator{
-		ParallelValidationWrapper: NewParallelValidationWrapper(simple, validationTimeout),
+		ParallelValidationWrapper: NewParallelValidationWrapper(simple, DefaultValidationTimeout),
 		simple:                    simple,
 	}
 }
@@ -245,19 +245,19 @@ func CreateParallelValidator(strategy ValidationStrategy) ValidationStrategy {
 	switch v := strategy.(type) {
 	case *MultiAgentValidator:
 		return &ParallelMultiAgentValidator{
-			ParallelValidationWrapper: NewParallelValidationWrapper(v, validationTimeout),
+			ParallelValidationWrapper: NewParallelValidationWrapper(v, DefaultValidationTimeout),
 			multiAgent:                v,
 		}
 	case *SimpleValidator:
 		return &ParallelSimpleValidator{
-			ParallelValidationWrapper: NewParallelValidationWrapper(v, validationTimeout),
+			ParallelValidationWrapper: NewParallelValidationWrapper(v, DefaultValidationTimeout),
 			simple:                    v,
 		}
 	case *NoopValidator:
 		return NewParallelNoopValidator()
 	default:
 		// Generic wrapper for unknown strategies
-		return NewParallelValidationWrapper(strategy, validationTimeout)
+		return NewParallelValidationWrapper(strategy, DefaultValidationTimeout)
 	}
 }
 

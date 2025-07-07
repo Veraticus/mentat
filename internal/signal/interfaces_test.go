@@ -82,8 +82,7 @@ func (m *testManager) GetMessenger() signal.Messenger {
 	return &testMessenger{}
 }
 
-//nolint:ireturn // Interface requires returning DeviceManager interface
-func (m *testManager) GetDeviceManager() signal.DeviceManager {
+func (m *testManager) GetDeviceManager() signal.DeviceManager { //nolint:ireturn // test mock returns interface by design
 	if m.getDeviceManagerFunc != nil {
 		return m.getDeviceManagerFunc()
 	}

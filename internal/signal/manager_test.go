@@ -476,9 +476,11 @@ func TestManagerConcurrency(t *testing.T) {
 		done <- true
 	}()
 
-	// Stop/Start cycle
+	// Stop/Start cycle with slight delay
 	go func() {
-		time.Sleep(5 * time.Millisecond)
+		// Use a timer for the delay
+		timer := time.NewTimer(5 * time.Millisecond)
+		<-timer.C
 		_ = sm.Stop(ctx)
 		done <- true
 	}()

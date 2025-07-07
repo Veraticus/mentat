@@ -45,7 +45,7 @@ func TestSimpleConversation(t *testing.T) {
 			}
 
 			// Wait for LLM to be called
-			llmReq, err := h.WaitForLLMCall(2 * time.Second)
+			llmReq, err := h.WaitForLLMCall(200 * time.Millisecond)
 			if err != nil {
 				t.Fatalf("LLM was not called: %v", err)
 			}
@@ -56,7 +56,7 @@ func TestSimpleConversation(t *testing.T) {
 			}
 
 			// Wait for response to be sent
-			response, err := h.WaitForMessage(2 * time.Second)
+			response, err := h.WaitForMessage(200 * time.Millisecond)
 			if err != nil {
 				t.Fatalf("No response sent: %v", err)
 			}
@@ -92,7 +92,7 @@ func TestMultiTurnConversation(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if _, err := h.WaitForMessage(2 * time.Second); err != nil {
+		if _, err := h.WaitForMessage(200 * time.Millisecond); err != nil {
 			t.Fatal(err)
 		}
 
@@ -146,7 +146,7 @@ func TestConcurrentConversations(t *testing.T) {
 		// Collect responses
 		responses := make(map[string]string)
 		for range users {
-			msg, err := h.WaitForMessage(3 * time.Second)
+			msg, err := h.WaitForMessage(300 * time.Millisecond)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -201,7 +201,7 @@ func TestErrorHandling(t *testing.T) {
 			}
 
 			// Wait a bit for processing and potential retries
-			time.Sleep(3 * time.Second)
+			time.Sleep(200 * time.Millisecond)
 
 			// Check queue state
 			queueState := h.VerifyQueueState()
@@ -240,8 +240,8 @@ func TestErrorHandling(t *testing.T) {
 // TestRateLimiting verifies rate limiting behavior
 func TestRateLimiting(t *testing.T) {
 	config := DefaultConfig()
-	config.RateLimitTokens = 2               // Only allow 2 messages
-	config.RateLimitRefill = 5 * time.Second // Slow refill
+	config.RateLimitTokens = 2                      // Only allow 2 messages
+	config.RateLimitRefill = 500 * time.Millisecond // Slow refill
 
 	RunScenario(t, "rate_limiting", config, func(t *testing.T, h *TestHarness) {
 		userPhone := "+1234567894"
@@ -252,18 +252,18 @@ func TestRateLimiting(t *testing.T) {
 			if err := h.SendMessage(userPhone, fmt.Sprintf("Message %d", i+1)); err != nil {
 				t.Fatal(err)
 			}
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(5 * time.Millisecond)
 		}
 
 		// First two should process
 		for i := 0; i < 2; i++ {
-			if _, err := h.WaitForMessage(2 * time.Second); err != nil {
+			if _, err := h.WaitForMessage(200 * time.Millisecond); err != nil {
 				t.Errorf("Message %d should have been processed: %v", i+1, err)
 			}
 		}
 
 		// Third should be rate limited (won't get response immediately)
-		_, err := h.WaitForMessage(500 * time.Millisecond)
+		_, err := h.WaitForMessage(100 * time.Millisecond)
 		if err == nil {
 			t.Error("Third message should have been rate limited")
 		}

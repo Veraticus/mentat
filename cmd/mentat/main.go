@@ -55,6 +55,16 @@ const (
 )
 
 func main() {
+	// Check if this is a device command
+	if len(os.Args) > 1 && os.Args[1] == "devices" {
+		if err := ExecuteDeviceCommand(os.Args[1:]); err != nil {
+			log.Printf("Error: %v", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
+	// Otherwise run the main service
 	os.Exit(runMain())
 }
 

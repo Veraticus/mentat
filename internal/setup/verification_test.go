@@ -20,6 +20,8 @@ type testPrompter struct {
 	errors           []string
 	successes        []string
 	capturedInputs   []string
+	// For custom behavior in tests
+	promptWithTimeoutFunc func(ctx context.Context, message string, timeout time.Duration) (string, error)
 }
 
 func newTestPrompter() *testPrompter {
@@ -46,8 +48,15 @@ func (p *testPrompter) PromptWithDefault(_ context.Context, message, defaultValu
 	return defaultValue, nil
 }
 
-func (p *testPrompter) PromptWithTimeout(_ context.Context, message string, _ time.Duration) (string, error) {
+func (p *testPrompter) PromptWithTimeout(ctx context.Context, message string, timeout time.Duration) (string, error) {
 	p.capturedInputs = append(p.capturedInputs, message)
+
+	// Use custom function if provided
+	if p.promptWithTimeoutFunc != nil {
+		return p.promptWithTimeoutFunc(ctx, message, timeout)
+	}
+
+	// Default behavior
 	if err, ok := p.timeoutErrors[message]; ok {
 		return "", err
 	}

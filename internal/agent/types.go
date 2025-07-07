@@ -1,5 +1,7 @@
 package agent
 
+import "time"
+
 // ValidationStatus represents the outcome of validation.
 type ValidationStatus string
 
@@ -39,6 +41,18 @@ type Config struct {
 
 	// ValidationThreshold is the minimum confidence for success.
 	ValidationThreshold float64
+
+	// AsyncValidatorDelay is the delay before async validation starts.
+	// This is primarily used for testing to avoid timing issues.
+	AsyncValidatorDelay time.Duration
+
+	// CorrectionDelay is the delay before sending a correction message.
+	// Defaults to 2 seconds if not specified.
+	CorrectionDelay time.Duration
+
+	// ValidationTimeout is the maximum time allowed for validation.
+	// Defaults to 30 seconds if not specified.
+	ValidationTimeout time.Duration
 }
 
 // ComplexityResult contains the analysis of request complexity.

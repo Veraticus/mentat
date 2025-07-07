@@ -27,6 +27,9 @@ type AsyncValidator struct {
 
 	// Configurable delay before sending corrections
 	correctionDelay time.Duration
+
+	// Configurable timeout for validation
+	validationTimeout time.Duration
 }
 
 // ValidationTask represents a single validation operation running in the background.
@@ -56,7 +59,8 @@ func NewAsyncValidator(
 		logger:             logger,
 		active:             make(map[string]*ValidationTask),
 		shutdownCh:         make(chan struct{}),
-		correctionDelay:    correctionDelay, // Use default from constants
+		correctionDelay:    DefaultCorrectionDelay,
+		validationTimeout:  DefaultValidationTimeout,
 	}
 }
 
@@ -71,7 +75,7 @@ func (av *AsyncValidator) StartValidation(
 	taskID := sessionID + "-" + time.Now().Format("20060102-150405")
 
 	// Create independent background context with timeout
-	backgroundCtx, cancel := context.WithTimeout(context.Background(), validationTimeout)
+	backgroundCtx, cancel := context.WithTimeout(context.Background(), av.validationTimeout)
 
 	// Create validation task
 	task := &ValidationTask{
@@ -264,5 +268,14 @@ func (av *AsyncValidator) SetCorrectionDelay(delay time.Duration) {
 	// Also update the result handler if it's a DefaultResultHandler
 	if handler, ok := av.resultHandler.(*DefaultResultHandler); ok {
 		handler.SetCorrectionDelay(delay)
+		// Set clarify delay to match correction delay for consistency in tests
+		handler.SetClarifyDelay(delay)
 	}
+}
+
+// SetValidationTimeout allows overriding the validation timeout (useful for testing).
+func (av *AsyncValidator) SetValidationTimeout(timeout time.Duration) {
+	av.mu.Lock()
+	defer av.mu.Unlock()
+	av.validationTimeout = timeout
 }

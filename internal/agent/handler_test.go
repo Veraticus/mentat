@@ -1079,6 +1079,7 @@ func TestSmartInitialResponse(t *testing.T) {
 				agent.WithValidationStrategy(wrappedStrategy),
 				agent.WithMessenger(messenger),
 				agent.WithSessionManager(sessionMgr),
+				agent.WithAsyncValidatorDelay(0), // Set to 0 for immediate validation in tests
 			)
 			if err != nil {
 				t.Fatalf("unexpected error creating handler: %v", err)
@@ -1238,6 +1239,7 @@ func TestProcessWithSmartInitialResponse(t *testing.T) {
 				agent.WithValidationStrategy(wrappedStrategy),
 				agent.WithMessenger(messenger),
 				agent.WithSessionManager(sessionMgr),
+				agent.WithAsyncValidatorDelay(0), // Set to 0 for immediate validation in tests
 			)
 			if err != nil {
 				t.Fatalf("unexpected error creating handler: %v", err)

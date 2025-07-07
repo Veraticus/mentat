@@ -39,6 +39,16 @@ type RegistrationState struct {
 	CompletedSteps []string
 }
 
+// CaptchaRequiredError indicates that captcha verification is needed.
+type CaptchaRequiredError struct {
+	URL string
+}
+
+// Error implements the error interface.
+func (e *CaptchaRequiredError) Error() string {
+	return fmt.Sprintf("captcha required: %s", e.URL)
+}
+
 // RegistrationCoordinator orchestrates the Signal registration flow with dependency injection.
 type RegistrationCoordinator struct {
 	signalManager       signal.Manager
@@ -279,7 +289,7 @@ func (rc *RegistrationCoordinator) handleCaptchaRequired(ctx context.Context, ca
 	}
 
 	// Return with captcha URL for user to complete
-	return fmt.Errorf("captcha required: %s", captchaURL)
+	return &CaptchaRequiredError{URL: captchaURL}
 }
 
 // ValidatePhoneNumber checks if a phone number is valid for registration.

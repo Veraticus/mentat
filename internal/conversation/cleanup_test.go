@@ -63,7 +63,7 @@ func TestCleanupService_PeriodicCleanup(t *testing.T) {
 	}
 
 	// Wait for sessions to expire and be cleaned up
-	time.Sleep(250 * time.Millisecond)
+	<-time.After(250 * time.Millisecond)
 
 	// Check that expired sessions were removed
 	stats := manager.Stats()
@@ -119,10 +119,10 @@ func TestCleanupService_ConcurrentAccess(t *testing.T) {
 			for range 5 {
 				if id%2 == 0 {
 					_ = service.Start(ctx)
-					time.Sleep(5 * time.Millisecond)
+					<-time.After(5 * time.Millisecond)
 				} else {
 					service.Stop()
-					time.Sleep(5 * time.Millisecond)
+					<-time.After(5 * time.Millisecond)
 				}
 			}
 		}(i)
@@ -135,7 +135,7 @@ func TestCleanupService_ConcurrentAccess(t *testing.T) {
 			defer wg.Done()
 			for j := range 10 {
 				manager.GetOrCreateSession(string(rune(id*10 + j)))
-				time.Sleep(2 * time.Millisecond)
+				<-time.After(2 * time.Millisecond)
 			}
 		}(i)
 	}
@@ -168,7 +168,7 @@ func TestCleanupService_ContextCancellation(t *testing.T) {
 	cancel()
 
 	// Give it time to stop
-	time.Sleep(50 * time.Millisecond)
+	<-time.After(50 * time.Millisecond)
 
 	// Service should stop on its own due to context cancellation
 	if service.IsRunning() {
@@ -203,12 +203,12 @@ func TestCleanupService_NoMemoryLeak(t *testing.T) {
 			manager.GetOrCreateSession(string(rune(j)))
 		}
 
-		time.Sleep(30 * time.Millisecond)
+		<-time.After(30 * time.Millisecond)
 		service.Stop()
 	}
 
 	// Give goroutines time to fully exit
-	time.Sleep(100 * time.Millisecond)
+	<-time.After(100 * time.Millisecond)
 
 	// Count goroutines after
 	finalGoroutines := runtime.NumGoroutine()
@@ -258,7 +258,7 @@ func TestCleanupService_ManagerIntegration(t *testing.T) {
 	}
 
 	// Wait for cleanup to run
-	time.Sleep(200 * time.Millisecond)
+	<-time.After(200 * time.Millisecond)
 
 	// Sessions should be expired and cleaned up
 	history1After := manager.GetSessionHistory(session1)

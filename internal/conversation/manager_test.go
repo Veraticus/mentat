@@ -90,7 +90,7 @@ func TestManager_ExpireSessions(t *testing.T) {
 	m.AddMessage(sessionID1, conversation.Message{ID: "msg1"})
 
 	// Wait for it to be old enough
-	time.Sleep(150 * time.Millisecond)
+	<-time.After(150 * time.Millisecond)
 
 	// Create another session
 	sessionID2 := m.GetOrCreateSession("user2")
@@ -206,7 +206,7 @@ func TestManager_ThreadSafety(t *testing.T) {
 		defer wg.Done()
 		for range iterations / 10 {
 			m.CleanupExpired()
-			time.Sleep(time.Millisecond)
+			<-time.After(time.Millisecond)
 		}
 	}()
 
@@ -227,7 +227,7 @@ func TestManager_SlidingWindow(t *testing.T) {
 
 	// Make multiple requests within the window
 	for i := range 3 {
-		time.Sleep(50 * time.Millisecond)
+		<-time.After(50 * time.Millisecond)
 		newID := m.GetOrCreateSession("user123")
 		if newID != sessionID {
 			t.Errorf("expected same session ID within window, got new ID on iteration %d", i)
@@ -237,7 +237,7 @@ func TestManager_SlidingWindow(t *testing.T) {
 	}
 
 	// Wait for window to expire
-	time.Sleep(250 * time.Millisecond)
+	<-time.After(250 * time.Millisecond)
 	expiredID := m.GetOrCreateSession("user123")
 	if expiredID == sessionID {
 		t.Error("expected new session after window expired")
@@ -249,7 +249,7 @@ func TestManager_CleanupExpired(t *testing.T) {
 
 	// Create sessions
 	m.GetOrCreateSession("user1")
-	time.Sleep(150 * time.Millisecond)
+	<-time.After(150 * time.Millisecond)
 	m.GetOrCreateSession("user2")
 
 	// Cleanup should remove user1's session
@@ -292,13 +292,13 @@ func TestManager_AddMessage_UpdatesActivity(t *testing.T) {
 	sessionID := m.GetOrCreateSession("user123")
 
 	// Wait a bit
-	time.Sleep(80 * time.Millisecond)
+	<-time.After(80 * time.Millisecond)
 
 	// Add a message - this should update the activity time
 	m.AddMessage(sessionID, conversation.Message{ID: "msg1"})
 
 	// Wait a bit more - total time > 100ms but message was recent
-	time.Sleep(50 * time.Millisecond)
+	<-time.After(50 * time.Millisecond)
 
 	// Session should still be active due to sliding window
 	newID := m.GetOrCreateSession("user123")

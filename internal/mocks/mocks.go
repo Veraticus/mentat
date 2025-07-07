@@ -22,6 +22,8 @@ const (
 	defaultMockLatencyMS = 10
 	// incomingChannelSize is the buffer size for incoming message channels.
 	incomingChannelSize = 100
+	// messageSentChannelSize is the buffer size for message notification channels.
+	messageSentChannelSize = 10
 	// mockProcessPID is the default PID for mock processes.
 	mockProcessPID = 12345
 	// secondaryDeviceID is the ID for the secondary test device.
@@ -161,6 +163,8 @@ type MockMessenger struct {
 	sentMessages     []SentMessage
 	typingIndicators []TypingIndicator
 	mu               sync.Mutex
+	// Channel to notify when a message is sent
+	messageSentCh chan struct{}
 }
 
 // SentMessage records a sent message.
@@ -182,6 +186,7 @@ func NewMockMessenger() *MockMessenger {
 		sentMessages:     make([]SentMessage, 0),
 		incomingChan:     make(chan signal.IncomingMessage, incomingChannelSize),
 		typingIndicators: make([]TypingIndicator, 0),
+		messageSentCh:    make(chan struct{}, messageSentChannelSize), // Buffered to avoid blocking
 	}
 }
 
@@ -199,6 +204,13 @@ func (m *MockMessenger) Send(_ context.Context, recipient string, message string
 		Message:   message,
 		Timestamp: time.Now(),
 	})
+
+	// Notify that a message was sent (non-blocking)
+	select {
+	case m.messageSentCh <- struct{}{}:
+	default:
+		// Channel full, continue
+	}
 
 	return nil
 }
@@ -253,6 +265,11 @@ func (m *MockMessenger) SetSendError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sendErr = err
+}
+
+// MessageSentCh returns the channel that notifies when a message is sent.
+func (m *MockMessenger) MessageSentCh() <-chan struct{} {
+	return m.messageSentCh
 }
 
 // MockSessionManager is a test implementation of the SessionManager interface.
@@ -1059,6 +1076,7 @@ func (m *MockSignalManager) Stop(_ context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.stopped = true
+	m.started = false
 	return nil
 }
 

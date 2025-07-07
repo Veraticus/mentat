@@ -28,7 +28,21 @@ func TestWorkerWithAgentHandler(t *testing.T) {
 	// Create queue and manager
 	manager := queue.NewManager(ctx)
 	go manager.Start(ctx)
-	time.Sleep(100 * time.Millisecond) // Wait for manager to start
+
+	// Wait for manager to start
+	done := make(chan struct{})
+	go func() {
+		manager.WaitForReady()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Manager is ready
+	case <-time.After(1 * time.Second):
+		t.Fatal("Manager failed to start within timeout")
+	}
+
 	defer func() {
 		if err := manager.Shutdown(time.Second); err != nil {
 			t.Logf("Shutdown error: %v", err)
@@ -64,8 +78,13 @@ func TestWorkerWithAgentHandler(t *testing.T) {
 		_ = worker.Start(timeoutCtx)
 	}()
 
-	// Wait for message to be processed
-	time.Sleep(1 * time.Second)
+	// Wait for message to be processed using channel notification
+	select {
+	case <-mockMessenger.MessageSentCh():
+		// Message was sent, processing complete
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timeout waiting for message to be processed")
+	}
 
 	// Verify agent handler was called
 	queryCalls := mockAgentHandler.GetQueryCalls()
@@ -156,8 +175,13 @@ func TestWorkerFallbackToLLM(t *testing.T) {
 		_ = worker.Start(timeoutCtx)
 	}()
 
-	// Wait for message to be processed
-	time.Sleep(1 * time.Second)
+	// Wait for message to be processed using channel notification
+	select {
+	case <-mockMessenger.MessageSentCh():
+		// Message was sent, processing complete
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timeout waiting for message to be processed")
+	}
 
 	// Verify LLM was called directly
 	llmCalls := mockLLM.GetCalls()

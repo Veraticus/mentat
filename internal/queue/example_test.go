@@ -78,17 +78,28 @@ func ExampleSystem() {
 	}
 
 	// Wait for message to be processed
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		stats := system.Stats()
-		// Message is processed when queue is empty
-		if stats.TotalQueued == 0 && stats.TotalProcessing == 0 {
-			// Message processed, wait a bit more for output
-			time.Sleep(100 * time.Millisecond)
-			break
+	timeout := time.NewTimer(2 * time.Second)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer timeout.Stop()
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timeout.C:
+			// Timeout reached
+			fmt.Println("Timeout waiting for message processing")
+			return
+		case <-ticker.C:
+			stats := system.Stats()
+			// Message is processed when queue is empty
+			if stats.TotalQueued == 0 && stats.TotalProcessing == 0 {
+				// Message processed, wait a bit more for output
+				<-time.After(100 * time.Millisecond)
+				goto done
+			}
 		}
-		time.Sleep(50 * time.Millisecond)
 	}
+done:
 
 	// Check system statistics
 	stats := system.Stats()

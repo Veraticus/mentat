@@ -19,7 +19,7 @@ func TestManager_SubmitAndRequest(t *testing.T) {
 	go manager.Start(ctx)
 
 	// Wait for manager to be fully started
-	time.Sleep(10 * time.Millisecond)
+	manager.WaitForReady()
 
 	// Submit messages
 	msg1 := queue.NewMessage("msg-1", "conv-1", "sender1", "+1234567890", "hello")
@@ -79,7 +79,7 @@ func TestManager_FairScheduling(t *testing.T) {
 	go manager.Start(ctx)
 
 	// Wait for manager to be fully started
-	time.Sleep(10 * time.Millisecond)
+	manager.WaitForReady()
 
 	// Submit multiple messages per conversation
 	conversations := []string{"conv-1", "conv-2", "conv-3"}
@@ -101,8 +101,9 @@ func TestManager_FairScheduling(t *testing.T) {
 		}
 	}
 
-	// Wait a bit to ensure all messages are properly queued
-	time.Sleep(10 * time.Millisecond)
+	// Give messages time to be queued through channel
+	// This is necessary because Submit is async via channels
+	<-time.After(20 * time.Millisecond)
 
 	// Request messages and track which conversations we get
 	convCounts := make(map[string]int)

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,8 +15,26 @@ import (
 	"github.com/Veraticus/mentat/internal/signal"
 )
 
+// syncBuffer is a thread-safe wrapper around bytes.Buffer.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (sb *syncBuffer) Write(p []byte) (int, error) {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	return sb.buf.Write(p)
+}
+
+func (sb *syncBuffer) String() string {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	return sb.buf.String()
+}
+
 // createTestLogger creates a logger for testing that writes to the provided buffer.
-func createTestLogger(buf *bytes.Buffer) *slog.Logger {
+func createTestLogger(buf *syncBuffer) *slog.Logger {
 	handler := slog.NewJSONHandler(buf, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	})
@@ -93,8 +112,8 @@ func TestValidationDecisionLogging(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create a buffer to capture logs
-			var logBuf bytes.Buffer
-			logger := createTestLogger(&logBuf)
+			logBuf := &syncBuffer{}
+			logger := createTestLogger(logBuf)
 
 			// Create mock components
 			mockLLM := &mockLLM{}
@@ -140,8 +159,15 @@ func TestValidationDecisionLogging(t *testing.T) {
 				t.Fatalf("Process failed: %v", err)
 			}
 
-			// Give async operations time to complete
-			time.Sleep(50 * time.Millisecond)
+			// Wait for async validation to complete
+			// We need to wait for the async validator to finish before reading logs
+			if tt.expectAsyncValidation {
+				// Wait longer for async validation to complete and write logs
+				time.Sleep(100 * time.Millisecond)
+			} else {
+				// For non-async cases, just a small delay for log buffer
+				time.Sleep(10 * time.Millisecond)
+			}
 
 			// Parse and verify logs
 			logs := strings.Split(strings.TrimSpace(logBuf.String()), "\n")
@@ -221,8 +247,8 @@ func TestValidationDecisionQueryMethod(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create a buffer to capture logs
-			var logBuf bytes.Buffer
-			logger := createTestLogger(&logBuf)
+			logBuf := &syncBuffer{}
+			logger := createTestLogger(logBuf)
 
 			// Create mock components
 			mockLLM := &mockLLM{}
