@@ -16,3 +16,20 @@ test-ha:
 # Voice stream adapter (voice/): stdlib-only, no livekit install needed
 test-voice:
     python3 -m unittest discover -s voice/tests
+
+# Create a new worktree at .worktrees/BRANCH.
+new-worktree BRANCH:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if git show-ref --verify --quiet "refs/heads/{{BRANCH}}"; then
+        git worktree add ".worktrees/{{BRANCH}}" "{{BRANCH}}"
+    else
+        git worktree add -b "{{BRANCH}}" ".worktrees/{{BRANCH}}"
+    fi
+    echo ""
+    echo "Worktree ready: .worktrees/{{BRANCH}}"
+    echo "Next: cd .worktrees/{{BRANCH}}"
+
+# Remove the worktree at .worktrees/BRANCH.
+rm-worktree BRANCH:
+    git worktree remove ".worktrees/{{BRANCH}}"
