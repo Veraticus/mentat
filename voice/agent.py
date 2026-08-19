@@ -1,13 +1,20 @@
-"""LiveKit voice agent: a room's microphone in, mentat's answer spoken out.
+"""LiveKit voice agent: the front that talks, with mentat as the brain behind.
 
-The thinking parts of this surface live next door and are unit-tested offline:
-voice/stream.py turns mentat's NDJSON into speakable chunks (acknowledging
-once when a turn works before it speaks, never mid-sentence), and
-voice/request.py builds the turn request and reads the user's last utterance
-out of a chat context. This file is the part that cannot be tested without a
-livekit runtime — wiring the STT/TTS pipeline and driving one HTTP turn per
-utterance — so it is deliberately thin, and it is verified against a real room
-rather than in CI.
+The voice in the room is its own fast model (Luna, over LiveKit Inference)
+wearing the persona in voice/persona.md. It owns the conversation: banter,
+opinions and ordinary knowledge it answers itself, at conversation speed. For
+anything that touches Josh's life — his memory, calendar, house, files, the
+tools that act on them — or anything that needs real thinking, it calls the
+ask_mentat tool, which runs one mentatd turn and speaks the daemon's answer
+verbatim while a soft pad covers the wait. mentatd is no longer the voice; it
+is the deep brain the voice consults.
+
+The thinking parts live next door and are unit-tested offline: voice/stream.py
+turns mentat's NDJSON into speakable text, voice/request.py builds the turn
+request and the consult envelope. What is left here is the part that cannot be
+tested without a livekit runtime — the pipeline, the tool's audio and its
+lifecycle — so it stays deliberately thin, and it is verified against a real
+room rather than in CI.
 
 Run as `python agent.py start`; livekit-agents ships no console script. The
 SDK reads LIVEKIT_URL and the LIVEKIT_API_*/LIVEKIT_INFERENCE_API_* credentials
@@ -18,102 +25,255 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import AsyncGenerator
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
 
 import aiohttp
 from livekit import agents
 from livekit.agents import (
     Agent,
     AgentSession,
+    AudioConfig,
+    BackgroundAudioPlayer,
+    ConversationItemAddedEvent,
     JobContext,
-    ModelSettings,
+    RunContext,
     WorkerOptions,
+    function_tool,
     inference,
     llm,
 )
 from livekit.plugins import silero
 
-from request import last_user_text, turn_request
+from request import (
+    consult_envelope,
+    conversation_advanced,
+    count_user_messages,
+    recent_turns,
+    split_persona,
+    turn_latency,
+    turn_request,
+)
 from stream import TurnError, TurnStream
 
 logger = logging.getLogger("mentat.voice")
 
 DEFAULT_MENTAT_URL = "http://127.0.0.1:8484"
 
-# A turn legitimately runs for minutes while the daemon uses tools; only the
+# A consult legitimately runs for minutes while the daemon uses tools; only the
 # connect and the gap between chunks are bounded.
 TIMEOUT = aiohttp.ClientTimeout(total=None, connect=10, sock_read=600)
 
-# Said when the daemon cannot be reached or fails the turn. Fixed and short:
-# whatever went wrong, the caller is waiting in silence for an answer.
-FAILURE_REPLY = "Sorry — I can't reach Mentat right now."
+# The persona and the sounds ship in the same directory as this file — the nix
+# fileset in nix/module.nix puts them there — so they are found relative to it
+# rather than through configuration nobody would ever set differently.
+HERE = Path(__file__).parent
+PERSONA_PATH = HERE / "persona.md"
+EARCON_PATH = HERE / "assets" / "earcon.wav"
+WAITING_PATH = HERE / "assets" / "waiting.wav"
 
-# Never sent anywhere: mentatd owns the system prompt, and llm_node below
-# never consults the agent's instructions. Agent requires the field.
-INSTRUCTIONS = "Voice access to mentat. The daemon holds the real prompt."
+# Never spoken. ctx.update hands control back to the front with this as the
+# tool's synthetic return, and the front says its own holding line from it —
+# so this is written as an instruction to a model, not as speech. Speaking a
+# fixed line here instead would make every consult in a call sound identical.
+# The holding line is instructed here and nowhere else: persona.md asking for
+# one too would earn two near-identical lines per consult, and this is the
+# path the framework guarantees runs.
+CONSULT_CUE = (
+    "Sent to Mentat. Say one short line in your own voice about going to "
+    "check — make it natural and different every time; it is you thinking out "
+    "loud for a second, not an announcement. Then stop and wait. The answer "
+    "will be spoken aloud for you the moment it lands, so do not answer the "
+    "question yourself."
+)
+
+# Returned in place of an answer when the consult fails. Returning a string
+# (rather than saying one) lets the front break the news in its own words and
+# in context — it may already have said it was checking.
+CONSULT_FAILED = (
+    "Mentat could not be reached, so there is no answer to that question. "
+    "Tell Josh briefly, and offer to try again."
+)
+
+#: Prepended when the caller kept talking during the wait. A deep answer can
+#: land a minute after its question, and dropping it into a conversation that
+#: has moved on, unmarked, is a non sequitur.
+REORIENTATION_PREFIX = "About your earlier question — "
+
+# The pad is a sustained tone sitting at an arbitrary phase when the answer
+# arrives, so cutting it dead would click into the first word. Its level is
+# already baked in by assets/generate.py (-24 dBFS, deliberately under
+# speech), which is why volume stays at the default: scaling it here would
+# fight the asset.
+WAITING_FADE_OUT_S = 0.25
 
 
-class _RoutedToMentat(llm.LLM):
-    """Stands in for a provider LLM so the pipeline generates replies at all.
-
-    An AgentSession with no LLM silently skips the response (agent_activity.py:
-    `elif self.llm is None: return  # skip response if no llm is set`), so the
-    session needs one even though MentatAgent.llm_node answers every turn
-    itself and never calls this.
-    """
-
-    def chat(self, **kwargs: object) -> llm.LLMStream:
-        raise RuntimeError("llm_node override must be used")
+def load_persona(path: Path = PERSONA_PATH) -> tuple[str, str]:
+    """The front's instructions and its voice card, read off disk."""
+    return split_persona(path.read_text())
 
 
-class MentatAgent(Agent):
-    """Answers each user turn by streaming one mentat turn back as speech."""
+class FrontAgent(Agent):
+    """The voice in the room: answers what it can, consults mentat for the rest."""
 
-    def __init__(self, *, room_name: str, mentat_url: str) -> None:
-        super().__init__(instructions=INSTRUCTIONS)
+    def __init__(
+        self,
+        *,
+        instructions: str,
+        voice_card: str,
+        room_name: str,
+        mentat_url: str,
+        background_audio: BackgroundAudioPlayer,
+    ) -> None:
+        super().__init__(instructions=instructions)
+        self._voice_card = voice_card
         self._room_name = room_name
         self._mentat_url = mentat_url
+        self._background_audio = background_audio
 
-    async def llm_node(
+    @function_tool(
+        # CANCELLABLE puts the framework's cancel tool in front of the model,
+        # so "never mind" during a minute-long consult actually drops it.
+        # reject keeps a second question from starting a second daemon turn on
+        # top of the first; the front is told to offer the swap instead.
+        flags=llm.ToolFlag.CANCELLABLE,
+        on_duplicate="reject",
+    )
+    async def ask_mentat(
         self,
-        chat_ctx: llm.ChatContext,
-        tools: list[llm.Tool],
-        model_settings: ModelSettings,
-    ) -> AsyncGenerator[str, None]:
-        """Stream one daemon turn as the reply to the latest utterance."""
-        text = last_user_text(chat_ctx.items)
-        if text is None:
-            # No utterance reached us, so there is nothing to ask and nothing
-            # to say. Not a failure — the apology below would be a lie.
-            return
+        ctx: RunContext,
+        question: str,
+        effort: str = "low",
+        model: str = "sonnet",
+    ) -> str | None:
+        """Ask Mentat, the deep brain behind you, and let it answer Josh.
 
-        stream = TurnStream()
+        Mentat holds Josh's memory, calendar, home, files and messages, and
+        the tools that act on them, and it can think for as long as a question
+        deserves. Send it anything about his life or his systems, anything
+        that needs a lookup or an action, anything about the current state of
+        the world, and any question where a quick answer would really be a
+        guess. Do not answer those from your own head.
+
+        Ask in full sentences, and carry over whatever context the question
+        needs to stand on its own: Mentat cannot hear Josh, it only reads what
+        you send.
+
+        The answer is spoken aloud to Josh automatically, in your voice, as
+        soon as it arrives. Do not repeat it, summarize it or introduce it —
+        just carry on from there.
+
+        Args:
+            question: The question to ask, self-contained.
+            effort: How hard Mentat should think. "low" for a lookup or a
+                simple fact; "high" for a genuinely hard, important or
+                open-ended question. High effort is slower, so spend it where
+                it earns the wait.
+            model: "sonnet" for everyday questions, "fable" for the ones that
+                deserve the best thinking available. Pair "fable" with "high".
+        """
+        # Counted before control goes back to the front, so the holding line
+        # it is about to speak cannot be mistaken for the caller talking on.
+        baseline = count_user_messages(self.chat_ctx.items)
+        await ctx.update(CONSULT_CUE)
+
+        waiting = self._background_audio.play(
+            AudioConfig(str(WAITING_PATH), fade_out=WAITING_FADE_OUT_S),
+            loop=True,
+        )
         try:
-            async with aiohttp.ClientSession(timeout=TIMEOUT) as http:
-                async with http.post(
-                    f"{self._mentat_url}/v1/conversation",
-                    json=turn_request(self._room_name, text),
-                ) as response:
-                    if response.status != 200:
-                        raise TurnError(f"daemon answered HTTP {response.status}")
-                    async for chunk in response.content.iter_any():
-                        for spoken in stream.feed(chunk):
-                            yield spoken
-                    if not stream.done:
-                        # The body ended without a done event — mentatd
-                        # restarted mid-turn, so the socket closed cleanly and
-                        # aiohttp raises nothing. Without this the reply just
-                        # stops, possibly mid-sentence, and the caller is left
-                        # guessing whether that was the whole answer.
-                        raise TurnError("stream ended without done")
+            envelope = consult_envelope(
+                self._voice_card,
+                # No rolling summary is kept yet — deferred by design; the
+                # envelope drops the section entirely when it is blank.
+                summary="",
+                last_turns=recent_turns(self.chat_ctx.items),
+                question=question,
+            )
+            answer = await self._consult(envelope, effort, model)
+            if not answer:
+                # A turn that spent itself on tools can finish cleanly with no
+                # text at all. Saying an empty string would leave the caller
+                # listening to nothing, which sounds exactly like a hang — so
+                # an answer with nothing in it is a failed consult, and gets
+                # the same apology as one that never arrived.
+                raise TurnError("turn produced no speakable text")
         except (TurnError, aiohttp.ClientError, TimeoutError) as err:
-            # Barge-in is deliberately not caught: cancellation arrives as
-            # CancelledError or GeneratorExit, both BaseException, so it
-            # unwinds past here — closing the request, which is what aborts
-            # the daemon's turn — and an interrupted turn stays silent
-            # instead of apologizing for a failure that never happened.
-            logger.warning("mentat turn failed: %s", err)
-            yield FAILURE_REPLY
+            logger.warning("consult failed: %s", err)
+            return CONSULT_FAILED
+        finally:
+            # Every exit path, and there are three: the answer is about to be
+            # spoken, the consult failed, or the caller cancelled it. A pad
+            # still looping under any of those is a bug you can hear.
+            # Cancellation needs no clause of its own — CancelledError unwinds
+            # through here and out, which leaves the turn silent, and silence
+            # is what someone who said "never mind" asked for.
+            waiting.stop()
+
+        prefix = (
+            REORIENTATION_PREFIX
+            if conversation_advanced(self.chat_ctx.items, baseline)
+            else ""
+        )
+        await ctx.session.say(prefix + answer)
+        # Nothing left to say. Returning None after an update is what stops
+        # the framework generating a reply on top of the answer just spoken.
+        return None
+
+    async def _consult(self, envelope: str, effort: str, model: str) -> str:
+        """One mentatd turn, collected whole rather than spoken as it streams.
+
+        The answer is delivered as a single piece of speech after the fact, so
+        the chunks are joined instead of yielded: speaking them as they arrive
+        would talk over the front's own holding line and start mid-thought.
+        """
+        stream = TurnStream(speak_ack=False)
+        chunks: list[str] = []
+        async with aiohttp.ClientSession(timeout=TIMEOUT) as http:
+            async with http.post(
+                f"{self._mentat_url}/v1/conversation",
+                json=turn_request(self._room_name, envelope, effort, model),
+            ) as response:
+                if response.status != 200:
+                    raise TurnError(f"daemon answered HTTP {response.status}")
+                async for chunk in response.content.iter_any():
+                    chunks.extend(stream.feed(chunk))
+        if not stream.done:
+            # The body ended without a done event — mentatd restarted mid-turn,
+            # so the socket closed cleanly and aiohttp raises nothing. Speaking
+            # what arrived would hand the caller half an answer with nothing to
+            # signal that it was half.
+            raise TurnError("stream ended without done")
+        return "".join(chunks).strip()
+
+
+def log_turn_metrics(session: AgentSession) -> None:
+    """Put each turn's latency in the journal, where nothing else records it.
+
+    Without this, a complaint that "it felt slow" has no evidence behind it;
+    with it, one line per turn says which stage spent the time. The judgment —
+    what counts as a turn, and how its two halves of numbers are joined — is
+    `turn_latency` next door, where it is pinned offline; this is the
+    subscription around it.
+
+    The numbers arrive on the chat items themselves rather than through the
+    metrics_collected event, which agents 1.6.10 deprecates and warns about on
+    every subscription.
+    """
+    pending: Mapping[str, Any] = {}
+
+    @session.on("conversation_item_added")
+    def _on_item(ev: ConversationItemAddedEvent) -> None:
+        nonlocal pending
+        item = ev.item
+        # The event also carries agent handoffs, which have no metrics and no
+        # role to switch on.
+        if not isinstance(item, llm.ChatMessage):
+            return
+        line, pending = turn_latency(pending, item.role, item.metrics)
+        if line is not None:
+            logger.info("turn latency %s", line)
 
 
 def prewarm(proc: agents.JobProcess) -> None:
@@ -130,14 +290,31 @@ async def entrypoint(ctx: JobContext) -> None:
     """Serve one room for as long as it lives."""
     await ctx.connect()
 
+    instructions, voice_card = load_persona()
+
     session = AgentSession(
         vad=ctx.proc.userdata["vad"],
         # The docs' two-argument form is the one agents 1.6.10 takes:
         # "deepgram/flux-general" is a model literal it knows and `language`
         # is a separate keyword, not a ":en" suffix on the model string.
         stt=inference.STT("deepgram/flux-general", language="en"),
+        # Luna is the front's own voice, fast enough to hold a conversation
+        # with the depth delegated to ask_mentat.
+        #
+        # A bare constructor, for two separate reasons. Luna does not reason,
+        # and the gateway takes reasoning_effort only to ignore it, so passing
+        # one would be a knob that does nothing and a comment that lies. And
+        # max_completion_tokens is an outright trap here: a small cap is spent
+        # on the model's internal tokens before any text is generated, and the
+        # turn returns empty content with finish_reason "length" and no error
+        # at all — a silent mute. Brevity is asked for in persona.md instead,
+        # where it costs nothing.
+        #
+        # Built once and held for the session's life: the instance owns an
+        # httpx connection pool, and keeping it warm is most of the difference
+        # between a ~0.85s first token and a wait the caller can hear.
+        llm=inference.LLM("openai/gpt-5.6-luna"),
         tts=inference.TTS("cartesia/sonic-3"),
-        llm=_RoutedToMentat(),
         # Flux emits end-of-turn itself, so waiting out a silence window after
         # it would only add latency to every reply. (Spelled as turn_handling
         # rather than the turn_detection/min_endpointing_delay arguments: those
@@ -148,10 +325,27 @@ async def entrypoint(ctx: JobContext) -> None:
         },
     )
 
+    log_turn_metrics(session)
+
+    background = BackgroundAudioPlayer(
+        # Played automatically the moment the session enters its thinking
+        # state — the "I heard you" blip, about a second ahead of any speech,
+        # so the gap after the caller stops talking never reads as nothing
+        # happening. The wait pad is not wired here: it belongs to one tool
+        # call rather than to a session state, so ask_mentat plays it by hand.
+        thinking_sound=AudioConfig(str(EARCON_PATH)),
+    )
+    # Before session.start: the player publishes its own track and watches the
+    # session for state changes, and a consult can start on the first utterance.
+    await background.start(room=ctx.room, agent_session=session)
+
     await session.start(
-        agent=MentatAgent(
+        agent=FrontAgent(
+            instructions=instructions,
+            voice_card=voice_card,
             room_name=ctx.room.name,
             mentat_url=os.environ.get("MENTAT_URL", DEFAULT_MENTAT_URL),
+            background_audio=background,
         ),
         room=ctx.room,
     )

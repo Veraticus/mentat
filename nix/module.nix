@@ -6,16 +6,23 @@
 { config, lib, pkgs, ... }: let
   cfg = config.services.mentat;
 
-  # The agent imports its pure halves (stream.py, request.py) as siblings, so
-  # the unit runs it out of a directory, not a lone file. Listed file by file
-  # rather than copying ../voice wholesale: __pycache__ and the offline test
-  # suite have no business in a deployed closure.
+  # The agent imports its pure halves (stream.py, request.py) as siblings and
+  # reads its persona and its two sounds relative to its own path, so the unit
+  # runs it out of a directory, not a lone file — and every one of these is a
+  # startup dependency, not an extra: without persona.md the agent raises
+  # before it takes a call, and without the wavs it goes silent exactly where
+  # the silence was the problem. Listed file by file rather than copying
+  # ../voice wholesale: __pycache__, the offline test suite, and the asset
+  # generator have no business in a deployed closure.
   voiceSource = lib.fileset.toSource {
     root = ../voice;
     fileset = lib.fileset.unions [
       ../voice/agent.py
+      ../voice/persona.md
       ../voice/request.py
       ../voice/stream.py
+      ../voice/assets/earcon.wav
+      ../voice/assets/waiting.wav
     ];
   };
 in {

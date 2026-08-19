@@ -110,6 +110,58 @@ class TurnStreamAcknowledgmentTest(unittest.TestCase):
         )
 
 
+class TurnStreamSuppressedAcknowledgmentTest(unittest.TestCase):
+    """speak_ack=False: the consult path, where the ack would contaminate.
+
+    A consult's chunks are collected and spoken verbatim as the answer, and the
+    front voice has already said its own front-matter line before dispatching —
+    so an ack prepended here would both duplicate that and land inside the
+    quoted answer.
+    """
+
+    def test_ack_is_suppressed(self):
+        stream = TurnStream(speak_ack=False)
+        self.assertEqual(stream.feed(b'{"kind":"tool_start","tool":"Read"}\n'), [])
+
+    def test_ack_stays_suppressed_across_chunks(self):
+        # The ack is owed at most once, so a first tool_start that yielded
+        # nothing must not leave the debt open for a later one to pay.
+        stream = TurnStream(speak_ack=False)
+        self.assertEqual(stream.feed(b'{"kind":"tool_start","tool":"Read"}\n'), [])
+        self.assertEqual(stream.feed(b'{"kind":"tool_start","tool":"Grep"}\n'), [])
+
+    def test_speech_is_unaffected(self):
+        stream = TurnStream(speak_ack=False)
+        self.assertEqual(
+            stream.feed(
+                b'{"kind":"tool_start","tool":"Read"}\n'
+                b'{"kind":"text_delta","text":"Tuesday."}\n'
+            ),
+            ["Tuesday."],
+        )
+
+    def test_terminal_handling_is_unaffected(self):
+        stream = TurnStream(speak_ack=False)
+        self.assertEqual(stream.feed(DONE_OK), [])
+        self.assertTrue(stream.done)
+        with self.assertRaises(TurnError):
+            TurnStream(speak_ack=False).feed(
+                b'{"kind":"error","message":"backend died"}\n'
+            )
+
+    def test_speaking_the_ack_is_the_default(self):
+        # The plain-turn path takes no argument; pinning both the default and
+        # the explicit True keeps the flag from inverting unnoticed.
+        self.assertEqual(
+            TurnStream().feed(b'{"kind":"tool_start","tool":"Read"}\n'),
+            [ACKNOWLEDGMENT],
+        )
+        self.assertEqual(
+            TurnStream(speak_ack=True).feed(b'{"kind":"tool_start","tool":"Read"}\n'),
+            [ACKNOWLEDGMENT],
+        )
+
+
 class TurnStreamTerminalTest(unittest.TestCase):
     def test_clean_done_completes_the_turn(self):
         stream = TurnStream()

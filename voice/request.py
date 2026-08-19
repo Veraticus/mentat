@@ -1,9 +1,11 @@
-"""Pure construction of what a voice room sends mentat: turns and consults.
+"""Pure logic behind the voice front: what a room sends mentat, and what it logs.
 
 A plain turn is the room's own utterance. A consult is the front voice asking
 the deep brain a question mid-conversation and speaking the answer verbatim,
 which needs an envelope around it and a check on whether the caller kept
-talking during the wait.
+talking during the wait. The last section is the turn-latency line the journal
+gets, whose decisions — which speech counts as a turn at all, and how a turn's
+two halves of numbers are joined — are the same kind of pure judgment.
 
 No livekit import: the chat-context readers are structural — they read .type,
 .role and .text_content off whatever items they are handed — so a real livekit
@@ -13,7 +15,7 @@ next to voice/stream.py. Everything agent.py does beyond this is glue.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 #: mentat session ids are namespaced so a daemon shared with other surfaces
@@ -35,26 +37,21 @@ CONSULT_FRAMING = (
     "this conversation — match this voice and style."
 )
 
+#: How many message turns of conversation a consult envelope carries. Two is
+#: the question plus what it was about; more re-feeds mentatd its own memory,
+#: which it already holds — one persistent session per room.
+CONSULT_WINDOW_TURNS = 2
+
 #: Per-turn character cap for the conversation window in a consult envelope.
 #: The envelope must stay bounded: mentatd keeps one persistent session per
 #: room and already remembers the earlier consults, so an unbounded window
 #: re-feeds it its own history at a token cost that grows with the call.
 CONSULT_TURN_CHARS = 500
 
-
-def last_user_text(items: Iterable[Any]) -> str | None:
-    """The final user message's text, or None when the turn carries none.
-
-    The daemon owns conversation memory — one persistent session per room — so
-    a turn sends the new utterance alone and never serializes the history the
-    pipeline hands over. Strictly the *final* user message: an empty one does
-    not fall back to an older utterance, which would re-ask an answered
-    question.
-    """
-    for item in reversed(list(items)):
-        if getattr(item, "type", None) == "message" and item.role == "user":
-            return item.text_content or None
-    return None
+#: Splits persona.md into the front's own instructions and the voice card a
+#: consult envelope carries. A pinned literal on its own line: persona.md is
+#: written by hand and the split has to survive editing around it.
+VOICE_CARD_MARKER = "---VOICE-CARD---"
 
 
 def count_user_messages(items: Iterable[Any]) -> int:
@@ -79,6 +76,24 @@ def conversation_advanced(items: Iterable[Any], users_at_dispatch: int) -> bool:
     return count_user_messages(items) > users_at_dispatch
 
 
+def recent_turns(
+    items: Iterable[Any], count: int = CONSULT_WINDOW_TURNS
+) -> list[tuple[str, str]]:
+    """The last few (role, text) message turns, oldest first.
+
+    The window a consult sends with its question. Oldest first because it is
+    read as conversation; reversed, the exchange would read backwards to the
+    consulted model. Messages carrying no text are skipped rather than sent as
+    a bare "user:" line with nothing after it.
+    """
+    turns = [
+        (str(item.role), str(item.text_content))
+        for item in items
+        if getattr(item, "type", None) == "message" and item.text_content
+    ]
+    return turns[-count:]
+
+
 def turn_request(
     room_name: str,
     text: str,
@@ -99,6 +114,20 @@ def turn_request(
         "effort": effort,
         "model": model,
     }
+
+
+def split_persona(text: str) -> tuple[str, str]:
+    """persona.md's two halves: the front's instructions and its voice card.
+
+    Both halves describe the same voice, which is why they share a file: the
+    card is what mentatd is told to sound like when its answer is read out in
+    that voice, and a card that drifts from the instructions above it would
+    make the consulted answers sound like someone else.
+    """
+    instructions, marker, voice_card = text.partition(VOICE_CARD_MARKER)
+    if not marker:
+        raise ValueError(f"persona text has no {VOICE_CARD_MARKER} line")
+    return instructions.strip(), voice_card.strip()
 
 
 def consult_envelope(
@@ -130,3 +159,55 @@ def _capped(text: str) -> str:
     if len(text) <= CONSULT_TURN_CHARS:
         return text
     return text[:CONSULT_TURN_CHARS] + "…"
+
+
+#: The per-turn latency fields the journal gets, in the order a turn passes
+#: through them: the caller stops talking, the turn is endpointed, the
+#: transcript lands, the front's first token arrives, the first audio frame
+#: comes back, and speech begins. Named in the line so a journal reader can
+#: recover each stage without knowing this code.
+LATENCY_FIELDS = (
+    ("endpoint", "end_of_turn_delay"),
+    ("transcript", "transcription_delay"),
+    ("llm_ttft", "llm_node_ttft"),
+    ("tts_ttfb", "tts_node_ttfb"),
+    ("e2e", "e2e_latency"),
+)
+
+#: Marks an assistant message as a reply the pipeline generated itself. Only
+#: that path measures time to first token; speech pushed out through
+#: session.say — a consulted answer — carries the speech and playback numbers
+#: say() does measure, which is why the presence of metrics cannot be the test
+#: and this key is.
+PIPELINE_REPLY_KEY = "llm_node_ttft"
+
+
+def turn_latency(
+    pending: Mapping[str, Any], role: str, metrics: Mapping[str, Any]
+) -> tuple[str | None, Mapping[str, Any]]:
+    """One chat item's effect on the journal: a line to log, and what to hold.
+
+    A turn's numbers arrive split across two messages — the endpoint and
+    transcription delays are measured on the caller's turn, the model and
+    speech latencies on the reply that answers it — so the caller's half is
+    held until a reply lands, and the two are reported as one line rather than
+    two the reader has to pair up by eye.
+
+    Speech the pipeline did not generate is no turn and yields no line, and it
+    must not spend the held half either: a consulted answer is spoken in the
+    gap between the question and the reply that half belongs to.
+    """
+    if role == "user":
+        return None, metrics
+    if role != "assistant" or PIPELINE_REPLY_KEY not in metrics:
+        return None, pending
+    joined = {**pending, **metrics}
+    line = " ".join(
+        f"{name}={_seconds(joined.get(key))}" for name, key in LATENCY_FIELDS
+    )
+    return line, {}
+
+
+def _seconds(value: float | None) -> str:
+    """One latency field, or a mark that this turn never measured it."""
+    return "?" if value is None else f"{value:.3f}s"

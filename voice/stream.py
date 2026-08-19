@@ -8,7 +8,8 @@ The voice surface differs from the chat surfaces in one way: silence is not
 free. A turn that runs tools before saying anything leaves the caller
 listening to nothing, so the first tool_start of a turn is turned into a
 short spoken acknowledgment — but only while the turn is still silent, since
-once speech is streaming an ack would interject mid-sentence.
+once speech is streaming an ack would interject mid-sentence. A consult, whose
+silence the front voice covers itself, turns the ack off (speak_ack=False).
 """
 
 from __future__ import annotations
@@ -55,11 +56,20 @@ class TurnStream:
     _splitter: LineSplitter
     _spoke: bool
     _acked: bool
+    _speak_ack: bool
 
-    def __init__(self) -> None:
+    def __init__(self, speak_ack: bool = True) -> None:
+        """speak_ack=False for a consult, whose chunks are not spoken live.
+
+        A consult is collected in full and then read out verbatim as the deep
+        brain's answer, after the front voice has already said its own line
+        about going to check — so an ack here would be both a repeat and a
+        stray sentence inside the quoted answer.
+        """
         self._splitter = LineSplitter()
         self._spoke = False
         self._acked = False
+        self._speak_ack = speak_ack
         self.done = False
 
     def feed(self, data: bytes) -> list[str]:
@@ -94,7 +104,7 @@ class TurnStream:
             self._spoke = True
             return str(text)
         if kind == "tool_start":
-            if self._spoke or self._acked:
+            if not self._speak_ack or self._spoke or self._acked:
                 return None
             self._acked = True
             return ACKNOWLEDGMENT

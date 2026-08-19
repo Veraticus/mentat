@@ -1,4 +1,4 @@
-"""Tests for the pure mentat turn-request construction.
+"""Tests for the pure layer under the voice front: requests, consults, metrics.
 
 The chat-context stand-ins here mirror livekit's ChatContext.items: message
 items carry type/role/text_content, and function-call items carry neither role
@@ -14,13 +14,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from request import (
     CONSULT_TURN_CHARS,
+    CONSULT_WINDOW_TURNS,
     TURN_EFFORT,
     TURN_META,
     TURN_MODEL,
+    VOICE_CARD_MARKER,
     consult_envelope,
     conversation_advanced,
     count_user_messages,
-    last_user_text,
+    recent_turns,
+    split_persona,
+    turn_latency,
     turn_request,
 )
 
@@ -41,48 +45,64 @@ class FunctionCall:
     type = "function_call"
 
 
-class LastUserTextTest(unittest.TestCase):
-    def test_returns_the_final_user_message(self):
+class RecentTurnsTest(unittest.TestCase):
+    """The conversation window a consult carries with its question."""
+
+    def test_returns_the_last_two_turns_in_order(self):
+        # Oldest first: the window is read as conversation, and reversing it
+        # would make the exchange read backwards to the consulted model.
         self.assertEqual(
-            last_user_text(
+            recent_turns(
                 [
-                    Message("user", "first"),
-                    Message("assistant", "answered"),
-                    Message("user", "second"),
+                    Message("user", "morning"),
+                    Message("assistant", "morning yourself"),
+                    Message("user", "what's on today?"),
                 ]
             ),
-            "second",
-        )
-
-    def test_ignores_assistant_messages(self):
-        # The daemon owns conversation memory: only the new utterance travels.
-        self.assertEqual(
-            last_user_text([Message("user", "asked"), Message("assistant", "said")]),
-            "asked",
+            [("assistant", "morning yourself"), ("user", "what's on today?")],
         )
 
     def test_ignores_non_message_items(self):
-        # A function-call item has no .role at all; reading it must not raise.
+        # The framework interleaves function-call and function-output items,
+        # which carry neither role nor text; reading them must not raise.
         self.assertEqual(
-            last_user_text([Message("user", "asked"), FunctionCall()]), "asked"
+            recent_turns([Message("user", "asked"), FunctionCall()]),
+            [("user", "asked")],
         )
 
-    def test_no_user_message_yields_none(self):
-        self.assertIsNone(last_user_text([Message("assistant", "hello")]))
+    def test_fewer_than_two_messages_returns_what_there_is(self):
+        self.assertEqual(recent_turns([Message("user", "hi")]), [("user", "hi")])
 
-    def test_empty_context_yields_none(self):
-        self.assertIsNone(last_user_text([]))
+    def test_empty_context_returns_nothing(self):
+        self.assertEqual(recent_turns([]), [])
 
-    def test_empty_final_user_message_yields_none(self):
-        # Strictly the *final* user message: an empty one never falls back to
-        # an older utterance, which would re-ask a question already answered.
-        self.assertIsNone(
-            last_user_text([Message("user", "earlier"), Message("user", "")])
+    def test_textless_messages_are_skipped(self):
+        # text_content is None when a message holds no text part, and an empty
+        # one contributes a bare "user:" line the consulted model would have
+        # to interpret.
+        self.assertEqual(
+            recent_turns(
+                [
+                    Message("user", "real question"),
+                    Message("assistant", None),
+                    Message("assistant", ""),
+                ]
+            ),
+            [("user", "real question")],
         )
 
-    def test_final_user_message_without_text_yields_none(self):
-        # ChatMessage.text_content is None when the message holds no text part.
-        self.assertIsNone(last_user_text([Message("user", None)]))
+    def test_window_size_is_adjustable(self):
+        items = [
+            Message("user", "one"),
+            Message("assistant", "two"),
+            Message("user", "three"),
+        ]
+        self.assertEqual(recent_turns(items, count=1), [("user", "three")])
+        self.assertEqual(len(recent_turns(items, count=3)), 3)
+
+    def test_default_window_is_the_pinned_size(self):
+        items = [Message("user", str(i)) for i in range(5)]
+        self.assertEqual(len(recent_turns(items)), CONSULT_WINDOW_TURNS)
 
 
 class TurnRequestTest(unittest.TestCase):
@@ -124,6 +144,27 @@ class TurnRequestTest(unittest.TestCase):
         body = turn_request("kitchen", "why?", effort="medium", model="opus")
         self.assertEqual(body["effort"], "medium")
         self.assertEqual(body["model"], "opus")
+
+
+class SplitPersonaTest(unittest.TestCase):
+    """persona.md's two halves: the front's instructions and its voice card."""
+
+    def test_splits_on_the_marker_and_strips_both_halves(self):
+        text = f"# The voice\n\nBe warm.\n\n{VOICE_CARD_MARKER}\n\nSound warm.\n"
+        self.assertEqual(
+            split_persona(text), ("# The voice\n\nBe warm.", "Sound warm.")
+        )
+
+    def test_a_missing_marker_is_an_error(self):
+        # The half that only fires at deploy: a persona edited past its marker
+        # would otherwise hand mentatd the whole file as a voice card.
+        with self.assertRaises(ValueError):
+            split_persona("# The voice\n\nBe warm.\n")
+
+    def test_the_marker_is_pinned(self):
+        # persona.md is hand-written around this literal; changing one without
+        # the other splits the file in the wrong place, or not at all.
+        self.assertEqual(VOICE_CARD_MARKER, "---VOICE-CARD---")
 
 
 class ConsultEnvelopeTest(unittest.TestCase):
@@ -255,6 +296,96 @@ class ReorientationTest(unittest.TestCase):
     def test_an_unchanged_context_has_not_advanced(self):
         items = [Message("user", "asked"), Message("assistant", "answered")]
         self.assertFalse(conversation_advanced(items, count_user_messages(items)))
+
+
+class TurnLatencyTest(unittest.TestCase):
+    """One chat item's effect on the journal: what to log, what to hold.
+
+    The metric shapes below are the ones livekit-agents 1.6.10 actually
+    stamps: the caller's half on the user message, and two different assistant
+    halves depending on which path produced the speech.
+    """
+
+    #: The caller's turn, measured by the pipeline as it endpoints and
+    #: transcribes.
+    USER = {
+        "end_of_turn_delay": 0.14,
+        "transcription_delay": 0.22,
+        "stopped_speaking_at": 1000.0,
+    }
+    #: A consulted answer, shaped as session.say stamps it (agent_activity
+    #: _tts_task_impl): real speech and playback numbers, and no llm_node_ttft,
+    #: because no llm ran to produce it.
+    SAY = {
+        "tts_node_ttfb": 0.31,
+        "started_speaking_at": 1002.0,
+        "stopped_speaking_at": 1004.0,
+        "playback_latency": 0.09,
+    }
+    #: A reply the pipeline generated itself — the only path that measures
+    #: time to first token.
+    REPLY = {
+        "llm_node_ttft": 0.85,
+        "tts_node_ttfb": 0.30,
+        "started_speaking_at": 1005.0,
+        "stopped_speaking_at": 1006.0,
+        "e2e_latency": 1.41,
+    }
+
+    def test_the_callers_half_is_held_rather_than_logged(self):
+        # Half a turn's numbers are not a turn: they wait for the reply that
+        # completes them.
+        line, pending = turn_latency({}, "user", self.USER)
+        self.assertIsNone(line)
+        self.assertEqual(pending, self.USER)
+
+    def test_spoken_for_speech_logs_nothing_and_keeps_the_held_half(self):
+        # A consulted answer goes out through session.say, whose item is not
+        # metric-free — which is why emptiness cannot be the test. The held
+        # half belongs to the reply that actually answers the turn.
+        line, pending = turn_latency(self.USER, "assistant", self.SAY)
+        self.assertIsNone(line)
+        self.assertEqual(pending, self.USER)
+
+    def test_a_pipeline_reply_joins_both_halves_into_one_line(self):
+        line, _ = turn_latency(self.USER, "assistant", self.REPLY)
+        self.assertEqual(
+            line,
+            "endpoint=0.140s transcript=0.220s llm_ttft=0.850s "
+            "tts_ttfb=0.300s e2e=1.410s",
+        )
+
+    def test_a_consult_does_not_eat_the_next_replys_user_half(self):
+        # The sequence a consult really produces: the question, the answer
+        # spoken on its behalf, then the front's own next pipeline reply.
+        _, pending = turn_latency({}, "user", self.USER)
+        _, pending = turn_latency(pending, "assistant", self.SAY)
+        line, _ = turn_latency(pending, "assistant", self.REPLY)
+        self.assertIn("endpoint=0.140s", line)
+        self.assertIn("transcript=0.220s", line)
+
+    def test_the_held_half_is_dropped_once_it_has_been_logged(self):
+        # Otherwise the next turn inherits the last caller's numbers and every
+        # line after the first reads as a turn that never happened.
+        _, pending = turn_latency(self.USER, "assistant", self.REPLY)
+        self.assertEqual(pending, {})
+
+    def test_stages_that_went_unmeasured_are_marked_not_omitted(self):
+        # A reply with no user half still logs: the fields are positional in
+        # the line, and a silently missing one would shift the reader's eye.
+        line, _ = turn_latency({}, "assistant", {"llm_node_ttft": 0.5})
+        self.assertEqual(
+            line, "endpoint=? transcript=? llm_ttft=0.500s tts_ttfb=? e2e=?"
+        )
+
+    def test_only_an_assistant_message_can_close_a_turn(self):
+        # ChatMessage.role is also "system" and "developer". Reply metrics are
+        # read off the assistant message and nowhere else, so even an item
+        # carrying them under another role neither logs nor spends the held
+        # half — it is the role, not just the key, that says a turn ended.
+        line, pending = turn_latency(self.USER, "system", self.REPLY)
+        self.assertIsNone(line)
+        self.assertEqual(pending, self.USER)
 
 
 if __name__ == "__main__":
