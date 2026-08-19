@@ -8,6 +8,24 @@
   outputs = { self, nixpkgs }: let
     system = "x86_64-linux";
     pkgs = nixpkgs.legacyPackages.${system};
+    pkgsAndroid = import nixpkgs {
+      inherit system;
+      config = {
+        allowUnfree = true;
+        android_sdk.accept_license = true;
+      };
+    };
+    androidComposition = pkgsAndroid.androidenv.composeAndroidPackages {
+      cmdLineToolsVersion = "latest";
+      platformToolsVersion = "36.0.0";
+      buildToolsVersions = [ "36.0.0" ];
+      platformVersions = [ "36" ];
+      includeEmulator = true;
+      emulatorVersion = "36.1.9";
+      includeSystemImages = true;
+      systemImageTypes = [ "google_apis" ];
+      abiVersions = [ "x86_64" ];
+    };
 
     mentatd = pkgs.buildNpmPackage {
       pname = "mentatd";
@@ -47,6 +65,18 @@
     # voice agent. Built from upstream wheels; see nix/voice-env.nix.
     voice-env = import ./nix/voice-env.nix { inherit pkgs; };
   in {
+    devShells.${system}.android = pkgsAndroid.mkShell {
+      packages = [
+        androidComposition.androidsdk
+        pkgsAndroid.gradle
+        pkgsAndroid.jdk17
+      ];
+      ANDROID_HOME = "${androidComposition.androidsdk}/libexec/android-sdk";
+      ANDROID_SDK_ROOT = "${androidComposition.androidsdk}/libexec/android-sdk";
+      JAVA_HOME = "${pkgsAndroid.jdk17}";
+      GRADLE_OPTS = "-Dandroid.aapt2FromMavenOverride=${androidComposition.androidsdk}/libexec/android-sdk/build-tools/36.0.0/aapt2 -Dorg.gradle.project.android.aapt2FromMavenOverride=${androidComposition.androidsdk}/libexec/android-sdk/build-tools/36.0.0/aapt2";
+    };
+
     packages.${system} = {
       mentatd = mentatd;
       default = mentatd;
