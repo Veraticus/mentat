@@ -21,3 +21,20 @@ android {
         versionName = "1.0"
     }
 }
+
+dependencies {
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
+}
+
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    if (name.contains("UnitTest")) {
+        compilerOptions.noJdk.set(false)
+        compilerOptions.freeCompilerArgs.add("-Xadd-modules=jdk.httpserver")
+    }
+}
+
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    jvmArgs("--add-modules", "jdk.httpserver")
+    reports.html.required.set(false)
+}
