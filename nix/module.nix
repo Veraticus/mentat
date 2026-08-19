@@ -113,6 +113,11 @@ in {
         description = "LIVEKIT_URL of the SFU. Deployed separately from this module, hence a URL rather than a unit dependency.";
       };
 
+      publicLivekitUrl = lib.mkOption {
+        type = lib.types.str;
+        description = "The wss URL clients are told to connect to (the tailnet-published LiveKit signal).";
+      };
+
       mentatUrl = lib.mkOption {
         type = lib.types.str;
         default = "http://127.0.0.1:${toString cfg.listenPort}";
@@ -156,6 +161,9 @@ in {
       // lib.optionalAttrs (cfg.mcpConfig != null) {
         MENTAT_MCP_CONFIG = builtins.toJSON { mcpServers = cfg.mcpConfig; };
       }
+      // lib.optionalAttrs cfg.voice.enable {
+        MENTAT_VOICE_PUBLIC_LIVEKIT_URL = cfg.voice.publicLivekitUrl;
+      }
       // cfg.extraEnv;
 
       # The prompt is exported in-script rather than via `environment`:
@@ -173,7 +181,10 @@ in {
         Restart = "always";
         RestartSec = "5s";
 
-        EnvironmentFile = cfg.environmentFile;
+        EnvironmentFile =
+          if cfg.voice.enable
+          then [ cfg.environmentFile cfg.voice.environmentFile ]
+          else cfg.environmentFile;
 
         StateDirectory = "mentat";
         WorkingDirectory = "/var/lib/mentat";
@@ -182,6 +193,11 @@ in {
         NoNewPrivileges = true;
         ProtectSystem = "strict";
         ProtectHome = true;
+      }
+      // lib.optionalAttrs cfg.voice.enable {
+        # mentatd needs the signing pair to mint join tokens, but must never see
+        # the inference credentials that share the voice agent's secrets file.
+        UnsetEnvironment = [ "LIVEKIT_INFERENCE_API_KEY" "LIVEKIT_INFERENCE_API_SECRET" ];
       };
     };
 

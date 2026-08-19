@@ -95,14 +95,18 @@
           voice = {
             enable = true;
             environmentFile = "/run/agenix/mentat-voice-env";
+            publicLivekitUrl = "wss://ultraviolet.tail82223.ts.net:7443";
           };
         };
 
         observed = {
           daemonEnv = deployed.systemd.services.mentatd.environment;
+          daemonService = deployed.systemd.services.mentatd.serviceConfig;
           daemonUser = deployed.systemd.services.mentatd.serviceConfig.User;
           reminderEnv = deployed.systemd.services.mentat-reminder.environment;
           reminderTimer = deployed.systemd.timers.mentat-reminder.timerConfig;
+          voiceDaemonEnv = withVoice.systemd.services.mentatd.environment;
+          voiceDaemonService = withVoice.systemd.services.mentatd.serviceConfig;
           voiceEnv = withVoice.systemd.services.mentat-voice.environment;
           voiceExecStart = withVoice.systemd.services.mentat-voice.serviceConfig.ExecStart;
           voiceService = withVoice.systemd.services.mentat-voice.serviceConfig;
@@ -112,8 +116,30 @@
       # must gain no unit until it opts in explicitly.
       assert lib.assertMsg (!(deployed.systemd.services ? mentat-voice))
         "services.mentat.voice must default off; enabling the daemon rendered mentat-voice";
-      # Opting in then needs nothing but the secrets file: the URLs on both
-      # sides of the agent come from the module's own defaults, and the unit
+      assert lib.assertMsg (!(observed.daemonEnv ? MENTAT_VOICE_PUBLIC_LIVEKIT_URL))
+        "voice-off mentatd unexpectedly received MENTAT_VOICE_PUBLIC_LIVEKIT_URL";
+      assert lib.assertMsg (observed.daemonService.EnvironmentFile == "/run/agenix/mentat-env")
+        "voice-off mentatd EnvironmentFile changed: ${builtins.toJSON observed.daemonService.EnvironmentFile}";
+      assert lib.assertMsg (!(observed.daemonService ? UnsetEnvironment))
+        "voice-off mentatd unexpectedly strips inference credentials";
+      # Voice opts mentatd into the signing credentials and public client URL,
+      # while keeping the inference credentials confined to the agent.
+      assert lib.assertMsg
+        (observed.voiceDaemonEnv.MENTAT_VOICE_PUBLIC_LIVEKIT_URL == "wss://ultraviolet.tail82223.ts.net:7443")
+        "mentatd public LiveKit URL mismatch: ${observed.voiceDaemonEnv.MENTAT_VOICE_PUBLIC_LIVEKIT_URL}";
+      assert lib.assertMsg
+        (observed.voiceDaemonService.EnvironmentFile == [
+          "/run/agenix/mentat-env"
+          "/run/agenix/mentat-voice-env"
+        ])
+        "voice mentatd EnvironmentFile mismatch: ${builtins.toJSON observed.voiceDaemonService.EnvironmentFile}";
+      assert lib.assertMsg
+        (observed.voiceDaemonService.UnsetEnvironment == [
+          "LIVEKIT_INFERENCE_API_KEY"
+          "LIVEKIT_INFERENCE_API_SECRET"
+        ])
+        "voice mentatd UnsetEnvironment mismatch: ${builtins.toJSON observed.voiceDaemonService.UnsetEnvironment}";
+      # The agent-side URLs still come from their own settings, and the unit
       # runs the agent as a livekit worker.
       assert lib.assertMsg (observed.voiceEnv.LIVEKIT_URL == "ws://127.0.0.1:7880")
         "voice LIVEKIT_URL default changed: ${observed.voiceEnv.LIVEKIT_URL}";
