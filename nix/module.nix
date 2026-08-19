@@ -2,9 +2,22 @@
 # evolves in the same commit as the code it deploys; the consuming flake
 # (nix-config) supplies host concerns: the pinned claude binary, the agenix
 # secrets file, and network placement.
-{ mentatdPackage }:
+{ mentatdPackage, voiceEnvPackage }:
 { config, lib, pkgs, ... }: let
   cfg = config.services.mentat;
+
+  # The agent imports its pure halves (stream.py, request.py) as siblings, so
+  # the unit runs it out of a directory, not a lone file. Listed file by file
+  # rather than copying ../voice wholesale: __pycache__ and the offline test
+  # suite have no business in a deployed closure.
+  voiceSource = lib.fileset.toSource {
+    root = ../voice;
+    fileset = lib.fileset.unions [
+      ../voice/agent.py
+      ../voice/request.py
+      ../voice/stream.py
+    ];
+  };
 in {
   options.services.mentat = {
     enable = lib.mkEnableOption "mentat personal assistant daemon";
@@ -76,6 +89,39 @@ in {
         type = lib.types.strMatching "[0-9]{2}:[0-9]{2}";
         default = "09:00";
         description = "Host-local HH:MM the reminder fires.";
+      };
+    };
+
+    voice = {
+      enable = lib.mkEnableOption "the LiveKit voice agent";
+
+      package = lib.mkOption {
+        type = lib.types.package;
+        default = voiceEnvPackage;
+        description = "Python environment providing bin/python with livekit-agents.";
+      };
+
+      agentScript = lib.mkOption {
+        type = lib.types.path;
+        default = "${voiceSource}/agent.py";
+        description = "Agent entry point. Its directory must also hold the modules it imports.";
+      };
+
+      livekitUrl = lib.mkOption {
+        type = lib.types.str;
+        default = "ws://127.0.0.1:7880";
+        description = "LIVEKIT_URL of the SFU. Deployed separately from this module, hence a URL rather than a unit dependency.";
+      };
+
+      mentatUrl = lib.mkOption {
+        type = lib.types.str;
+        default = "http://127.0.0.1:${toString cfg.listenPort}";
+        description = "MENTAT_URL the agent posts turns to.";
+      };
+
+      environmentFile = lib.mkOption {
+        type = lib.types.str;
+        description = "EnvironmentFile supplying LIVEKIT_API_KEY/SECRET and LIVEKIT_INFERENCE_API_KEY/SECRET. An agenix-decrypted path, never a store path.";
       };
     };
   };
@@ -200,6 +246,47 @@ in {
         Group = "mentat";
         EnvironmentFile = cfg.environmentFile;
         UnsetEnvironment = [ "CLAUDE_CODE_OAUTH_TOKEN" ];
+
+        PrivateTmp = true;
+        NoNewPrivileges = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+      };
+    };
+
+    systemd.services.mentat-voice = lib.mkIf cfg.voice.enable {
+      description = "mentat LiveKit voice agent";
+      # The SFU is deployed outside this flake, so its unit name is not ours
+      # to depend on; the agent retries the websocket on its own either way.
+      after = [ "network.target" "mentatd.service" ];
+      wants = [ "mentatd.service" ];
+      wantedBy = [ "multi-user.target" ];
+
+      environment = {
+        LIVEKIT_URL = cfg.voice.livekitUrl;
+        MENTAT_URL = cfg.voice.mentatUrl;
+        # The agents CLI writes caches under $HOME; give it the state
+        # directory rather than weakening ProtectHome. Its own directory, not
+        # the daemon's: nothing here belongs next to the SDK's ~/.claude.
+        HOME = "/var/lib/mentat-voice";
+        XDG_CACHE_HOME = "/var/lib/mentat-voice/cache";
+      };
+
+      serviceConfig = {
+        Type = "simple";
+        User = "mentat";
+        Group = "mentat";
+        Restart = "always";
+        RestartSec = "5s";
+
+        EnvironmentFile = cfg.voice.environmentFile;
+        # `start` is the agents CLI's production mode (dev enables reload and
+        # debug logging). livekit-agents ships no console script, so the
+        # interpreter runs the file directly.
+        ExecStart = "${lib.getExe' cfg.voice.package "python"} ${cfg.voice.agentScript} start";
+
+        StateDirectory = "mentat-voice";
+        WorkingDirectory = "/var/lib/mentat-voice";
 
         PrivateTmp = true;
         NoNewPrivileges = true;
