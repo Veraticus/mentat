@@ -15,10 +15,13 @@ from typing import Any
 #: can never collide with a LiveKit room name.
 SESSION_PREFIX = "voice-"
 
-# Voice turns are latency-bound: low effort, identified surface. The user is
-# part of the turn's authority context (mentat policy is per-turn).
+# Voice turns are latency-bound: low effort, identified surface, and a fast
+# model — the daemon's default is the deepest one, whose latency (and usage
+# limits) don't suit a caller waiting in silence. The user is part of the
+# turn's authority context (mentat policy is per-turn).
 TURN_META = {"surface": "voice", "user": "josh"}
 TURN_EFFORT = "low"
+TURN_MODEL = "sonnet"
 
 
 def last_user_text(items: Iterable[Any]) -> str | None:
@@ -43,4 +46,5 @@ def turn_request(room_name: str, text: str) -> dict[str, Any]:
         "text": text,
         "meta": TURN_META,
         "effort": TURN_EFFORT,
+        "model": TURN_MODEL,
     }

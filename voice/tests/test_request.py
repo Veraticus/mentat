@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from request import TURN_EFFORT, TURN_META, last_user_text, turn_request
+from request import TURN_EFFORT, TURN_META, TURN_MODEL, last_user_text, turn_request
 
 
 class Message:
@@ -84,6 +84,7 @@ class TurnRequestTest(unittest.TestCase):
                 "text": "what's on today?",
                 "meta": {"surface": "voice", "user": "josh"},
                 "effort": "low",
+                "model": "sonnet",
             },
         )
 
@@ -93,9 +94,12 @@ class TurnRequestTest(unittest.TestCase):
 
     def test_voice_turns_are_low_effort_and_identified(self):
         # Authority is per-turn in mentat policy: the surface and user ride
-        # along with every request.
+        # along with every request. The model rides along too: the daemon's
+        # default is the deepest model, whose latency and usage limits don't
+        # suit a caller waiting in silence (first live test hit both).
         self.assertEqual(TURN_EFFORT, "low")
         self.assertEqual(TURN_META, {"surface": "voice", "user": "josh"})
+        self.assertEqual(TURN_MODEL, "sonnet")
 
 
 if __name__ == "__main__":
