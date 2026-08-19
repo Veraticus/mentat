@@ -14,6 +14,7 @@ import {
   type Event,
 } from './backend.ts';
 import type { Logger } from './log.ts';
+import type { TokenIssuer } from './voicetoken.ts';
 import { errorLine, toWireLine } from './wire.ts';
 
 /** An utterance is tiny; this only stops unbounded request bodies. */
@@ -73,8 +74,20 @@ export function createHandler(
   backend: Backend,
   tracker: SessionTracker,
   logger: Logger,
+  issuer?: TokenIssuer,
 ): RequestListener {
   return (req, res) => {
+    if (req.method === 'POST' && req.url === '/v1/voice/token' && issuer !== undefined) {
+      try {
+        const body = JSON.stringify(issuer.issue()) + '\n';
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(body);
+      } catch (error) {
+        logger.error('voice token issuance failed', { error: String(error) });
+        fail(res, 500, 'internal');
+      }
+      return;
+    }
     if (req.method === 'POST' && req.url === '/v1/conversation') {
       // The last-resort catch: a rejection escaping the handler must never
       // become an unhandledRejection — on Node that exits the process,

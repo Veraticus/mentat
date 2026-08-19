@@ -5,8 +5,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AtCapacityError, type Backend, type Event, type Turn } from '../src/backend.ts';
-import { nullLogger } from '../src/log.ts';
+import { nullLogger, type Logger } from '../src/log.ts';
 import { SessionTracker, createHandler } from '../src/server.ts';
+import type { TokenIssuer } from '../src/voicetoken.ts';
 
 function doneEvent(text: string): Event {
   return {
@@ -69,8 +70,13 @@ class FakeBackend implements Backend {
 
 const servers: Server[] = [];
 
-async function serve(backend: Backend, tracker = new SessionTracker()): Promise<string> {
-  const server = createServer(createHandler(backend, tracker, nullLogger));
+async function serve(
+  backend: Backend,
+  tracker = new SessionTracker(),
+  issuer?: TokenIssuer,
+  logger: Logger = nullLogger,
+): Promise<string> {
+  const server = createServer(createHandler(backend, tracker, logger, issuer));
   servers.push(server);
   await new Promise<void>((resolve) => {
     server.listen(0, '127.0.0.1', resolve);
@@ -278,6 +284,78 @@ describe('POST /v1/conversation', () => {
     const base = await serve(new FakeBackend(() => []));
     expect((await fetch(`${base}/v1/conversation`)).status).toBe(404);
     expect((await fetch(`${base}/nope`)).status).toBe(404);
+  });
+});
+
+describe('POST /v1/voice/token', () => {
+  const grant = {
+    token: 'signed-token',
+    room: 'android-device-id',
+    url: 'wss://voice.example.test',
+    expires_at: '2026-08-19T13:34:56.000Z',
+  };
+  const issuer: TokenIssuer = { issue: () => grant };
+
+  it('returns the issued grant as single-line JSON when configured and ignores the body', async () => {
+    const base = await serve(new FakeBackend(() => []), new SessionTracker(), issuer);
+
+    const res = await fetch(`${base}/v1/voice/token`, {
+      method: 'POST',
+      body: 'not json \x01',
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('application/json');
+    expect(await res.text()).toBe(`${JSON.stringify(grant)}\n`);
+  });
+
+  it('returns 500 when issuance throws and continues serving requests', async () => {
+    const issue = vi
+      .fn<TokenIssuer['issue']>()
+      .mockImplementationOnce(() => {
+        throw new Error('signing failed');
+      })
+      .mockReturnValue(grant);
+    const logger = { ...nullLogger, error: vi.fn<Logger['error']>() };
+    const base = await serve(
+      new FakeBackend(() => []),
+      new SessionTracker(),
+      { issue },
+      logger,
+    );
+
+    const failed = await fetch(`${base}/v1/voice/token`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(100),
+    });
+
+    expect(failed.status).toBe(500);
+    expect(await failed.text()).toBe('{"error":"internal"}\n');
+    expect(logger.error).toHaveBeenCalledWith('voice token issuance failed', {
+      error: 'Error: signing failed',
+    });
+
+    const succeeded = await fetch(`${base}/v1/voice/token`, { method: 'POST' });
+    expect(succeeded.status).toBe(200);
+    expect(await succeeded.text()).toBe(`${JSON.stringify(grant)}\n`);
+  });
+
+  it('returns the existing not-found response when no issuer is configured', async () => {
+    const base = await serve(new FakeBackend(() => []));
+
+    const res = await fetch(`${base}/v1/voice/token`, { method: 'POST' });
+
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe('{"error":"not found"}\n');
+  });
+
+  it('does not expose the token route over GET', async () => {
+    const base = await serve(new FakeBackend(() => []), new SessionTracker(), issuer);
+
+    const res = await fetch(`${base}/v1/voice/token`);
+
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe('{"error":"not found"}\n');
   });
 });
 

@@ -22,6 +22,113 @@ describe('loadConfig', () => {
     expect(config.mcpServers).toBeUndefined();
   });
 
+  it('loads LiveKit voice-token configuration when all variables are set', () => {
+    const config = loadConfig({
+      ...baseEnv,
+      LIVEKIT_API_KEY: 'voice-key',
+      LIVEKIT_API_SECRET: 'voice-secret',
+      MENTAT_VOICE_PUBLIC_LIVEKIT_URL: 'wss://voice.example.test',
+    });
+
+    expect(config.voiceToken).toEqual({
+      apiKey: 'voice-key',
+      apiSecret: 'voice-secret',
+      url: 'wss://voice.example.test',
+    });
+  });
+
+  it('accepts an unencrypted WebSocket URL for local LiveKit deployments', () => {
+    const config = loadConfig({
+      ...baseEnv,
+      LIVEKIT_API_KEY: 'voice-key',
+      LIVEKIT_API_SECRET: 'voice-secret',
+      MENTAT_VOICE_PUBLIC_LIVEKIT_URL: 'ws://127.0.0.1:7880',
+    });
+
+    expect(config.voiceToken?.url).toBe('ws://127.0.0.1:7880');
+  });
+
+  it('rejects malformed and non-WebSocket public LiveKit URLs', () => {
+    const configuredEnv = {
+      ...baseEnv,
+      LIVEKIT_API_KEY: 'voice-key',
+      LIVEKIT_API_SECRET: 'voice-secret',
+    };
+
+    expect(() =>
+      loadConfig({
+        ...configuredEnv,
+        MENTAT_VOICE_PUBLIC_LIVEKIT_URL: 'http://voice.example.test',
+      }),
+    ).toThrow(/MENTAT_VOICE_PUBLIC_LIVEKIT_URL.*ws:.*wss:/);
+    expect(() =>
+      loadConfig({
+        ...configuredEnv,
+        MENTAT_VOICE_PUBLIC_LIVEKIT_URL: 'not a URL',
+      }),
+    ).toThrow(/MENTAT_VOICE_PUBLIC_LIVEKIT_URL.*ws:.*wss:/);
+  });
+
+  it('omits voice-token configuration when all variables are unset or empty', () => {
+    expect(loadConfig(baseEnv).voiceToken).toBeUndefined();
+    expect(
+      loadConfig({
+        ...baseEnv,
+        LIVEKIT_API_KEY: '',
+        LIVEKIT_API_SECRET: '',
+        MENTAT_VOICE_PUBLIC_LIVEKIT_URL: '',
+      }).voiceToken,
+    ).toBeUndefined();
+  });
+
+  it('rejects every partial voice-token configuration and names missing variables', () => {
+    const cases: { env: Record<string, string>; missing: string[] }[] = [
+      {
+        env: { LIVEKIT_API_KEY: 'voice-key' },
+        missing: ['LIVEKIT_API_SECRET', 'MENTAT_VOICE_PUBLIC_LIVEKIT_URL'],
+      },
+      {
+        env: { LIVEKIT_API_SECRET: 'voice-secret' },
+        missing: ['LIVEKIT_API_KEY', 'MENTAT_VOICE_PUBLIC_LIVEKIT_URL'],
+      },
+      {
+        env: { MENTAT_VOICE_PUBLIC_LIVEKIT_URL: 'wss://voice.example.test' },
+        missing: ['LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET'],
+      },
+      {
+        env: { LIVEKIT_API_KEY: 'voice-key', LIVEKIT_API_SECRET: 'voice-secret' },
+        missing: ['MENTAT_VOICE_PUBLIC_LIVEKIT_URL'],
+      },
+      {
+        env: {
+          LIVEKIT_API_KEY: 'voice-key',
+          MENTAT_VOICE_PUBLIC_LIVEKIT_URL: 'wss://voice.example.test',
+        },
+        missing: ['LIVEKIT_API_SECRET'],
+      },
+      {
+        env: {
+          LIVEKIT_API_SECRET: 'voice-secret',
+          MENTAT_VOICE_PUBLIC_LIVEKIT_URL: 'wss://voice.example.test',
+        },
+        missing: ['LIVEKIT_API_KEY'],
+      },
+    ];
+
+    for (const testCase of cases) {
+      let message = '';
+      try {
+        loadConfig({ ...baseEnv, ...testCase.env });
+      } catch (error) {
+        message = String(error);
+      }
+      expect(message).not.toBe('');
+      for (const variable of testCase.missing) {
+        expect(message).toContain(variable);
+      }
+    }
+  });
+
   it('parses CSV tool lists and extra env', () => {
     const config = loadConfig({
       ...baseEnv,

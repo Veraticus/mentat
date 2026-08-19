@@ -1,5 +1,5 @@
-// Daemon configuration, env-first: every knob is a MENTAT_* variable (the
-// deploy is a systemd unit with an environment file, not a flag parser).
+// Daemon configuration, env-first: knobs use MENTAT_* except for deployed
+// LiveKit credentials (the systemd unit reads environment files, not flags).
 
 import { readFileSync } from 'node:fs';
 import { isIP } from 'node:net';
@@ -29,6 +29,7 @@ export interface Config {
   maxSessions: number;
   sessionTtlMs: number;
   maxBudgetUsd?: number;
+  voiceToken?: { apiKey: string; apiSecret: string; url: string };
 }
 
 const DEFAULT_LISTEN = '127.0.0.1:8484';
@@ -47,6 +48,33 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
   const allowNonLoopback =
     env.MENTAT_ALLOW_NON_LOOPBACK !== undefined && env.MENTAT_ALLOW_NON_LOOPBACK !== '';
   validateListen(listen.host, allowNonLoopback);
+
+  // LIVEKIT_* deliberately matches the deployed voice secret file rather than
+  // introducing a second secret file under the MENTAT_* convention.
+  const apiKey = env.LIVEKIT_API_KEY === '' ? undefined : env.LIVEKIT_API_KEY;
+  const apiSecret = env.LIVEKIT_API_SECRET === '' ? undefined : env.LIVEKIT_API_SECRET;
+  const voiceUrl =
+    env.MENTAT_VOICE_PUBLIC_LIVEKIT_URL === ''
+      ? undefined
+      : env.MENTAT_VOICE_PUBLIC_LIVEKIT_URL;
+  const voiceVariables = [
+    ['LIVEKIT_API_KEY', apiKey],
+    ['LIVEKIT_API_SECRET', apiSecret],
+    ['MENTAT_VOICE_PUBLIC_LIVEKIT_URL', voiceUrl],
+  ] as const;
+  const missingVoiceVariables = voiceVariables
+    .filter(([, value]) => value === undefined)
+    .map(([name]) => name);
+  if (missingVoiceVariables.length > 0 && missingVoiceVariables.length < voiceVariables.length) {
+    throw new Error(`incomplete voice token configuration; missing ${missingVoiceVariables.join(', ')}`);
+  }
+  if (apiKey !== undefined && apiSecret !== undefined && voiceUrl !== undefined) {
+    validateVoiceUrl(voiceUrl);
+  }
+  const voiceToken =
+    apiKey !== undefined && apiSecret !== undefined && voiceUrl !== undefined
+      ? { apiKey, apiSecret, url: voiceUrl }
+      : undefined;
 
   return {
     listen,
@@ -75,6 +103,7 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
     ...(env.MENTAT_MAX_BUDGET_USD !== undefined && {
       maxBudgetUsd: floatOrThrow(env.MENTAT_MAX_BUDGET_USD, 'MENTAT_MAX_BUDGET_USD'),
     }),
+    ...(voiceToken !== undefined && { voiceToken }),
   };
 }
 
@@ -107,6 +136,22 @@ export function validateListen(host: string, allowNonLoopback: boolean): void {
   if (!isLoopback) {
     throw new Error(
       `refusing to bind non-loopback ${host}; set MENTAT_ALLOW_NON_LOOPBACK to override`,
+    );
+  }
+}
+
+function validateVoiceUrl(value: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(
+      `invalid MENTAT_VOICE_PUBLIC_LIVEKIT_URL ${value}: want a ws: or wss: URL`,
+    );
+  }
+  if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') {
+    throw new Error(
+      `invalid MENTAT_VOICE_PUBLIC_LIVEKIT_URL ${value}: want a ws: or wss: URL`,
     );
   }
 }
