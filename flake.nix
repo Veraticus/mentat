@@ -47,6 +47,10 @@
     packages.${system} = {
       mentatd = mentatd;
       default = mentatd;
+
+      # Python interpreter with livekit-agents + the Silero VAD plugin, for
+      # the voice agent. Built from upstream wheels; see nix/voice-env.nix.
+      voice-env = import ./nix/voice-env.nix { inherit pkgs; };
     };
 
     nixosModules.default = import ./nix/module.nix { mentatdPackage = mentatd; };
