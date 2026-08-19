@@ -159,5 +159,13 @@ async def entrypoint(ctx: JobContext) -> None:
 
 if __name__ == "__main__":
     agents.cli.run_app(
-        WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm)
+        WorkerOptions(
+            entrypoint_fnc=entrypoint,
+            prewarm_fnc=prewarm,
+            # The worker's own health/debug HTTP server. Loopback because
+            # nothing off-host consumes it, and off the SDK default 8081,
+            # which collides with atticd on ultraviolet.
+            host="127.0.0.1",
+            port=int(os.environ.get("MENTAT_VOICE_HTTP_PORT", "8482")),
+        )
     )
