@@ -16,3 +16,4 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: python3 -m unittest discover -s ha/tests
+      - run: python3 -m unittest discover -s voice/tests
