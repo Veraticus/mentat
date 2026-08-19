@@ -51,6 +51,18 @@ class SessionStateMachineTest {
     }
 
     @Test
+    fun connectionFailureFailsConnectingAndLiveStates() {
+        listOf(SessionState.Connecting, SessionState.Live).forEach { initialState ->
+            assertEquals(
+                SessionState.Failed("connection failed"),
+                SessionStateMachine(initialState).transition(
+                    SessionEvent.ConnectFailed("connection failed"),
+                ),
+            )
+        }
+    }
+
+    @Test
     fun permissionDeniedFailsEveryPreLiveState() {
         val preLiveStates = listOf(
             SessionState.Idle,
@@ -107,6 +119,7 @@ class SessionStateMachineTest {
             SessionEvent.AssistInvoked,
             SessionEvent.TokenReceived(grant),
             SessionEvent.TokenFailed("token failed"),
+            SessionEvent.ConnectFailed("connection failed"),
             SessionEvent.RoomConnected,
             SessionEvent.ConnectionLost,
             SessionEvent.Reconnected,
@@ -124,8 +137,10 @@ class SessionStateMachineTest {
             SessionState.FetchingToken to SessionEvent.ServiceStartFailed("service failed"),
             SessionState.FetchingToken to SessionEvent.PermissionDenied,
             SessionState.Connecting to SessionEvent.RoomConnected,
+            SessionState.Connecting to SessionEvent.ConnectFailed("connection failed"),
             SessionState.Connecting to SessionEvent.ServiceStartFailed("service failed"),
             SessionState.Connecting to SessionEvent.PermissionDenied,
+            SessionState.Live to SessionEvent.ConnectFailed("connection failed"),
             SessionState.Live to SessionEvent.ConnectionLost,
             SessionState.Live to SessionEvent.EndRequested,
             SessionState.Reconnecting to SessionEvent.Reconnected,

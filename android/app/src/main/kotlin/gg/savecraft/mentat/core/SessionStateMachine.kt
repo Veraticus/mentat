@@ -14,6 +14,7 @@ sealed interface SessionEvent {
     data object AssistInvoked : SessionEvent
     data class TokenReceived(val grant: TokenGrant) : SessionEvent
     data class TokenFailed(val reason: String) : SessionEvent
+    data class ConnectFailed(val reason: String) : SessionEvent
     data object RoomConnected : SessionEvent
     data object ConnectionLost : SessionEvent
     data object Reconnected : SessionEvent
@@ -44,11 +45,13 @@ class SessionStateMachine(initialState: SessionState = SessionState.Idle) {
             }
             SessionState.Connecting -> when (event) {
                 SessionEvent.RoomConnected -> SessionState.Live
+                is SessionEvent.ConnectFailed -> SessionState.Failed(event.reason)
                 is SessionEvent.ServiceStartFailed -> SessionState.Failed(event.reason)
                 SessionEvent.PermissionDenied -> SessionState.Failed("Permission denied")
                 else -> state
             }
             SessionState.Live -> when (event) {
+                is SessionEvent.ConnectFailed -> SessionState.Failed(event.reason)
                 SessionEvent.ConnectionLost -> SessionState.Reconnecting
                 SessionEvent.EndRequested -> SessionState.Ended
                 else -> state
