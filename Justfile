@@ -63,3 +63,16 @@ android-e2e:
         done; \
         adb -s "$serial" logcat -d -s MentatAssist:I; \
         exit 1'
+
+# Boot a headless emulator and run the real-SFU Android instrumentation lane.
+android-live ENDPOINT:
+    nix develop .#android -c bash -ceu '\
+        endpoint="$1"; \
+        export ANDROID_AVD_HOME="$PWD/android/.avd"; \
+        export ANDROID_USER_HOME="$PWD/android/.android"; \
+        export GRADLE_USER_HOME="$PWD/android/.gradle"; \
+        trap "android/scripts/emulator.sh stop; adb kill-server" EXIT; \
+        (cd android && gradle assembleDebug assembleDebugAndroidTest); \
+        android/scripts/emulator.sh create-avd; \
+        serial="$(android/scripts/emulator.sh start)"; \
+        (cd android && gradle connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.mentatTokenEndpoint="$endpoint")' -- "{{ENDPOINT}}"

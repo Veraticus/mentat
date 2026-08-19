@@ -15,6 +15,7 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField(
             "String",
             "MENTAT_TOKEN_ENDPOINT",
@@ -44,6 +45,10 @@ dependencies {
     implementation("io.livekit:livekit-android:2.27.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation(platform("androidx.compose:compose-bom:2025.04.01"))
+
+    androidTestImplementation("androidx.test:core-ktx:1.6.1")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui")
 
