@@ -61,6 +61,12 @@ logger = logging.getLogger("mentat.voice")
 
 DEFAULT_MENTAT_URL = "http://127.0.0.1:8484"
 
+# The front's own voice, named here rather than left as a literal at the
+# constructor because voice/evals scores this exact model against this exact
+# persona. An eval measuring a model the room does not hear would be worse
+# than no eval, so the two read the name from one place.
+FRONT_MODEL = "openai/gpt-5.6-luna"
+
 # A consult legitimately runs for minutes while the daemon uses tools; only the
 # connect and the gap between chunks are bounded.
 TIMEOUT = aiohttp.ClientTimeout(total=None, connect=10, sock_read=600)
@@ -313,7 +319,7 @@ async def entrypoint(ctx: JobContext) -> None:
         # Built once and held for the session's life: the instance owns an
         # httpx connection pool, and keeping it warm is most of the difference
         # between a ~0.85s first token and a wait the caller can hear.
-        llm=inference.LLM("openai/gpt-5.6-luna"),
+        llm=inference.LLM(FRONT_MODEL),
         tts=inference.TTS("cartesia/sonic-3"),
         # Flux emits end-of-turn itself, so waiting out a silence window after
         # it would only add latency to every reply. (Spelled as turn_handling
