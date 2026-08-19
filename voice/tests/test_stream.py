@@ -1,0 +1,192 @@
+"""Tests for the pure mentat-wire → speakable-chunk translation.
+
+The wire lines here mirror the NDJSON contract pinned by the daemon's golden
+tests (test/wire.test.ts) — the wire format is ours, so these literals are the
+same bytes those goldens pin, not hand-guessed protocol shapes.
+"""
+
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from stream import ACKNOWLEDGMENT, LineSplitter, TurnError, TurnStream
+
+DONE_OK = (
+    b'{"kind":"done","done":{"text":"Hi.","is_error":false,'
+    b'"stop_reason":"end_turn","session_id":"abc","cost_usd":0.01,'
+    b'"input_tokens":1,"output_tokens":2,'
+    b'"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}\n'
+)
+DONE_ERR = (
+    b'{"kind":"done","done":{"text":"turn exploded","is_error":true,'
+    b'"session_id":"abc","cost_usd":0,"input_tokens":0,"output_tokens":0,'
+    b'"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}\n'
+)
+
+
+class TurnStreamTextTest(unittest.TestCase):
+    def test_text_deltas_are_spoken_in_order(self):
+        stream = TurnStream()
+        self.assertEqual(
+            stream.feed(b'{"kind":"text_delta","text":"Hello"}\n'
+                        b'{"kind":"text_delta","text":" there"}\n'),
+            ["Hello", " there"],
+        )
+
+    def test_text_delta_with_omitted_text_is_skipped(self):
+        # omitempty: the daemon drops the text key when the delta is empty.
+        stream = TurnStream()
+        self.assertEqual(stream.feed(b'{"kind":"text_delta"}\n'), [])
+
+    def test_non_speakable_kinds_yield_nothing(self):
+        stream = TurnStream()
+        self.assertEqual(
+            stream.feed(
+                b'{"kind":"thinking_delta","text":"hmm"}\n'
+                b'{"kind":"thinking","tokens":42}\n'
+                b'{"kind":"tool_result","tool":"Read","content":"ok"}\n'
+            ),
+            [],
+        )
+
+    def test_unknown_kind_yields_nothing(self):
+        # Forward compatibility: a daemon newer than this adapter must not
+        # break the turn.
+        stream = TurnStream()
+        self.assertEqual(stream.feed(b'{"kind":"sparkle","text":"hi"}\n'), [])
+
+
+class TurnStreamAcknowledgmentTest(unittest.TestCase):
+    def test_first_tool_start_is_acknowledged(self):
+        stream = TurnStream()
+        self.assertEqual(
+            stream.feed(b'{"kind":"tool_start","tool":"Read"}\n'), [ACKNOWLEDGMENT]
+        )
+
+    def test_later_tool_starts_are_silent(self):
+        stream = TurnStream()
+        self.assertEqual(
+            stream.feed(
+                b'{"kind":"tool_start","tool":"Read"}\n'
+                b'{"kind":"tool_start","tool":"Grep"}\n'
+                b'{"kind":"tool_start","tool":"mcp__memory__memory_save"}\n'
+            ),
+            [ACKNOWLEDGMENT],
+        )
+
+    def test_later_tool_start_in_a_later_chunk_is_silent(self):
+        stream = TurnStream()
+        self.assertEqual(
+            stream.feed(b'{"kind":"tool_start","tool":"Read"}\n'), [ACKNOWLEDGMENT]
+        )
+        self.assertEqual(stream.feed(b'{"kind":"tool_start","tool":"Grep"}\n'), [])
+
+    def test_tool_start_after_speech_is_silent(self):
+        # Speech has started; an ack now would interject mid-sentence.
+        stream = TurnStream()
+        self.assertEqual(
+            stream.feed(b'{"kind":"text_delta","text":"Checking"}\n'), ["Checking"]
+        )
+        self.assertEqual(stream.feed(b'{"kind":"tool_start","tool":"Read"}\n'), [])
+
+    def test_ack_precedes_text_that_follows_it(self):
+        stream = TurnStream()
+        self.assertEqual(
+            stream.feed(
+                b'{"kind":"tool_start","tool":"Read"}\n'
+                b'{"kind":"text_delta","text":"Done."}\n'
+            ),
+            [ACKNOWLEDGMENT, "Done."],
+        )
+
+    def test_empty_text_delta_does_not_count_as_speech(self):
+        # An omitted-text delta says nothing aloud, so the ack is still owed.
+        stream = TurnStream()
+        self.assertEqual(stream.feed(b'{"kind":"text_delta"}\n'), [])
+        self.assertEqual(
+            stream.feed(b'{"kind":"tool_start","tool":"Read"}\n'), [ACKNOWLEDGMENT]
+        )
+
+
+class TurnStreamTerminalTest(unittest.TestCase):
+    def test_clean_done_completes_the_turn(self):
+        stream = TurnStream()
+        self.assertFalse(stream.done)
+        self.assertEqual(stream.feed(DONE_OK), [])
+        self.assertTrue(stream.done)
+
+    def test_error_done_raises(self):
+        stream = TurnStream()
+        with self.assertRaises(TurnError) as ctx:
+            stream.feed(DONE_ERR)
+        self.assertIn("turn exploded", str(ctx.exception))
+        self.assertFalse(stream.done)
+
+    def test_error_line_raises(self):
+        stream = TurnStream()
+        with self.assertRaises(TurnError) as ctx:
+            stream.feed(b'{"kind":"error","message":"backend died"}\n')
+        self.assertIn("backend died", str(ctx.exception))
+
+    def test_malformed_json_raises(self):
+        stream = TurnStream()
+        with self.assertRaises(TurnError):
+            stream.feed(b"{not json\n")
+
+    def test_non_object_line_raises(self):
+        stream = TurnStream()
+        with self.assertRaises(TurnError):
+            stream.feed(b"42\n")
+
+
+class TurnStreamBytesTest(unittest.TestCase):
+    def test_multibyte_utf8_split_across_chunks(self):
+        encoded = '{"kind":"text_delta","text":"héllo"}\n'.encode()
+        # Split inside the two-byte é sequence.
+        cut = encoded.index("é".encode()) + 1
+        stream = TurnStream()
+        self.assertEqual(stream.feed(encoded[:cut]), [])
+        self.assertEqual(stream.feed(encoded[cut:]), ["héllo"])
+
+    def test_partial_trailing_line_is_held_until_its_newline(self):
+        stream = TurnStream()
+        self.assertEqual(stream.feed(b'{"kind":"text_delta","text":"par'), [])
+        self.assertEqual(stream.feed(b'tial"}\n'), ["partial"])
+
+    def test_blank_lines_are_skipped(self):
+        stream = TurnStream()
+        self.assertEqual(
+            stream.feed(b'\n{"kind":"text_delta","text":"hi"}\n\n'), ["hi"]
+        )
+
+
+class LineSplitterTest(unittest.TestCase):
+    def test_two_lines_in_one_chunk(self):
+        splitter = LineSplitter()
+        self.assertEqual(splitter.feed(b'{"a":1}\n{"b":2}\n'), ['{"a":1}', '{"b":2}'])
+
+    def test_partial_line_across_chunks(self):
+        splitter = LineSplitter()
+        self.assertEqual(splitter.feed(b'{"kind":"tex'), [])
+        self.assertEqual(splitter.feed(b't_delta"}\n'), ['{"kind":"text_delta"}'])
+
+    def test_multibyte_utf8_split_across_chunks(self):
+        encoded = '{"text":"héllo"}\n'.encode()
+        cut = encoded.index("é".encode()) + 1
+        splitter = LineSplitter()
+        self.assertEqual(splitter.feed(encoded[:cut]), [])
+        self.assertEqual(splitter.feed(encoded[cut:]), ['{"text":"héllo"}'])
+
+    def test_blank_lines_are_skipped(self):
+        splitter = LineSplitter()
+        self.assertEqual(splitter.feed(b'\n{"a":1}\n\n'), ['{"a":1}'])
+
+    def test_incomplete_tail_is_never_emitted(self):
+        splitter = LineSplitter()
+        self.assertEqual(splitter.feed(b'{"a":1}\n{"trunc'), ['{"a":1}'])
+
+
+if __name__ == "__main__":
+    unittest.main()
