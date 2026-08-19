@@ -100,10 +100,12 @@
 
         observed = {
           daemonEnv = deployed.systemd.services.mentatd.environment;
+          daemonUser = deployed.systemd.services.mentatd.serviceConfig.User;
           reminderEnv = deployed.systemd.services.mentat-reminder.environment;
           reminderTimer = deployed.systemd.timers.mentat-reminder.timerConfig;
           voiceEnv = withVoice.systemd.services.mentat-voice.environment;
           voiceExecStart = withVoice.systemd.services.mentat-voice.serviceConfig.ExecStart;
+          voiceService = withVoice.systemd.services.mentat-voice.serviceConfig;
         };
       in
       # The voice sub-block defaults OFF: the config ultraviolet deploys today
@@ -119,6 +121,19 @@
         "voice MENTAT_URL default changed: ${observed.voiceEnv.MENTAT_URL}";
       assert lib.assertMsg (lib.hasSuffix "/agent.py start" observed.voiceExecStart)
         "voice unit does not start the agent worker: ${observed.voiceExecStart}";
+      # The agent reaches mentatd over HTTP and shares nothing else with it, so
+      # it gets its own identity: under the daemon's UID a compromised agent
+      # would inherit /var/lib/mentat — the SDK's ~/.claude and the session
+      # state — for free.
+      assert lib.assertMsg (observed.voiceService.DynamicUser or false)
+        "voice unit must run under its own identity (DynamicUser)";
+      assert lib.assertMsg
+        (!(observed.voiceService ? User) && !(observed.voiceService ? Group))
+        "voice unit pins a static User/Group; it must not share mentatd's identity";
+      # Guards the two above from going vacuous: they only separate anything
+      # while mentatd itself is still the static mentat user.
+      assert lib.assertMsg (observed.daemonUser == "mentat")
+        "mentatd no longer runs as mentat: ${observed.daemonUser}";
 
       pkgs.runCommand "mentat-module-eval" {} ''
         cat > $out <<'EOF'

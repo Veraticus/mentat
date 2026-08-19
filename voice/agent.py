@@ -99,6 +99,13 @@ class MentatAgent(Agent):
                     async for chunk in response.content.iter_any():
                         for spoken in stream.feed(chunk):
                             yield spoken
+                    if not stream.done:
+                        # The body ended without a done event — mentatd
+                        # restarted mid-turn, so the socket closed cleanly and
+                        # aiohttp raises nothing. Without this the reply just
+                        # stops, possibly mid-sentence, and the caller is left
+                        # guessing whether that was the whole answer.
+                        raise TurnError("stream ended without done")
         except (TurnError, aiohttp.ClientError, TimeoutError) as err:
             # Barge-in is deliberately not caught: cancellation arrives as
             # CancelledError or GeneratorExit, both BaseException, so it
@@ -109,12 +116,22 @@ class MentatAgent(Agent):
             yield FAILURE_REPLY
 
 
+def prewarm(proc: agents.JobProcess) -> None:
+    """Load the VAD once per worker process, before a job is ever assigned.
+
+    Loading it inside the entrypoint would put model load on the critical path
+    of the first utterance in every room, after the caller is already
+    listening; the worker warms up idle instead.
+    """
+    proc.userdata["vad"] = silero.VAD.load()
+
+
 async def entrypoint(ctx: JobContext) -> None:
     """Serve one room for as long as it lives."""
     await ctx.connect()
 
     session = AgentSession(
-        vad=silero.VAD.load(),
+        vad=ctx.proc.userdata["vad"],
         # The docs' two-argument form is the one agents 1.6.10 takes:
         # "deepgram/flux-general" is a model literal it knows and `language`
         # is a separate keyword, not a ":en" suffix on the model string.
@@ -141,4 +158,6 @@ async def entrypoint(ctx: JobContext) -> None:
 
 
 if __name__ == "__main__":
-    agents.cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
+    agents.cli.run_app(
+        WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm)
+    )

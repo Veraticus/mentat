@@ -130,6 +130,24 @@ class TurnStreamTerminalTest(unittest.TestCase):
             stream.feed(b'{"kind":"error","message":"backend died"}\n')
         self.assertIn("backend died", str(ctx.exception))
 
+    def test_text_before_an_error_in_the_same_chunk_is_never_surfaced(self):
+        # The turn is over the moment the error line lands, so the deltas
+        # collected alongside it in that chunk die with it — the caller speaks
+        # the apology, not the front half of a sentence the daemon abandoned.
+        delta = b'{"kind":"text_delta","text":"Everything is fi"}\n'
+        # Alone that delta is speech, so the drop below is a real one and not a
+        # line the adapter was going to swallow anyway.
+        self.assertEqual(TurnStream().feed(delta), ["Everything is fi"])
+
+        stream = TurnStream()
+        surfaced = None
+        with self.assertRaises(TurnError) as ctx:
+            surfaced = stream.feed(
+                delta + b'{"kind":"error","message":"backend died"}\n'
+            )
+        self.assertIn("backend died", str(ctx.exception))
+        self.assertIsNone(surfaced)
+
     def test_malformed_json_raises(self):
         stream = TurnStream()
         with self.assertRaises(TurnError):

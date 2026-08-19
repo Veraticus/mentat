@@ -274,8 +274,14 @@ in {
 
       serviceConfig = {
         Type = "simple";
-        User = "mentat";
-        Group = "mentat";
+        # Its own identity, not the daemon's: the agent only ever reaches
+        # mentatd over HTTP, so sharing mentat's UID would buy nothing and
+        # hand a compromised agent /var/lib/mentat — the SDK's ~/.claude and
+        # the session state. DynamicUser needs no users.users entry and pairs
+        # with StateDirectory below, which it manages under /var/lib/private.
+        # The secrets file stays readable: EnvironmentFile is opened by PID 1
+        # before the unit drops to the transient UID.
+        DynamicUser = true;
         Restart = "always";
         RestartSec = "5s";
 
