@@ -1,10 +1,10 @@
-"""Tests for the generated voice sound assets.
+"""Tests for the generated voice sound asset.
 
-The assets are checked in as .wav files but authored as code, so these tests
-guard both halves: the committed files have the shape the LiveKit
-BackgroundAudioPlayer needs (48kHz mono 16-bit, right durations, right
-loudness), and re-running the generator reproduces them byte for byte. The
-second half is what makes a binary asset reviewable — a reviewer who cannot
+The asset is checked in as a .wav file but authored as code, so these tests
+guard both halves: the committed file has the format the LiveKit
+BackgroundAudioPlayer needs (48kHz mono 16-bit, right duration, right
+loudness), and re-running the generator reproduces it byte for byte. The
+second half is what makes the binary asset reviewable — a reviewer who cannot
 diff a .wav can still read generate.py and confirm the bytes follow from it.
 """
 
@@ -23,8 +23,6 @@ import generate
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
 EARCON = ASSETS / "earcon.wav"
-WAITING = ASSETS / "waiting.wav"
-AMBIENT = ASSETS / "ambient.wav"
 
 FULL_SCALE = 32767
 
@@ -46,20 +44,13 @@ def peak_dbfs(samples):
 
 
 class FormatTest(unittest.TestCase):
-    """Both clips must be what the playback path expects: 48kHz mono 16-bit."""
+    """The clip must be what the playback path expects: 48kHz mono 16-bit."""
 
     def test_earcon_exists(self):
         self.assertTrue(EARCON.is_file(), f"{EARCON} not generated")
 
-    def test_waiting_exists(self):
-        self.assertTrue(WAITING.is_file(), f"{WAITING} not generated")
-
     def test_earcon_format(self):
         _, framerate, channels, width = read_wav(EARCON)
-        self.assertEqual((framerate, channels, width), (48000, 1, 2))
-
-    def test_waiting_format(self):
-        _, framerate, channels, width = read_wav(WAITING)
         self.assertEqual((framerate, channels, width), (48000, 1, 2))
 
 
@@ -93,72 +84,39 @@ class EarconTest(unittest.TestCase):
         self.assertLess(generate.EARCON_TONES[0][1], generate.EARCON_TONES[1][1])
 
 
-class WaitingTest(unittest.TestCase):
-    """The loop under a long consult: long, quiet, and seamless."""
+class SoundWiringContractTest(unittest.TestCase):
+    """Generation, deployment, and runtime wiring retain only the earcon."""
 
-    def test_duration_supports_a_slow_loop(self):
-        samples, framerate, _, _ = read_wav(WAITING)
-        self.assertGreaterEqual(len(samples) / framerate, 1.5)
-        self.assertLessEqual(len(samples) / framerate, 5.0)
+    def test_only_earcon_is_generated_deployed_and_wired(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            generate.generate(Path(tmp))
+            self.assertEqual(
+                {path.name for path in Path(tmp).iterdir()},
+                {"earcon.wav"},
+            )
 
-    def test_peak_is_minus_24_dbfs(self):
-        # It plays *under* speech for up to a minute; anything louder competes
-        # with the answer it is covering for.
-        samples, _, _, _ = read_wav(WAITING)
-        self.assertAlmostEqual(peak_dbfs(samples), -24.0, delta=0.1)
+        self.assertEqual(
+            {path.name for path in ASSETS.glob("*.wav")},
+            {"earcon.wav"},
+        )
 
-    def test_loop_seam_samples_are_near_zero(self):
-        # Whole-cycle durations put both ends at the carrier's zero crossing,
-        # so the level at the splice is a rounding artifact, not a step.
-        samples, _, _, _ = read_wav(WAITING)
-        threshold = FULL_SCALE // 100  # 1% of full scale
-        self.assertLess(abs(samples[0]), threshold)
-        self.assertLess(abs(samples[-1]), threshold)
-
-    def test_loop_seam_matches_the_slope_it_wraps_into(self):
-        # The real seamlessness property, and stronger than near-zero ends:
-        # wrapping from the last sample to the first must be an ordinary step
-        # for that phase — same size AND same direction as the step that
-        # follows it. Endpoints that are both near zero but on opposite slopes
-        # (a duration off by half a cycle) leave a corner that still ticks;
-        # only the signed comparison catches that.
-        samples, _, _, _ = read_wav(WAITING)
-        seam_step = samples[0] - samples[-1]
-        next_step = samples[1] - samples[0]
-        self.assertAlmostEqual(seam_step, next_step, delta=2)  # int16 rounding
-
-
-class AmbientTest(unittest.TestCase):
-    """The always-on floor: quiet, seamless, and actually a floor."""
-
-    def test_duration_supports_a_loop(self):
-        samples, rate, _, _ = read_wav(AMBIENT)
-        self.assertGreaterEqual(len(samples) / rate, 3.0)
-        self.assertLessEqual(len(samples) / rate, 5.0)
-
-    def test_peak_is_minus_42_dbfs(self):
-        # Whisper level: present to the browser's gain controller (whose
-        # pumping on a silent track is the reason this file exists), below
-        # attention for the caller — and far under the -24 dBFS wait pad.
-        samples, _, _, _ = read_wav(AMBIENT)
-        self.assertAlmostEqual(peak_dbfs(samples), generate.AMBIENT_PEAK_DBFS, delta=0.1)
-
-    def test_loop_seam_carries_the_same_energy(self):
-        # Noise has no cycle count to align, so the seam is a crossfade; what
-        # must hold is that the loop's tail sounds like its head — a level
-        # step at the splice would tick once per loop.
-        samples, rate, _, _ = read_wav(AMBIENT)
-        window = rate // 10
-
-        def rms(seg):
-            return (sum(s * s for s in seg) / len(seg)) ** 0.5
-
-        head, tail = rms(samples[:window]), rms(samples[-window:])
-        self.assertLess(abs(head - tail) / max(head, tail), 0.15)
+        repository = ASSETS.parent.parent
+        agent_source = (repository / "voice" / "agent.py").read_text()
+        module_source = (repository / "nix" / "module.nix").read_text()
+        for stem in ("waiting", "ambient"):
+            obsolete = f"{stem}.wav"
+            self.assertNotIn(obsolete, agent_source)
+            self.assertNotIn(obsolete, module_source)
+        self.assertNotIn("ambient_sound=", agent_source)
+        self.assertNotIn("background_audio:", agent_source)
+        self.assertNotIn("loop=True", agent_source)
+        self.assertIn("background = BackgroundAudioPlayer()", agent_source)
+        self.assertIn("earcon.wav", agent_source)
+        self.assertIn("earcon.wav", module_source)
 
 
 class DeterminismTest(unittest.TestCase):
-    """Regeneration must be byte-identical or the assets stop being auditable."""
+    """Regeneration must be byte-identical or the asset stops being auditable."""
 
     def test_regeneration_reproduces_the_committed_bytes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -169,7 +127,7 @@ class DeterminismTest(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            for committed in (EARCON, WAITING, AMBIENT):
+            for committed in (EARCON,):
                 fresh = Path(tmp) / committed.name
                 self.assertEqual(
                     fresh.read_bytes(),

@@ -6,8 +6,8 @@ opinions and ordinary knowledge it answers itself, at conversation speed. For
 anything that touches Josh's life — his memory, calendar, house, files, the
 tools that act on them — or anything that needs real thinking, it calls the
 ask_mentat tool, which runs one mentatd turn and speaks the daemon's answer
-verbatim while a soft pad covers the wait. mentatd is no longer the voice; it
-is the deep brain the voice consults.
+verbatim. mentatd is no longer the voice; it is the deep brain the voice
+consults.
 
 The thinking parts live next door and are unit-tested offline: voice/stream.py
 turns mentat's NDJSON into speakable text, voice/request.py builds the turn
@@ -73,14 +73,12 @@ FRONT_MODEL = "openai/gpt-5.6-luna"
 # connect and the gap between chunks are bounded.
 TIMEOUT = aiohttp.ClientTimeout(total=None, connect=10, sock_read=600)
 
-# The persona and the sounds ship in the same directory as this file — the nix
-# fileset in nix/module.nix puts them there — so they are found relative to it
+# The persona and the sound ship in the same directory as this file — the nix
+# fileset in nix/module.nix puts both there — so they are found relative to it
 # rather than through configuration nobody would ever set differently.
 HERE = Path(__file__).parent
 PERSONA_PATH = HERE / "persona.md"
 EARCON_PATH = HERE / "assets" / "earcon.wav"
-WAITING_PATH = HERE / "assets" / "waiting.wav"
-AMBIENT_PATH = HERE / "assets" / "ambient.wav"
 
 #: The shortest gap between two bings. A turn needs acknowledging once; the
 #: session re-enters "thinking" for the same turn's plumbing (segmented
@@ -115,14 +113,6 @@ CONSULT_FAILED = (
 #: has moved on, unmarked, is a non sequitur.
 REORIENTATION_PREFIX = "About your earlier question — "
 
-# The pad is a sustained tone sitting at an arbitrary phase when the answer
-# arrives, so cutting it dead would click into the first word. Its level is
-# already baked in by assets/generate.py (-24 dBFS, deliberately under
-# speech), which is why volume stays at the default: scaling it here would
-# fight the asset.
-WAITING_FADE_OUT_S = 0.25
-
-
 def load_persona(path: Path = PERSONA_PATH) -> tuple[str, str]:
     """The front's instructions and its voice card, read off disk."""
     return split_persona(path.read_text())
@@ -138,13 +128,11 @@ class FrontAgent(Agent):
         voice_card: str,
         room_name: str,
         mentat_url: str,
-        background_audio: BackgroundAudioPlayer,
     ) -> None:
         super().__init__(instructions=instructions)
         self._voice_card = voice_card
         self._room_name = room_name
         self._mentat_url = mentat_url
-        self._background_audio = background_audio
 
     @function_tool(
         # CANCELLABLE puts the framework's cancel tool in front of the model,
@@ -196,10 +184,6 @@ class FrontAgent(Agent):
         baseline = count_user_messages(self.chat_ctx.items)
         await ctx.update(CONSULT_CUE)
 
-        waiting = self._background_audio.play(
-            AudioConfig(str(WAITING_PATH), fade_out=WAITING_FADE_OUT_S),
-            loop=True,
-        )
         try:
             envelope = consult_envelope(
                 self._voice_card,
@@ -220,14 +204,6 @@ class FrontAgent(Agent):
         except (TurnError, aiohttp.ClientError, TimeoutError) as err:
             logger.warning("consult failed: %s", err)
             return CONSULT_FAILED
-        finally:
-            # Every exit path, and there are three: the answer is about to be
-            # spoken, the consult failed, or the caller cancelled it. A pad
-            # still looping under any of those is a bug you can hear.
-            # Cancellation needs no clause of its own — CancelledError unwinds
-            # through here and out, which leaves the turn silent, and silence
-            # is what someone who said "never mind" asked for.
-            waiting.stop()
 
         prefix = (
             REORIENTATION_PREFIX
@@ -345,22 +321,10 @@ async def entrypoint(ctx: JobContext) -> None:
 
     log_turn_metrics(session)
 
-    background = BackgroundAudioPlayer(
-        # The track this player publishes is always live, and a live track
-        # carrying pure silence gets gain-pumped into an audible hum by
-        # browser-side processing (verified 2026-08-20: the hum vanished with
-        # the track). The whisper-level ambient bed keeps the floor stable —
-        # present to the gain controller, below attention for the caller.
-        ambient_sound=AudioConfig(str(AMBIENT_PATH), volume=1.0),
-        # The earcon is NOT wired as thinking_sound: the SDK replays that on
-        # every entry into the thinking state and only guards overlap while a
-        # play is in flight — a quarter-second chime finishes instantly, so a
-        # state flap (thinking→speaking→thinking on fast or segmented turns)
-        # fires two bells a beat apart, and two offset copies of the same bell
-        # beat into an audible buzz (heard live 2026-08-20; removing the bing
-        # removed it). The debounced handler below owns the bing instead. The
-        # wait pad is also manual: it belongs to one tool call, in ask_mentat.
-    )
+    # The earcon is not wired as thinking_sound: the SDK replays that on every
+    # entry into the thinking state and only guards overlap while a play is in
+    # flight. The debounced handler below owns the bing instead.
+    background = BackgroundAudioPlayer()
     # Before session.start: the player publishes its own track and watches the
     # session for state changes, and a consult can start on the first utterance.
     await background.start(room=ctx.room, agent_session=session)
@@ -384,7 +348,6 @@ async def entrypoint(ctx: JobContext) -> None:
             voice_card=voice_card,
             room_name=ctx.room.name,
             mentat_url=os.environ.get("MENTAT_URL", DEFAULT_MENTAT_URL),
-            background_audio=background,
         ),
         room=ctx.room,
     )
