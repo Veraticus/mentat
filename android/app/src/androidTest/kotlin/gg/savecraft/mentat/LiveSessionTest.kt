@@ -3,6 +3,7 @@ package gg.savecraft.mentat
 import androidx.test.platform.app.InstrumentationRegistry
 import gg.savecraft.mentat.core.HttpTokenEndpoint
 import io.livekit.android.LiveKit
+import io.livekit.android.room.Room
 import io.livekit.android.room.datastream.StreamTextOptions
 import io.livekit.android.room.participant.Participant
 import io.livekit.android.room.participant.RemoteParticipant
@@ -10,6 +11,7 @@ import io.livekit.android.room.track.RemoteAudioTrack
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -31,13 +33,11 @@ class LiveSessionTest {
             }
             val transcription = CompletableDeferred<String>()
             room.registerTextStreamHandler(TRANSCRIPTION_TOPIC) { reader, _ ->
-                testScope.launch {
-                    reader.flow.collect { chunk -> transcription.complete(chunk) }
-                }
+                testScope.launch { transcription.complete(reader.flow.first()) }
             }
 
             stage(CONNECT_STAGE) { room.connect(grant.url, grant.token) }
-            val agent = stage(AGENT_STAGE) { awaitAgent(room.remoteParticipants.values) }
+            val agent = stage(AGENT_STAGE) { awaitAgent(room) }
             stage(AUDIO_TRACK_STAGE) { awaitAudioTrack(agent) }
             stage(CHAT_STAGE) {
                 room.localParticipant
@@ -60,8 +60,9 @@ class LiveSessionTest {
                 "run just android-live <mentat token endpoint>",
         )
 
-    private suspend fun awaitAgent(participants: Collection<RemoteParticipant>): RemoteParticipant =
-        awaitValue { participants.firstOrNull { it.kind == Participant.Kind.AGENT } }
+    private suspend fun awaitAgent(room: Room): RemoteParticipant = awaitValue {
+        room.remoteParticipants.values.firstOrNull { it.kind == Participant.Kind.AGENT }
+    }
 
     private suspend fun awaitAudioTrack(agent: RemoteParticipant): RemoteAudioTrack = awaitValue {
         agent.audioTrackPublications
