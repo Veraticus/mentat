@@ -154,6 +154,15 @@ function validateVoiceUrl(value: string): void {
       `invalid MENTAT_VOICE_PUBLIC_LIVEKIT_URL ${value}: want a ws: or wss: URL`,
     );
   }
+  // The grant this URL is handed with is a bearer credential, so plaintext
+  // ws: is only ever safe when it never leaves the host.
+  const host = parsed.hostname.replace(/^\[|\]$/g, '');
+  const isLoopback = host === 'localhost' || host === '::1' || host.startsWith('127.');
+  if (parsed.protocol === 'ws:' && !isLoopback) {
+    throw new Error(
+      `invalid MENTAT_VOICE_PUBLIC_LIVEKIT_URL ${value}: ws: is allowed only for loopback hosts (127.0.0.0/8, ::1, localhost); use wss: for ${host}`,
+    );
+  }
 }
 
 /** A typo here must fail at startup, not flow silently into the session. */

@@ -37,15 +37,38 @@ describe('loadConfig', () => {
     });
   });
 
-  it('accepts an unencrypted WebSocket URL for local LiveKit deployments', () => {
-    const config = loadConfig({
+  it('accepts an unencrypted WebSocket URL for loopback LiveKit deployments', () => {
+    for (const url of ['ws://127.0.0.1:7880', 'ws://localhost:7880', 'ws://[::1]:7880']) {
+      const config = loadConfig({
+        ...baseEnv,
+        LIVEKIT_API_KEY: 'voice-key',
+        LIVEKIT_API_SECRET: 'voice-secret',
+        MENTAT_VOICE_PUBLIC_LIVEKIT_URL: url,
+      });
+
+      expect(config.voiceToken?.url).toBe(url);
+    }
+  });
+
+  it('rejects an unencrypted WebSocket URL to a non-loopback host', () => {
+    const configuredEnv = {
       ...baseEnv,
       LIVEKIT_API_KEY: 'voice-key',
       LIVEKIT_API_SECRET: 'voice-secret',
-      MENTAT_VOICE_PUBLIC_LIVEKIT_URL: 'ws://127.0.0.1:7880',
-    });
+    };
 
-    expect(config.voiceToken?.url).toBe('ws://127.0.0.1:7880');
+    for (const url of ['ws://remote.example', 'ws://192.168.1.10:7880']) {
+      expect(() =>
+        loadConfig({ ...configuredEnv, MENTAT_VOICE_PUBLIC_LIVEKIT_URL: url }),
+      ).toThrow(/MENTAT_VOICE_PUBLIC_LIVEKIT_URL.*loopback.*wss:/);
+    }
+
+    expect(
+      loadConfig({
+        ...configuredEnv,
+        MENTAT_VOICE_PUBLIC_LIVEKIT_URL: 'wss://remote.example',
+      }).voiceToken?.url,
+    ).toBe('wss://remote.example');
   });
 
   it('rejects malformed and non-WebSocket public LiveKit URLs', () => {

@@ -48,6 +48,21 @@ describe('createTokenIssuer', () => {
     });
   });
 
+  it('signs with an injected signer over the header.payload input', () => {
+    const sign = vi.fn(() => 'injected-signature');
+    const issuer = createTokenIssuer(
+      { apiKey: 'test-key', apiSecret, url: 'wss://voice.example.test' },
+      { now: () => now, uuid: () => uuid, sign },
+    );
+
+    const { token } = issuer.issue();
+    const [header, payload, signature] = token.split('.') as [string, string, string];
+
+    expect(sign).toHaveBeenCalledTimes(1);
+    expect(sign).toHaveBeenCalledWith(`${header}.${payload}`, apiSecret);
+    expect(signature).toBe('injected-signature');
+  });
+
   it('derives the returned grant from one generated UUID', () => {
     const generateUuid = vi.fn(() => uuid);
     const issuer = createTokenIssuer(

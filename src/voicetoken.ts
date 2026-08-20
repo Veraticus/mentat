@@ -20,6 +20,11 @@ interface TokenIssuerConfig {
 interface TokenIssuerDeps {
   now?: () => Date;
   uuid?: () => string;
+  sign?: (input: string, secret: string) => string;
+}
+
+function hmacSha256(input: string, secret: string): string {
+  return createHmac('sha256', secret).update(input).digest('base64url');
 }
 
 export function createTokenIssuer(
@@ -28,6 +33,7 @@ export function createTokenIssuer(
 ): TokenIssuer {
   const now = deps.now ?? (() => new Date());
   const uuid = deps.uuid ?? randomUUID;
+  const sign = deps.sign ?? hmacSha256;
 
   return {
     issue(): TokenGrant {
@@ -56,9 +62,7 @@ export function createTokenIssuer(
         }),
       ).toString('base64url');
       const signingInput = `${header}.${payload}`;
-      const signature = createHmac('sha256', config.apiSecret)
-        .update(signingInput)
-        .digest('base64url');
+      const signature = sign(signingInput, config.apiSecret);
 
       return {
         token: `${signingInput}.${signature}`,
