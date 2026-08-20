@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
@@ -34,6 +35,7 @@ from livekit import agents
 from livekit.agents import (
     Agent,
     AgentSession,
+    AgentStateChangedEvent,
     AudioConfig,
     BackgroundAudioPlayer,
     ConversationItemAddedEvent,
@@ -79,6 +81,11 @@ PERSONA_PATH = HERE / "persona.md"
 EARCON_PATH = HERE / "assets" / "earcon.wav"
 WAITING_PATH = HERE / "assets" / "waiting.wav"
 AMBIENT_PATH = HERE / "assets" / "ambient.wav"
+
+#: The shortest gap between two bings. A turn needs acknowledging once; the
+#: session re-enters "thinking" for the same turn's plumbing (segmented
+#: replies, fast flaps), and overlapping bells beat into a buzz.
+EARCON_MIN_INTERVAL_S = 2.0
 
 # Never spoken. ctx.update hands control back to the front with this as the
 # tool's synthetic return, and the front says its own holding line from it —
@@ -345,16 +352,31 @@ async def entrypoint(ctx: JobContext) -> None:
         # the track). The whisper-level ambient bed keeps the floor stable —
         # present to the gain controller, below attention for the caller.
         ambient_sound=AudioConfig(str(AMBIENT_PATH), volume=1.0),
-        # Played automatically the moment the session enters its thinking
-        # state — the "I heard you" blip, about a second ahead of any speech,
-        # so the gap after the caller stops talking never reads as nothing
-        # happening. The wait pad is not wired here: it belongs to one tool
-        # call rather than to a session state, so ask_mentat plays it by hand.
-        thinking_sound=AudioConfig(str(EARCON_PATH)),
+        # The earcon is NOT wired as thinking_sound: the SDK replays that on
+        # every entry into the thinking state and only guards overlap while a
+        # play is in flight — a quarter-second chime finishes instantly, so a
+        # state flap (thinking→speaking→thinking on fast or segmented turns)
+        # fires two bells a beat apart, and two offset copies of the same bell
+        # beat into an audible buzz (heard live 2026-08-20; removing the bing
+        # removed it). The debounced handler below owns the bing instead. The
+        # wait pad is also manual: it belongs to one tool call, in ask_mentat.
     )
     # Before session.start: the player publishes its own track and watches the
     # session for state changes, and a consult can start on the first utterance.
     await background.start(room=ctx.room, agent_session=session)
+
+    # One bing per turn, debounced: the acknowledgment means "I heard you",
+    # and a turn only needs hearing once — re-entries into thinking within the
+    # window are the same turn's plumbing, not a new utterance.
+    last_bing = 0.0
+
+    @session.on("agent_state_changed")
+    def _bing(ev: AgentStateChangedEvent) -> None:
+        nonlocal last_bing
+        now = time.monotonic()
+        if ev.new_state == "thinking" and now - last_bing >= EARCON_MIN_INTERVAL_S:
+            last_bing = now
+            background.play(AudioConfig(str(EARCON_PATH)))
 
     await session.start(
         agent=FrontAgent(
