@@ -19,8 +19,10 @@ import unittest
 from pathlib import Path
 
 VOICE = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(VOICE))
 sys.path.insert(0, str(VOICE / "evals"))
 
+from request import CONSULT_WINDOW_TURNS
 from scoring import (
     ARG_KEYS,
     CONSULT,
@@ -442,7 +444,11 @@ class ReportTest(unittest.TestCase):
         self.assertIn("gateway 503", text)
 
     def test_the_history_window_matches_the_front(self):
-        self.assertEqual(HISTORY_TURNS, 2)
+        # A scenario may carry no more history than a real consult sends, or it
+        # would measure the front on context the room never gives it. Pinned
+        # against the front's own constant rather than a literal, so widening
+        # one side alone fails here instead of silently drifting.
+        self.assertEqual(HISTORY_TURNS, CONSULT_WINDOW_TURNS)
 
 
 if __name__ == "__main__":

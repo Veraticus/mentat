@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from stream import ACKNOWLEDGMENT, LineSplitter, TurnError, TurnStream
+from stream import LineSplitter, TurnError, TurnStream
 
 DONE_OK = (
     b'{"kind":"done","done":{"text":"Hi.","is_error":false,'
@@ -51,87 +51,19 @@ class TurnStreamTextTest(unittest.TestCase):
             [],
         )
 
-    def test_unknown_kind_yields_nothing(self):
-        # Forward compatibility: a daemon newer than this adapter must not
-        # break the turn.
+    def test_tool_start_yields_nothing(self):
+        # Tool activity is silent. The wait a turn spends on tools is covered
+        # by the front voice's own holding line, not by anything said here.
         stream = TurnStream()
-        self.assertEqual(stream.feed(b'{"kind":"sparkle","text":"hi"}\n'), [])
-
-
-class TurnStreamAcknowledgmentTest(unittest.TestCase):
-    def test_first_tool_start_is_acknowledged(self):
-        stream = TurnStream()
-        self.assertEqual(
-            stream.feed(b'{"kind":"tool_start","tool":"Read"}\n'), [ACKNOWLEDGMENT]
-        )
-
-    def test_later_tool_starts_are_silent(self):
-        stream = TurnStream()
-        self.assertEqual(
-            stream.feed(
-                b'{"kind":"tool_start","tool":"Read"}\n'
-                b'{"kind":"tool_start","tool":"Grep"}\n'
-                b'{"kind":"tool_start","tool":"mcp__memory__memory_save"}\n'
-            ),
-            [ACKNOWLEDGMENT],
-        )
-
-    def test_later_tool_start_in_a_later_chunk_is_silent(self):
-        stream = TurnStream()
-        self.assertEqual(
-            stream.feed(b'{"kind":"tool_start","tool":"Read"}\n'), [ACKNOWLEDGMENT]
-        )
-        self.assertEqual(stream.feed(b'{"kind":"tool_start","tool":"Grep"}\n'), [])
-
-    def test_tool_start_after_speech_is_silent(self):
-        # Speech has started; an ack now would interject mid-sentence.
-        stream = TurnStream()
-        self.assertEqual(
-            stream.feed(b'{"kind":"text_delta","text":"Checking"}\n'), ["Checking"]
-        )
         self.assertEqual(stream.feed(b'{"kind":"tool_start","tool":"Read"}\n'), [])
 
-    def test_ack_precedes_text_that_follows_it(self):
+    def test_repeated_tool_starts_stay_silent(self):
         stream = TurnStream()
-        self.assertEqual(
-            stream.feed(
-                b'{"kind":"tool_start","tool":"Read"}\n'
-                b'{"kind":"text_delta","text":"Done."}\n'
-            ),
-            [ACKNOWLEDGMENT, "Done."],
-        )
-
-    def test_empty_text_delta_does_not_count_as_speech(self):
-        # An omitted-text delta says nothing aloud, so the ack is still owed.
-        stream = TurnStream()
-        self.assertEqual(stream.feed(b'{"kind":"text_delta"}\n'), [])
-        self.assertEqual(
-            stream.feed(b'{"kind":"tool_start","tool":"Read"}\n'), [ACKNOWLEDGMENT]
-        )
-
-
-class TurnStreamSuppressedAcknowledgmentTest(unittest.TestCase):
-    """speak_ack=False: the consult path, where the ack would contaminate.
-
-    A consult's chunks are collected and spoken verbatim as the answer, and the
-    front voice has already said its own front-matter line before dispatching —
-    so an ack prepended here would both duplicate that and land inside the
-    quoted answer.
-    """
-
-    def test_ack_is_suppressed(self):
-        stream = TurnStream(speak_ack=False)
-        self.assertEqual(stream.feed(b'{"kind":"tool_start","tool":"Read"}\n'), [])
-
-    def test_ack_stays_suppressed_across_chunks(self):
-        # The ack is owed at most once, so a first tool_start that yielded
-        # nothing must not leave the debt open for a later one to pay.
-        stream = TurnStream(speak_ack=False)
         self.assertEqual(stream.feed(b'{"kind":"tool_start","tool":"Read"}\n'), [])
         self.assertEqual(stream.feed(b'{"kind":"tool_start","tool":"Grep"}\n'), [])
 
-    def test_speech_is_unaffected(self):
-        stream = TurnStream(speak_ack=False)
+    def test_tool_start_before_text_yields_only_the_text(self):
+        stream = TurnStream()
         self.assertEqual(
             stream.feed(
                 b'{"kind":"tool_start","tool":"Read"}\n'
@@ -140,26 +72,11 @@ class TurnStreamSuppressedAcknowledgmentTest(unittest.TestCase):
             ["Tuesday."],
         )
 
-    def test_terminal_handling_is_unaffected(self):
-        stream = TurnStream(speak_ack=False)
-        self.assertEqual(stream.feed(DONE_OK), [])
-        self.assertTrue(stream.done)
-        with self.assertRaises(TurnError):
-            TurnStream(speak_ack=False).feed(
-                b'{"kind":"error","message":"backend died"}\n'
-            )
-
-    def test_speaking_the_ack_is_the_default(self):
-        # The plain-turn path takes no argument; pinning both the default and
-        # the explicit True keeps the flag from inverting unnoticed.
-        self.assertEqual(
-            TurnStream().feed(b'{"kind":"tool_start","tool":"Read"}\n'),
-            [ACKNOWLEDGMENT],
-        )
-        self.assertEqual(
-            TurnStream(speak_ack=True).feed(b'{"kind":"tool_start","tool":"Read"}\n'),
-            [ACKNOWLEDGMENT],
-        )
+    def test_unknown_kind_yields_nothing(self):
+        # Forward compatibility: a daemon newer than this adapter must not
+        # break the turn.
+        stream = TurnStream()
+        self.assertEqual(stream.feed(b'{"kind":"sparkle","text":"hi"}\n'), [])
 
 
 class TurnStreamTerminalTest(unittest.TestCase):

@@ -4,20 +4,16 @@ No livekit or aiohttp imports — this module is the testable core of the voice
 agent (voice/tests/test_stream.py runs it offline with stdlib unittest). The
 wire contract is pinned by the daemon's golden tests (test/wire.test.ts).
 
-The voice surface differs from the chat surfaces in one way: silence is not
-free. A turn that runs tools before saying anything leaves the caller
-listening to nothing, so the first tool_start of a turn is turned into a
-short spoken acknowledgment — but only while the turn is still silent, since
-once speech is streaming an ack would interject mid-sentence. A consult, whose
-silence the front voice covers itself, turns the ack off (speak_ack=False).
+Only text is spoken. Everything else on the wire — tool activity, thinking,
+kinds newer than this adapter — is silent, because the wait a turn spends on
+tools is already covered: the front voice says its own holding line before
+dispatching the consult, and a pad plays under it until the answer lands
+(voice/agent.py).
 """
 
 from __future__ import annotations
 
 import json
-
-#: Spoken once per turn when work starts before any speech has.
-ACKNOWLEDGMENT = "One moment."
 
 
 class TurnError(Exception):
@@ -54,22 +50,9 @@ class TurnStream:
     """True once the turn's done event arrived without an error."""
 
     _splitter: LineSplitter
-    _spoke: bool
-    _acked: bool
-    _speak_ack: bool
 
-    def __init__(self, speak_ack: bool = True) -> None:
-        """speak_ack=False for a consult, whose chunks are not spoken live.
-
-        A consult is collected in full and then read out verbatim as the deep
-        brain's answer, after the front voice has already said its own line
-        about going to check — so an ack here would be both a repeat and a
-        stray sentence inside the quoted answer.
-        """
+    def __init__(self) -> None:
         self._splitter = LineSplitter()
-        self._spoke = False
-        self._acked = False
-        self._speak_ack = speak_ack
         self.done = False
 
     def feed(self, data: bytes) -> list[str]:
@@ -96,18 +79,11 @@ class TurnStream:
 
         kind = event.get("kind")
         if kind == "text_delta":
-            # omitempty: the daemon drops the text key when the delta is empty,
-            # and an empty delta is not speech — the ack is still owed.
+            # omitempty: the daemon drops the text key when the delta is empty.
             text = event.get("text", "")
             if not text:
                 return None
-            self._spoke = True
             return str(text)
-        if kind == "tool_start":
-            if not self._speak_ack or self._spoke or self._acked:
-                return None
-            self._acked = True
-            return ACKNOWLEDGMENT
         if kind == "error":
             raise TurnError(str(event.get("message", "unknown daemon error")))
         if kind == "done":
@@ -116,7 +92,7 @@ class TurnStream:
                 raise TurnError(str(done.get("text", "turn failed")))
             self.done = True
             return None
-        # thinking_delta, thinking, tool_result, and kinds newer than this
-        # adapter: nothing to say, and forward compatibility means a newer
-        # daemon must not break the turn.
+        # tool_start, tool_result, thinking_delta, thinking, and kinds newer
+        # than this adapter: nothing to say, and forward compatibility means a
+        # newer daemon must not break the turn.
         return None

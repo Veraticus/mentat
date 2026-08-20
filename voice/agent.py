@@ -27,7 +27,7 @@ import logging
 import os
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import aiohttp
 from livekit import agents
@@ -146,12 +146,16 @@ class FrontAgent(Agent):
         flags=llm.ToolFlag.CANCELLABLE,
         on_duplicate="reject",
     )
+    # The knobs are Literals, not strs: the framework renders each as a
+    # JSON-schema enum and validates the call against it, so a hallucinated
+    # "medium" or "opus" is rejected at parse time instead of travelling into
+    # the daemon's turn request, which takes these values on trust.
     async def ask_mentat(
         self,
         ctx: RunContext,
         question: str,
-        effort: str = "low",
-        model: str = "sonnet",
+        effort: Literal["low", "high"] = "low",
+        model: Literal["sonnet", "fable"] = "sonnet",
     ) -> str | None:
         """Ask Mentat, the deep brain behind you, and let it answer Josh.
 
@@ -234,7 +238,7 @@ class FrontAgent(Agent):
         the chunks are joined instead of yielded: speaking them as they arrive
         would talk over the front's own holding line and start mid-thought.
         """
-        stream = TurnStream(speak_ack=False)
+        stream = TurnStream()
         chunks: list[str] = []
         async with aiohttp.ClientSession(timeout=TIMEOUT) as http:
             async with http.post(
