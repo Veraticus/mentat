@@ -15,16 +15,47 @@
         android_sdk.accept_license = true;
       };
     };
-    androidComposition = pkgsAndroid.androidenv.composeAndroidPackages {
-      cmdLineToolsVersion = "latest";
-      platformToolsVersion = "36.0.0";
-      buildToolsVersions = [ "36.0.0" ];
-      platformVersions = [ "36" ];
+    # "latest" is a moving selector: it re-resolves against whatever the
+    # nixpkgs repo data happens to carry, so a pinned flake.lock would still
+    # hand out a different toolchain over time. 20.0 is what this lock
+    # resolves to today.
+    cmdLineToolsVersion = "20.0";
+    platformToolsVersion = "36.0.0";
+    buildToolsVersion = "36.0.0";
+    platformVersion = "36";
+
+    androidPackages = extra: pkgsAndroid.androidenv.composeAndroidPackages ({
+      inherit cmdLineToolsVersion platformToolsVersion;
+      buildToolsVersions = [ buildToolsVersion ];
+      platformVersions = [ platformVersion ];
+    } // extra);
+
+    # Compiling and running JVM unit tests needs the SDK only; the emulator
+    # and the google_apis system image are gigabytes of closure that nothing
+    # but the e2e and live lanes ever boots.
+    androidUnitComposition = androidPackages { };
+
+    androidComposition = androidPackages {
       includeEmulator = true;
       emulatorVersion = "36.1.9";
       includeSystemImages = true;
       systemImageTypes = [ "google_apis" ];
       abiVersions = [ "x86_64" ];
+    };
+
+    androidShell = composition: let
+      sdk = "${composition.androidsdk}/libexec/android-sdk";
+      aapt2 = "${sdk}/build-tools/${buildToolsVersion}/aapt2";
+    in pkgsAndroid.mkShell {
+      packages = [
+        composition.androidsdk
+        pkgsAndroid.gradle
+        pkgsAndroid.jdk17
+      ];
+      ANDROID_HOME = sdk;
+      ANDROID_SDK_ROOT = sdk;
+      JAVA_HOME = "${pkgsAndroid.jdk17}";
+      GRADLE_OPTS = "-Dandroid.aapt2FromMavenOverride=${aapt2} -Dorg.gradle.project.android.aapt2FromMavenOverride=${aapt2}";
     };
 
     mentatd = pkgs.buildNpmPackage {
@@ -65,16 +96,11 @@
     # voice agent. Built from upstream wheels; see nix/voice-env.nix.
     voice-env = import ./nix/voice-env.nix { inherit pkgs; };
   in {
-    devShells.${system}.android = pkgsAndroid.mkShell {
-      packages = [
-        androidComposition.androidsdk
-        pkgsAndroid.gradle
-        pkgsAndroid.jdk17
-      ];
-      ANDROID_HOME = "${androidComposition.androidsdk}/libexec/android-sdk";
-      ANDROID_SDK_ROOT = "${androidComposition.androidsdk}/libexec/android-sdk";
-      JAVA_HOME = "${pkgsAndroid.jdk17}";
-      GRADLE_OPTS = "-Dandroid.aapt2FromMavenOverride=${androidComposition.androidsdk}/libexec/android-sdk/build-tools/36.0.0/aapt2 -Dorg.gradle.project.android.aapt2FromMavenOverride=${androidComposition.androidsdk}/libexec/android-sdk/build-tools/36.0.0/aapt2";
+    devShells.${system} = {
+      # Emulator-bearing shell: the e2e and live lanes boot a device.
+      android = androidShell androidComposition;
+      # Lean shell for lint + JVM unit tests, in CI and `just test-android`.
+      android-unit = androidShell androidUnitComposition;
     };
 
     packages.${system} = {

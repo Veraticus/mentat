@@ -21,11 +21,27 @@ create_avd() {
   fi
 }
 
+# The pid file is written on the launch path below and nowhere else, so its
+# presence — naming a process that is still alive — is this script's claim of
+# ownership over ${serial}. Anything else on that serial belongs to someone
+# else and must not be reused or killed.
+owns_emulator() {
+  [[ -s "${emulator_pid_file}" ]] || return 1
+  local pid
+  pid="$(<"${emulator_pid_file}")"
+  [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null
+}
+
 start() {
   create_avd
   if adb -s "${serial}" get-state 2>/dev/null | grep -qx device; then
-    printf '%s\n' "${serial}"
-    return
+    if owns_emulator; then
+      printf '%s\n' "${serial}"
+      return
+    fi
+    printf '%s is already running and was not started by this script; refusing to reuse it. Stop it first (adb -s %s emu kill).\n' \
+      "${serial}" "${serial}" >&2
+    return 1
   fi
 
   emulator -avd "${avd_name}" -port 5554 -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect >"${avd_home}/emulator.log" 2>&1 &
@@ -45,16 +61,25 @@ start() {
 }
 
 stop() {
-  adb -s "${serial}" emu kill >/dev/null 2>&1 || true
-  if [[ -f "${emulator_pid_file}" ]]; then
-    local pid
-    pid="$(<"${emulator_pid_file}")"
-    if kill -0 "${pid}" 2>/dev/null; then
-      kill "${pid}" || true
-      wait "${pid}" 2>/dev/null || true
+  if ! owns_emulator; then
+    if [[ -e "${emulator_pid_file}" ]]; then
+      printf 'stale pid file %s: that process is gone, leaving %s alone\n' \
+        "${emulator_pid_file}" "${serial}" >&2
+      rm -f "${emulator_pid_file}"
+    else
+      printf 'no emulator was started by this script; nothing to stop\n' >&2
     fi
-    rm -f "${emulator_pid_file}"
+    return 0
   fi
+
+  local pid
+  pid="$(<"${emulator_pid_file}")"
+  adb -s "${serial}" emu kill >/dev/null 2>&1 || true
+  if kill -0 "${pid}" 2>/dev/null; then
+    kill "${pid}" || true
+    wait "${pid}" 2>/dev/null || true
+  fi
+  rm -f "${emulator_pid_file}"
 }
 
 case "${1:-}" in

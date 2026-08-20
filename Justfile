@@ -21,22 +21,34 @@ test-voice:
 new-worktree BRANCH:
     #!/usr/bin/env bash
     set -euo pipefail
-    if git show-ref --verify --quiet "refs/heads/{{BRANCH}}"; then
-        git worktree add ".worktrees/{{BRANCH}}" "{{BRANCH}}"
+    # just's quote() wraps the argument in a shell single-quote literal
+    # (escaping any interior quote) before bash parses this line, so a value
+    # like $(cmd) or `cmd` is never command-substituted. Interpolating the
+    # parameter bare inside double quotes would leave that injection open.
+    branch={{quote(BRANCH)}}
+    if git show-ref --verify --quiet "refs/heads/${branch}"; then
+        git worktree add ".worktrees/${branch}" "${branch}"
     else
-        git worktree add -b "{{BRANCH}}" ".worktrees/{{BRANCH}}"
+        git worktree add -b "${branch}" ".worktrees/${branch}"
     fi
     echo ""
-    echo "Worktree ready: .worktrees/{{BRANCH}}"
-    echo "Next: cd .worktrees/{{BRANCH}}"
+    echo "Worktree ready: .worktrees/${branch}"
+    echo "Next: cd .worktrees/${branch}"
 
 # Remove the worktree at .worktrees/BRANCH.
 rm-worktree BRANCH:
-    git worktree remove ".worktrees/{{BRANCH}}"
+    branch={{quote(BRANCH)}}; git worktree remove ".worktrees/${branch}"
 
-# Android Gradle tests run inside the pinned Android SDK development shell.
+# Android Lint + Gradle tests in the lean SDK shell (no emulator, no image).
 test-android:
-    nix develop .#android -c bash -ceu 'cd android && gradle test'
+    nix develop .#android-unit -c bash -ceu 'cd android && gradle lintDebug test'
+
+# Pair the phone first: `adb pair <host>:<port>`, then `adb connect <host>:<port>`.
+# Build the debug APK and install it on the default adb device.
+android-install:
+    nix develop .#android-unit -c bash -ceu '\
+        (cd android && gradle assembleDebug); \
+        adb install -r android/app/build/outputs/apk/debug/app-debug.apk'
 
 # Boot a headless emulator and prove the assistant role receives KEYCODE_ASSIST.
 android-e2e:
@@ -75,4 +87,4 @@ android-live ENDPOINT:
         (cd android && gradle assembleDebug assembleDebugAndroidTest); \
         android/scripts/emulator.sh create-avd; \
         serial="$(android/scripts/emulator.sh start)"; \
-        (cd android && gradle connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.mentatTokenEndpoint="$endpoint")' -- "{{ENDPOINT}}"
+        (cd android && gradle connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.mentatTokenEndpoint="$endpoint")' -- {{quote(ENDPOINT)}}

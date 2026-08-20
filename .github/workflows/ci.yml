@@ -21,7 +21,9 @@ jobs:
   android:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: DeterminateSystems/nix-installer-action@main
-      - uses: DeterminateSystems/magic-nix-cache-action@main
-      - run: nix develop .#android --command bash -ceu 'cd android && gradle test'
+      # Actions are pinned to full commit SHAs: a tag or branch is mutable, so
+      # an unpinned `uses:` runs whatever the upstream repo points at today.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - run: nix develop .#android-unit --command bash -ceu 'cd android && gradle lintDebug test'

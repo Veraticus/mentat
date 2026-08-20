@@ -36,6 +36,16 @@ android {
     testOptions {
         unitTests.isIncludeAndroidResources = true
     }
+
+    lint {
+        // A lint error fails `gradle lintDebug`, in CI and locally. Warnings
+        // do not fail the build but are printed, so they stay visible instead
+        // of hiding in an HTML report nobody opens.
+        abortOnError = true
+        warningsAsErrors = false
+        textReport = true
+        htmlReport = false
+    }
 }
 
 dependencies {
