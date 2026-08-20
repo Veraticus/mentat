@@ -11,6 +11,7 @@ import { startJanitor } from './janitor.ts';
 import { jsonLogger } from './log.ts';
 import { allowAllPolicy } from './policy.ts';
 import { SessionTracker, createHandler } from './server.ts';
+import { createTokenIssuer } from './voicetoken.ts';
 
 const logger = jsonLogger();
 
@@ -36,7 +37,9 @@ try {
   });
 
   const tracker = new SessionTracker();
-  const server = createServer(createHandler(backend, tracker, logger));
+  const issuer =
+    config.voiceToken !== undefined ? createTokenIssuer(config.voiceToken) : undefined;
+  const server = createServer(createHandler(backend, tracker, logger, issuer));
   const stopJanitor = startJanitor(tracker, backend, config.sessionTtlMs, logger);
 
   server.listen(config.listen.port, config.listen.host, () => {
