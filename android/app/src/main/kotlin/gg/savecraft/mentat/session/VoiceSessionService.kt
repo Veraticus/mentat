@@ -73,9 +73,15 @@ open class VoiceSessionService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onDestroy() {
-        controller.close()
-        serviceScope.cancel()
-        super.onDestroy()
+        try {
+            controller.close()
+        } finally {
+            try {
+                serviceScope.cancel()
+            } finally {
+                super.onDestroy()
+            }
+        }
     }
 
     fun mute(muted: Boolean) {
@@ -86,8 +92,11 @@ open class VoiceSessionService : Service() {
 
     fun end() {
         serviceScope.launch {
-            controller.end()
-            stopForeground(STOP_FOREGROUND_REMOVE)
+            try {
+                controller.end()
+            } finally {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            }
         }
     }
 
@@ -193,15 +202,24 @@ internal class VoiceSessionController(
         try {
             liveKitSession.disconnect()
         } finally {
-            close()
-            stopService()
+            try {
+                close()
+            } finally {
+                stopService()
+            }
         }
     }
 
     fun close() {
-        eventJob?.cancel()
-        transcriptJob?.cancel()
-        liveKitSession.close()
+        try {
+            eventJob?.cancel()
+        } finally {
+            try {
+                transcriptJob?.cancel()
+            } finally {
+                liveKitSession.close()
+            }
+        }
     }
 
     private fun onLiveKitEvent(event: LiveKitEvent) {

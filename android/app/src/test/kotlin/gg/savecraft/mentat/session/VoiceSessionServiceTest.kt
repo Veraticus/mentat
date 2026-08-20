@@ -20,6 +20,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 
 @Config(sdk = [35])
@@ -101,12 +102,73 @@ class VoiceSessionServiceTest {
 
     @Test
     fun destroyingTheServiceClosesTheLiveKitSession() {
-        DestroyableVoiceSessionService.liveKit = FakeLiveKitSession()
-        val service = Robolectric.buildService(DestroyableVoiceSessionService::class.java).create().get()
+        FakeLiveKitVoiceSessionService.liveKit = FakeLiveKitSession()
+        val service = Robolectric.buildService(FakeLiveKitVoiceSessionService::class.java).create().get()
 
         service.onDestroy()
 
-        assertTrue(DestroyableVoiceSessionService.liveKit.closed)
+        assertTrue(FakeLiveKitVoiceSessionService.liveKit.closed)
+    }
+
+    @Test
+    fun endStopsTheServiceEvenWhenDisconnectFails() = runBlocking {
+        val liveKit = FakeLiveKitSession()
+        liveKit.disconnectFailure = IllegalStateException("disconnect failed")
+        var stopped = false
+        val service = controller(liveKit, stopService = { stopped = true })
+
+        service.start()
+        liveKit.events.emit(LiveKitEvent.Connected)
+        val thrown = runCatching { service.end() }.exceptionOrNull()
+
+        assertEquals("disconnect failed", thrown?.message)
+        assertTrue(liveKit.closed)
+        assertTrue(stopped)
+    }
+
+    @Test
+    fun endStopsTheServiceEvenWhenClosingTheLiveKitSessionFails() = runBlocking {
+        val liveKit = FakeLiveKitSession()
+        liveKit.closeFailure = IllegalStateException("close failed")
+        var stopped = false
+        val service = controller(liveKit, stopService = { stopped = true })
+
+        service.start()
+        liveKit.events.emit(LiveKitEvent.Connected)
+        val thrown = runCatching { service.end() }.exceptionOrNull()
+
+        assertEquals("close failed", thrown?.message)
+        assertTrue(liveKit.disconnected)
+        assertTrue(stopped)
+    }
+
+    @Test
+    fun endStopsTheForegroundEvenWhenTheSessionFailsToClose() {
+        val liveKit = FakeLiveKitSession()
+        liveKit.closeFailure = IllegalStateException("close failed")
+        FakeLiveKitVoiceSessionService.liveKit = liveKit
+        val service = Robolectric.buildService(FakeLiveKitVoiceSessionService::class.java).create().get()
+
+        service.end()
+
+        assertTrue(liveKit.disconnected)
+        assertTrue(Shadows.shadowOf(service).isForegroundStopped)
+    }
+
+    @Test
+    fun destroyingTheServiceCancelsItsScopeEvenWhenClosingFails() {
+        val liveKit = FakeLiveKitSession()
+        liveKit.closeFailure = IllegalStateException("close failed")
+        FakeLiveKitVoiceSessionService.liveKit = liveKit
+        val service = Robolectric.buildService(FakeLiveKitVoiceSessionService::class.java).create().get()
+
+        val thrown = runCatching { service.onDestroy() }.exceptionOrNull()
+
+        assertEquals("close failed", thrown?.message)
+        assertTrue(liveKit.closed)
+        // A cancelled scope no longer dispatches work, so the microphone request is dropped.
+        service.mute(false)
+        assertFalse(liveKit.microphoneEnabled.value)
     }
 
     @Test
@@ -184,11 +246,14 @@ class VoiceSessionServiceTest {
         private val connectEvent: LiveKitEvent? = null,
         private val connectFailure: Exception? = null,
         var setMicFailure: Exception? = null,
+        var disconnectFailure: Exception? = null,
+        var closeFailure: Exception? = null,
     ) : LiveKitSession {
         override val events = MutableSharedFlow<LiveKitEvent>()
         override val transcripts = MutableSharedFlow<TranscriptSegment>()
         val microphoneEnabled = MutableStateFlow(false)
         var connection: Pair<String, String>? = null
+        var disconnected = false
         var closed = false
 
         override suspend fun connect(url: String, token: String) {
@@ -202,10 +267,14 @@ class VoiceSessionServiceTest {
             microphoneEnabled.value = enabled
         }
 
-        override suspend fun disconnect() = Unit
+        override suspend fun disconnect() {
+            disconnected = true
+            disconnectFailure?.let { throw it }
+        }
 
         override fun close() {
             closed = true
+            closeFailure?.let { throw it }
         }
     }
 
@@ -225,7 +294,7 @@ class VoiceSessionServiceTest {
         }
     }
 
-    class DestroyableVoiceSessionService : VoiceSessionService() {
+    class FakeLiveKitVoiceSessionService : VoiceSessionService() {
         override fun liveKitSession(): LiveKitSession = liveKit
 
         companion object {

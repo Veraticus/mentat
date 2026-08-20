@@ -21,10 +21,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.annotation.StringRes
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.dp
+import gg.savecraft.mentat.R
 import gg.savecraft.mentat.core.SessionState
 import gg.savecraft.mentat.core.TranscriptSegment
 import gg.savecraft.mentat.session.AppSettings
@@ -45,10 +48,10 @@ fun TalkScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(state.title()) },
+                title = { Text(stringResource(state.titleRes())) },
                 actions = {
                     TextButton(onClick = { editingSettings = !editingSettings }) {
-                        Text("Settings")
+                        Text(stringResource(R.string.talk_settings))
                     }
                 },
             )
@@ -62,7 +65,7 @@ fun TalkScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(
-                text = state.detail(),
+                text = state.detailText(),
                 style = MaterialTheme.typography.titleMedium,
             )
             if (editingSettings) {
@@ -70,14 +73,14 @@ fun TalkScreen(
                     value = endpointUrl,
                     onValueChange = { endpointUrl = it },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Token endpoint") },
+                    label = { Text(stringResource(R.string.talk_token_endpoint)) },
                     singleLine = true,
                 )
                 Button(onClick = {
                     settings.saveTokenEndpointUrl(endpointUrl)
                     editingSettings = false
                 }) {
-                    Text("Save")
+                    Text(stringResource(R.string.talk_save))
                 }
             }
             LazyColumn(
@@ -98,13 +101,13 @@ fun TalkScreen(
                     onClick = { onMuteChanged(!muted) },
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text(if (muted) "Unmute" else "Mute")
+                    Text(stringResource(if (muted) R.string.talk_unmute else R.string.talk_mute))
                 }
                 Button(
                     onClick = onEnd,
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text("End")
+                    Text(stringResource(R.string.talk_end))
                 }
             }
         }
@@ -129,21 +132,33 @@ private fun Caption(segment: TranscriptSegment) {
     }
 }
 
-private fun SessionState.title(): String = when (this) {
+@Composable
+private fun SessionState.detailText(): String = when (this) {
+    is SessionState.Failed -> reason
+    else -> stringResource(checkNotNull(detailRes()))
+}
+
+@StringRes
+internal fun SessionState.titleRes(): Int = when (this) {
     SessionState.Idle,
     SessionState.FetchingToken,
     SessionState.Connecting,
-    -> "Connecting"
-    SessionState.Live -> "Live"
-    SessionState.Reconnecting -> "Reconnecting"
-    is SessionState.Failed -> "Failed"
-    SessionState.Ended -> "Ended"
+    -> R.string.status_title_connecting
+    SessionState.Live -> R.string.status_title_live
+    SessionState.Reconnecting -> R.string.status_title_reconnecting
+    is SessionState.Failed -> R.string.status_title_failed
+    SessionState.Ended -> R.string.status_title_ended
 }
 
-private fun SessionState.detail(): String = when (this) {
-    is SessionState.Failed -> reason
-    SessionState.Live -> "Listening"
-    SessionState.Reconnecting -> "Restoring connection"
-    SessionState.Ended -> "Session ended"
-    else -> "Starting voice session"
+/** The status detail string, or null for states that carry their own dynamic text. */
+@StringRes
+internal fun SessionState.detailRes(): Int? = when (this) {
+    is SessionState.Failed -> null
+    SessionState.Live -> R.string.status_detail_live
+    SessionState.Reconnecting -> R.string.status_detail_reconnecting
+    SessionState.Ended -> R.string.status_detail_ended
+    SessionState.Idle,
+    SessionState.FetchingToken,
+    SessionState.Connecting,
+    -> R.string.status_detail_starting
 }

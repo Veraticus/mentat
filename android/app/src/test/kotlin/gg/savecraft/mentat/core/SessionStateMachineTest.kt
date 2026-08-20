@@ -1,7 +1,6 @@
 package gg.savecraft.mentat.core
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SessionStateMachineTest {
@@ -71,8 +70,10 @@ class SessionStateMachineTest {
         )
 
         preLiveStates.forEach { initialState ->
-            val result = SessionStateMachine(initialState).transition(SessionEvent.PermissionDenied)
-            assertTrue("$initialState did not fail", result is SessionState.Failed)
+            assertEquals(
+                SessionState.Failed("Permission denied"),
+                SessionStateMachine(initialState).transition(SessionEvent.PermissionDenied),
+            )
         }
     }
 

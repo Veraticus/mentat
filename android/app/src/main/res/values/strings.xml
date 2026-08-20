@@ -3,4 +3,19 @@
     <string name="voice_notification_channel">Voice session</string>
     <string name="voice_notification_title">Mentat is listening</string>
     <string name="voice_notification_text">Voice session active</string>
+    <string name="talk_settings">Settings</string>
+    <string name="talk_token_endpoint">Token endpoint</string>
+    <string name="talk_save">Save</string>
+    <string name="talk_mute">Mute</string>
+    <string name="talk_unmute">Unmute</string>
+    <string name="talk_end">End</string>
+    <string name="status_title_connecting">Connecting</string>
+    <string name="status_title_live">Live</string>
+    <string name="status_title_reconnecting">Reconnecting</string>
+    <string name="status_title_failed">Failed</string>
+    <string name="status_title_ended">Ended</string>
+    <string name="status_detail_starting">Starting voice session</string>
+    <string name="status_detail_live">Listening</string>
+    <string name="status_detail_reconnecting">Restoring connection</string>
+    <string name="status_detail_ended">Session ended</string>
 </resources>

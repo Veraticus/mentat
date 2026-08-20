@@ -1,9 +1,12 @@
 package gg.savecraft.mentat.core
 
 import com.sun.net.httpserver.HttpServer
+import java.io.IOException
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
+import java.net.Socket
+import java.util.Collections
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.assertEquals
@@ -107,6 +110,83 @@ class TokenEndpointTest {
         assertThrows(TokenFetchException::class.java) {
             HttpTokenEndpoint("http://127.0.0.1:$port").fetch()
         }
+    }
+
+    @Test
+    fun stalledServerThrowsTokenFetchException() {
+        val server = ServerSocket(0, 1, InetAddress.getLoopbackAddress())
+        val accepted = Collections.synchronizedList(mutableListOf<Socket>())
+        val acceptor = Thread {
+            try {
+                while (true) {
+                    accepted.add(server.accept())
+                }
+            } catch (_: IOException) {
+                // The socket is closed once the assertion below finishes.
+            }
+        }
+        acceptor.isDaemon = true
+        acceptor.start()
+
+        try {
+            assertThrows(TokenFetchException::class.java) {
+                HttpTokenEndpoint(
+                    "http://127.0.0.1:${server.localPort}",
+                    connectTimeoutMillis = 250,
+                    readTimeoutMillis = 250,
+                ).fetch()
+            }
+        } finally {
+            server.close()
+            accepted.forEach { it.close() }
+        }
+    }
+
+    @Test
+    fun oversizedResponseThrowsTokenFetchException() {
+        val response = """
+            {
+              "token": "${"j".repeat(4096)}",
+              "room": "android-room",
+              "url": "wss://voice.example.com",
+              "expires_at": "2026-08-19T16:00:00.000Z"
+            }
+        """.trimIndent()
+
+        withServer(response = response) { baseUrl ->
+            val thrown = assertThrows(TokenFetchException::class.java) {
+                HttpTokenEndpoint(baseUrl, maxResponseBytes = 1024).fetch()
+            }
+            assertEquals("Token response exceeded 1024 bytes", thrown.message)
+        }
+    }
+
+    @Test
+    fun responseWithinTheCapIsParsed() {
+        val response = """
+            {
+              "token": "jwt-token",
+              "room": "android-room",
+              "url": "wss://voice.example.com",
+              "expires_at": "2026-08-19T16:00:00.000Z"
+            }
+        """.trimIndent()
+
+        withServer(response = response) { baseUrl ->
+            assertEquals(
+                "jwt-token",
+                HttpTokenEndpoint(baseUrl, maxResponseBytes = response.length).fetch().token,
+            )
+        }
+    }
+
+    @Test
+    fun productionDefaultsAreFiniteAndBounded() {
+        val endpoint = HttpTokenEndpoint("http://127.0.0.1:1")
+
+        assertEquals(10_000, endpoint.connectTimeoutMillis)
+        assertEquals(10_000, endpoint.readTimeoutMillis)
+        assertEquals(64 * 1024, endpoint.maxResponseBytes)
     }
 
     private fun withServer(
