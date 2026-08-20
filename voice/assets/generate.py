@@ -1,4 +1,4 @@
-"""Generate the voice surface's two sound assets.
+"""Generate the voice surface's sound assets.
 
 The .wav files next to this script are checked in, but they are authored here
 rather than in an editor: a reviewer cannot diff a binary, and a sound asset
@@ -7,13 +7,16 @@ deterministic — pure arithmetic, no randomness, no timestamps — so re-runnin
 this script reproduces the committed bytes exactly, and the code below is the
 real source of truth for what the assistant sounds like.
 
-Both clips feed LiveKit's BackgroundAudioPlayer:
+All clips feed LiveKit's BackgroundAudioPlayer:
 
   earcon.wav   the "I heard you" blip, fired the moment the turn enters its
                thinking state after the user stops talking — roughly a second
                ahead of first speech, so the silence never reads as a failure.
   waiting.wav  a soft bed looped under 10-60s deep-model consults, playing
                beneath any speech rather than instead of it.
+  ambient.wav  a whisper-level floor looped continuously on the background
+               track, because a track carrying pure silence gets gain-pumped
+               into an audible hum by browser-side processing.
 
 Usage: generate.py [output-dir]   (defaults to this script's own directory)
 """
@@ -57,8 +60,28 @@ WAITING_MOD_DEPTH = 0.25  # light: the pad dips to 75% and back, never pulses
 # enough to say "still working", quiet enough never to compete with the answer.
 WAITING_PEAK_DBFS = -24.0
 
+# --- ambient --------------------------------------------------------------
+# A whisper-level bed of filtered noise, published continuously on the
+# background-audio track. It exists because the track cannot carry silence:
+# with nothing on it, browser-side gain control winds itself up on the empty
+# floor and the caller hears a pumping hum after every real sound (verified
+# empirically 2026-08-20 — the hum vanished the moment the track did). A
+# deliberate, stable, just-below-attention floor gives the processor
+# something to lock onto instead.
+AMBIENT_S = 4.0
+# One-pole shaping around the "air" band: enough lows cut that it never
+# rumbles, enough highs cut that it never hisses.
+AMBIENT_LOWPASS_HZ = 1200.0
+AMBIENT_HIGHPASS_HZ = 120.0
+# Well under the -24 dBFS wait pad; present, not noticeable.
+AMBIENT_PEAK_DBFS = -42.0
+# The loop point is hidden by an equal-power crossfade of this length: noise
+# has no phase to align, so the seam is blended rather than counted in cycles.
+AMBIENT_CROSSFADE_S = 0.25
+
 EARCON_NAME = "earcon.wav"
 WAITING_NAME = "waiting.wav"
+AMBIENT_NAME = "ambient.wav"
 
 
 def _amplitude(dbfs: float) -> float:
@@ -125,6 +148,46 @@ def waiting_signal() -> list[float]:
     return _normalize(signal, WAITING_PEAK_DBFS)
 
 
+def ambient_signal() -> list[float]:
+    """The ambient bed as floats, peak-normalized to AMBIENT_PEAK_DBFS.
+
+    Deterministic noise without the random module: a fixed linear congruential
+    generator (Numerical Recipes constants) keeps the file's promise that the
+    committed bytes follow from pure arithmetic on any Python. The white source
+    runs through a one-pole lowpass then highpass, and the loop seam is an
+    equal-power crossfade of the tail into the head — noise has no cycle count
+    to make integer, so the splice is blended instead.
+    """
+    fade = round(AMBIENT_CROSSFADE_S * SAMPLE_RATE)
+    total = round(AMBIENT_S * SAMPLE_RATE) + fade
+
+    state = 0x4D454E54  # "MENT"; any fixed seed works, this one is ours
+    low = 0.0
+    high_prev_in = 0.0
+    high = 0.0
+    alpha_low = 1.0 - math.exp(-math.tau * AMBIENT_LOWPASS_HZ / SAMPLE_RATE)
+    alpha_high = math.exp(-math.tau * AMBIENT_HIGHPASS_HZ / SAMPLE_RATE)
+
+    signal = []
+    for _ in range(total):
+        state = (state * 1664525 + 1013904223) % 2**32
+        white = state / 2**31 - 1.0
+        low += alpha_low * (white - low)
+        high = alpha_high * (high + low - high_prev_in)
+        high_prev_in = low
+        signal.append(high)
+
+    # Equal-power blend: the extra tail fades out under the fading-in head,
+    # then leaves, so sample[-1] flows into sample[0] with no step.
+    for i in range(fade):
+        t = i / fade
+        signal[i] = signal[i] * math.sin(t * math.pi / 2) + signal[
+            len(signal) - fade + i
+        ] * math.cos(t * math.pi / 2)
+    del signal[-fade:]
+    return _normalize(signal, AMBIENT_PEAK_DBFS)
+
+
 def to_pcm16(signal: list[float]) -> array[int]:
     """Quantize floats in -1..1 to signed 16-bit samples."""
     return array("h", [round(value * FULL_SCALE) for value in signal])
@@ -145,9 +208,10 @@ def write_wav(path: Path, samples: array[int]) -> None:
 
 
 def generate(out_dir: Path) -> None:
-    """Write both assets into out_dir."""
+    """Write all three assets into out_dir."""
     write_wav(out_dir / EARCON_NAME, to_pcm16(earcon_signal()))
     write_wav(out_dir / WAITING_NAME, to_pcm16(waiting_signal()))
+    write_wav(out_dir / AMBIENT_NAME, to_pcm16(ambient_signal()))
 
 
 def main(argv: list[str]) -> None:

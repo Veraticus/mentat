@@ -23,6 +23,7 @@
       ../voice/stream.py
       ../voice/assets/earcon.wav
       ../voice/assets/waiting.wav
+      ../voice/assets/ambient.wav
     ];
   };
 in {

@@ -78,6 +78,7 @@ HERE = Path(__file__).parent
 PERSONA_PATH = HERE / "persona.md"
 EARCON_PATH = HERE / "assets" / "earcon.wav"
 WAITING_PATH = HERE / "assets" / "waiting.wav"
+AMBIENT_PATH = HERE / "assets" / "ambient.wav"
 
 # Never spoken. ctx.update hands control back to the front with this as the
 # tool's synthetic return, and the front says its own holding line from it —
@@ -338,6 +339,12 @@ async def entrypoint(ctx: JobContext) -> None:
     log_turn_metrics(session)
 
     background = BackgroundAudioPlayer(
+        # The track this player publishes is always live, and a live track
+        # carrying pure silence gets gain-pumped into an audible hum by
+        # browser-side processing (verified 2026-08-20: the hum vanished with
+        # the track). The whisper-level ambient bed keeps the floor stable —
+        # present to the gain controller, below attention for the caller.
+        ambient_sound=AudioConfig(str(AMBIENT_PATH), volume=1.0),
         # Played automatically the moment the session enters its thinking
         # state — the "I heard you" blip, about a second ahead of any speech,
         # so the gap after the caller stops talking never reads as nothing

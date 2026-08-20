@@ -24,6 +24,7 @@ import generate
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
 EARCON = ASSETS / "earcon.wav"
 WAITING = ASSETS / "waiting.wav"
+AMBIENT = ASSETS / "ambient.wav"
 
 FULL_SCALE = 32767
 
@@ -127,6 +128,35 @@ class WaitingTest(unittest.TestCase):
         self.assertAlmostEqual(seam_step, next_step, delta=2)  # int16 rounding
 
 
+class AmbientTest(unittest.TestCase):
+    """The always-on floor: quiet, seamless, and actually a floor."""
+
+    def test_duration_supports_a_loop(self):
+        samples, rate, _, _ = read_wav(AMBIENT)
+        self.assertGreaterEqual(len(samples) / rate, 3.0)
+        self.assertLessEqual(len(samples) / rate, 5.0)
+
+    def test_peak_is_minus_42_dbfs(self):
+        # Whisper level: present to the browser's gain controller (whose
+        # pumping on a silent track is the reason this file exists), below
+        # attention for the caller — and far under the -24 dBFS wait pad.
+        samples, _, _, _ = read_wav(AMBIENT)
+        self.assertAlmostEqual(peak_dbfs(samples), generate.AMBIENT_PEAK_DBFS, delta=0.1)
+
+    def test_loop_seam_carries_the_same_energy(self):
+        # Noise has no cycle count to align, so the seam is a crossfade; what
+        # must hold is that the loop's tail sounds like its head — a level
+        # step at the splice would tick once per loop.
+        samples, rate, _, _ = read_wav(AMBIENT)
+        window = rate // 10
+
+        def rms(seg):
+            return (sum(s * s for s in seg) / len(seg)) ** 0.5
+
+        head, tail = rms(samples[:window]), rms(samples[-window:])
+        self.assertLess(abs(head - tail) / max(head, tail), 0.15)
+
+
 class DeterminismTest(unittest.TestCase):
     """Regeneration must be byte-identical or the assets stop being auditable."""
 
@@ -139,7 +169,7 @@ class DeterminismTest(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            for committed in (EARCON, WAITING):
+            for committed in (EARCON, WAITING, AMBIENT):
                 fresh = Path(tmp) / committed.name
                 self.assertEqual(
                     fresh.read_bytes(),
