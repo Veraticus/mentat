@@ -134,13 +134,12 @@ class DeterminismTest(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            for committed in (EARCON,):
-                fresh = Path(tmp) / committed.name
-                self.assertEqual(
-                    fresh.read_bytes(),
-                    committed.read_bytes(),
-                    f"{committed.name} does not match generate.py output",
-                )
+            fresh = Path(tmp) / EARCON.name
+            self.assertEqual(
+                fresh.read_bytes(),
+                EARCON.read_bytes(),
+                f"{EARCON.name} does not match generate.py output",
+            )
 
 
 if __name__ == "__main__":

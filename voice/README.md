@@ -29,12 +29,13 @@ ssh ultraviolet sudo systemctl stop mentat-voice   # restart when done!
 
 The agent is a flat directory: `agent.py persona.md request.py stream.py
 assets/*.wav`. Copy those to a private scratch dir with a writable HOME for
-the livekit plugin caches:
+the livekit plugin caches. `mktemp -d`, not a fixed name: a predictable
+`/tmp` path with `mkdir -p` silently reuses a directory another local user
+could have pre-created, and step 2 executes code out of this directory.
 
 ```sh
-rev=$(git rev-parse --short HEAD)
-dev=/tmp/mentat-voice-dev-$rev
-ssh ultraviolet "mkdir -p $dev/assets $dev/home/cache && chmod 700 $dev"
+dev=$(ssh ultraviolet 'mktemp -d /tmp/mentat-voice-dev.XXXXXX')
+ssh ultraviolet "mkdir -p $dev/assets $dev/home/cache"
 scp voice/agent.py voice/persona.md voice/request.py voice/stream.py ultraviolet:$dev/
 scp voice/assets/*.wav ultraviolet:$dev/assets/
 ```
@@ -45,17 +46,24 @@ Run it with the production secrets and the same python env as the unit
 (`systemctl cat mentat-voice` shows the store path in `ExecStart`). Loopback
 URLs because everything is co-located; a distinct `MENTAT_VOICE_HTTP_PORT`
 because the unit owns 8482; `timeout` so a forgotten process can't outlive
-the session by more than an hour:
+the session by more than an hour. Root is needed only to read the agenix
+secrets — the agent itself runs as `nobody` via `setpriv`, mirroring the
+production unit's `DynamicUser` isolation (a network-facing agent should not
+hold a privileged identity, dev run or not):
 
 ```sh
-ssh ultraviolet sudo env DEV_DIR=$dev DEV_ROOM=dev-myfeature-$rev DEV_PY=<python-from-unit> \
+ssh ultraviolet sudo env DEV_DIR=$dev DEV_ROOM=dev-myfeature-$(git rev-parse --short HEAD) \
+  DEV_PY=<python-from-unit> \
   bash -c 'set -euo pipefail
     set -a; . /run/agenix/mentat-voice-env; set +a
     export LIVEKIT_URL=ws://127.0.0.1:7880 MENTAT_URL=http://127.0.0.1:8484 \
            HOME="$DEV_DIR/home" XDG_CACHE_HOME="$DEV_DIR/home/cache" \
            MENTAT_VOICE_HTTP_PORT=8483
     umask 077
-    setsid nohup timeout 3600 "$DEV_PY" "$DEV_DIR/agent.py" connect --room "$DEV_ROOM" \
+    chown -R nobody:nogroup "$DEV_DIR"
+    setsid nohup timeout 3600 \
+      setpriv --reuid=nobody --regid=nogroup --clear-groups \
+      "$DEV_PY" "$DEV_DIR/agent.py" connect --room "$DEV_ROOM" \
       >"$DEV_DIR/agent.log" 2>&1 </dev/null &
     printf "%s\n" "$!" >"$DEV_DIR/agent.pid"'
 ```
