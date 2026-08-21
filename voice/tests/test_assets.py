@@ -103,16 +103,23 @@ class SoundWiringContractTest(unittest.TestCase):
         repository = ASSETS.parent.parent
         agent_source = (repository / "voice" / "agent.py").read_text()
         module_source = (repository / "nix" / "module.nix").read_text()
+        evals_source = (repository / "voice" / "evals" / "run.py").read_text()
         for stem in ("waiting", "ambient"):
             obsolete = f"{stem}.wav"
             self.assertNotIn(obsolete, agent_source)
             self.assertNotIn(obsolete, module_source)
         self.assertNotIn("ambient_sound=", agent_source)
-        self.assertNotIn("background_audio:", agent_source)
+        self.assertNotIn("background_audio", agent_source)
         self.assertNotIn("loop=True", agent_source)
         self.assertIn("background = BackgroundAudioPlayer()", agent_source)
         self.assertIn("earcon.wav", agent_source)
         self.assertIn("earcon.wav", module_source)
+        # The eval runner mirrors entrypoint's FrontAgent construction, so a
+        # constructor parameter removed there must disappear here too — the
+        # offline suite never imports run.py, and without this line the stale
+        # keyword survives to crash `just eval-voice` at startup.
+        self.assertNotIn("background_audio", evals_source)
+        self.assertNotIn("BackgroundAudioPlayer", evals_source)
 
 
 class DeterminismTest(unittest.TestCase):

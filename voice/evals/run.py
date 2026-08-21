@@ -38,7 +38,7 @@ HERE = Path(__file__).resolve().parent
 # package, because agent.py is run by path from a systemd unit.
 sys.path.insert(0, str(HERE.parent))
 
-from livekit.agents import APIError, BackgroundAudioPlayer, llm
+from livekit.agents import APIError, llm
 from livekit.agents.inference import LLM
 from livekit.agents.llm.utils import parse_function_arguments
 from livekit.agents.voice.generation import update_instructions
@@ -142,17 +142,14 @@ async def run_all(
     sockets.
     """
     instructions, voice_card = agent.load_persona()
-    # Constructed exactly as entrypoint constructs it, inside the loop because
-    # the audio player starts a mixer task. Nothing here plays or consults —
+    # Constructed exactly as entrypoint constructs it. Nothing here consults —
     # the tool is declared to the model and never executed — but a stand-in
     # front would be a second definition of the thing under measurement.
-    background = BackgroundAudioPlayer()
     front = agent.FrontAgent(
         instructions=instructions,
         voice_card=voice_card,
         room_name="eval",
         mentat_url=agent.DEFAULT_MENTAT_URL,
-        background_audio=background,
     )
     model = LLM(model_name)
     limit = asyncio.Semaphore(concurrency)
@@ -165,7 +162,6 @@ async def run_all(
         return await asyncio.gather(*(one(scenario) for scenario in scenarios))
     finally:
         await model.aclose()
-        await background.aclose()
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

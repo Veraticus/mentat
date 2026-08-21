@@ -12,8 +12,8 @@ consults.
 The thinking parts live next door and are unit-tested offline: voice/stream.py
 turns mentat's NDJSON into speakable text, voice/request.py builds the turn
 request and the consult envelope. What is left here is the part that cannot be
-tested without a livekit runtime — the pipeline, the tool's audio and its
-lifecycle — so it stays deliberately thin, and it is verified against a real
+tested without a livekit runtime — the pipeline and the session's earcon
+wiring — so it stays deliberately thin, and it is verified against a real
 room rather than in CI.
 
 Run as `python agent.py start`; livekit-agents ships no console script. The
@@ -112,6 +112,7 @@ CONSULT_FAILED = (
 #: land a minute after its question, and dropping it into a conversation that
 #: has moved on, unmarked, is a non sequitur.
 REORIENTATION_PREFIX = "About your earlier question — "
+
 
 def load_persona(path: Path = PERSONA_PATH) -> tuple[str, str]:
     """The front's instructions and its voice card, read off disk."""
