@@ -63,7 +63,7 @@
       version = "3.0.0";
       src = self;
 
-      npmDepsHash = "sha256-paKWa25wqIqRiMTvYe+nPEEXE1FPspBN1eXJs1oK76w=";
+      npmDepsHash = "sha256-PfCKU+jJPUe2tKasU/jDDeRwmyUXunZX3mqPkHw8Xfc=";
 
       # Install-time npm must agree with the runtime wrappers below.
       nodejs = pkgs.nodejs_24;
